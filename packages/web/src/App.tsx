@@ -52,6 +52,14 @@ export default function App() {
     return map
   }, [project])
 
+  const doneBySprint = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const t of project?.tasks ?? []) {
+      if (t.sprint != null && t.status === 'Done') map.set(t.sprint, (map.get(t.sprint) ?? 0) + 1)
+    }
+    return map
+  }, [project])
+
   if (error) {
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -169,6 +177,7 @@ export default function App() {
             sprints={project.sprints}
             activeSprintId={project.activeSprint?.id ?? null}
             tasksBySprint={tasksBySprint}
+            doneBySprint={doneBySprint}
             onActivate={async (id) => {
               await api.updateSprint(id, { status: 'active' })
               await reload()

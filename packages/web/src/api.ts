@@ -32,6 +32,7 @@ export const api = {
   setTaskStatus: (id: string, status: TaskStatus) =>
     request<Task>(`/api/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
+  getTaskSpec: (id: string) => request<{ id: string; spec: string }>(`/api/tasks/${id}/spec`),
 
   createSprint: (goal: string) =>
     request<Sprint>('/api/sprints', { method: 'POST', body: JSON.stringify({ goal }) }),

@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Plus, Save, Trash2, X } from 'lucide-react'
+import { ClipboardCopy, Plus, Save, Trash2, X } from 'lucide-react'
 import type { Sprint, Task, TaskPriority, TaskStatus } from '../types'
 import { TASK_PRIORITIES } from '../types'
+import { api } from '../api'
 
 interface Props {
   task: Task
@@ -25,6 +26,18 @@ export function TaskModal({ task, sprints, statuses, onSave, onDelete, onClose }
   const [tags, setTags] = useState(task.tags.join(', '))
   const [criteria, setCriteria] = useState<string[]>(task.acceptanceCriteria)
   const [criteriaInput, setCriteriaInput] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const copySpec = async () => {
+    try {
+      const { spec } = await api.getTaskSpec(task.id)
+      await navigator.clipboard.writeText(spec)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   const dirty =
     title !== task.title ||
@@ -197,6 +210,14 @@ export function TaskModal({ task, sprints, statuses, onSave, onDelete, onClose }
             className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-950/40"
           >
             <Trash2 className="h-3.5 w-3.5" /> Delete
+          </button>
+          <button
+            onClick={copySpec}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+            title="Copy a ready-made agent prompt for this task"
+          >
+            {copied ? <ClipboardCopy className="h-3.5 w-3.5 text-emerald-400" /> : <ClipboardCopy className="h-3.5 w-3.5" />}
+            {copied ? 'Copied!' : 'Copy spec'}
           </button>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">

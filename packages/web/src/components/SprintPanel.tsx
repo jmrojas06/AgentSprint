@@ -7,12 +7,13 @@ interface Props {
   sprints: Sprint[]
   activeSprintId: number | null
   tasksBySprint: Map<number, number>
+  doneBySprint: Map<number, number>
   onActivate: (id: number) => void
   onClose: (id: number) => void
   onCreate: (goal: string) => void
 }
 
-export function SprintPanel({ sprints, activeSprintId, tasksBySprint, onActivate, onClose, onCreate }: Props) {
+export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySprint, onActivate, onClose, onCreate }: Props) {
   const [goal, setGoal] = useState('')
 
   const submit = (e: React.FormEvent) => {
@@ -47,6 +48,9 @@ export function SprintPanel({ sprints, activeSprintId, tasksBySprint, onActivate
       <ul className="space-y-1.5">
         {sprints.map((s) => {
           const active = s.id === activeSprintId
+          const total = tasksBySprint.get(s.id) ?? 0
+          const done = doneBySprint.get(s.id) ?? 0
+          const pct = total === 0 ? 0 : Math.round((done / total) * 100)
           return (
             <li key={s.id} className={cx('rounded-md border p-2', active ? 'border-indigo-600/60 bg-indigo-950/30' : 'border-zinc-800')}>
               <div className="flex items-center gap-2">
@@ -59,10 +63,18 @@ export function SprintPanel({ sprints, activeSprintId, tasksBySprint, onActivate
                   <Circle className="h-3 w-3 text-zinc-600" />
                 )}
                 <span className="ml-auto text-[11px] text-zinc-500">
-                  {tasksBySprint.get(s.id) ?? 0} tasks
+                  {done}/{total} {total > 0 && `· ${pct}%`}
                 </span>
               </div>
               <p className="mt-1 text-xs text-zinc-300">{s.goal || <i className="text-zinc-600">No goal</i>}</p>
+              {total > 0 && (
+                <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className={cx('h-full rounded-full', pct === 100 ? 'bg-emerald-500' : 'bg-indigo-500')}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              )}
               <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
                 <span className="text-zinc-500">{fmtDate(s.startedAt)}</span>
                 <span className="ml-auto flex gap-1">

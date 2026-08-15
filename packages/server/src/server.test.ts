@@ -92,4 +92,23 @@ describe('server API', () => {
     const state = await api('get', '/api/project')
     expect(state.json().tasks).toHaveLength(2)
   })
+
+  it('returns a task spec', async () => {
+    const { status, json } = await api('get', '/api/tasks/TK-1/spec')
+    expect(status).toBe(200)
+    expect(json().spec).toContain('# TK-1')
+    expect(json().spec).toContain('## Acceptance criteria')
+  })
+
+  it('returns sprint stats', async () => {
+    const { status, json } = await api('get', '/api/sprints/1/stats')
+    expect(status).toBe(200)
+    expect(json().total).toBe(2)
+    expect(json().completionPct).toBe(0)
+  })
+
+  it('returns board-wide stats', async () => {
+    const { json } = await api('get', '/api/stats')
+    expect(json().total).toBe(3)
+  })
 })

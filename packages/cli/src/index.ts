@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { ProjectStore } from '@agentsprint/core'
+import { ProjectStore, buildTaskSpec } from '@agentsprint/core'
 import { startServer } from '@agentsprint/server'
 
 const VERSION = '0.1.0'
@@ -17,6 +17,7 @@ Usage:
 Commands:
   init [dir]        Scaffold a board in the directory (default: current dir)
   serve [dir]       Start the server + UI (default command)
+  spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
   help              Show this help
 
 Options (serve):
@@ -31,6 +32,7 @@ Options (serve):
 interface Args {
   command: string
   dir: string
+  taskId?: string
   port: number
   host: string
   open: boolean
@@ -38,8 +40,14 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args | null {
-  let command = 'serve'
-  let dir = process.cwd()
+  const commands = new Set(['init', 'serve', 'spec', 'help'])
+  let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
+  if (command === 'help') {
+    printHelp()
+    return null
+  }
+
+  const positional: string[] = []
   let port = 4310
   let host = '127.0.0.1'
   let open = true
@@ -49,7 +57,6 @@ function parseArgs(argv: string[]): Args | null {
     const arg = argv[i]!
     switch (arg) {
       case '--help':
-      case 'help':
       case '-h':
         printHelp()
         return null
@@ -74,19 +81,19 @@ function parseArgs(argv: string[]): Args | null {
           console.error(`Unknown option: ${arg}`)
           process.exit(1)
         }
-        if (command === 'serve' && arg !== 'serve' && dir === process.cwd()) {
-          if (arg === 'init' || arg === 'serve') {
-            command = arg
-          } else {
-            dir = path.resolve(arg)
-          }
-        } else if (arg === 'init' || arg === 'serve') {
-          command = arg
-        } else {
-          dir = path.resolve(arg)
-        }
+        positional.push(arg)
     }
   }
+
+  if (command === 'spec') {
+    if (positional.length < 1 || positional.length > 2) {
+      console.error('Usage: agentboard spec <dir> <task-id>')
+      process.exit(1)
+    }
+    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init }
+  }
+
+  const dir = positional[0] ? path.resolve(positional[0]) : process.cwd()
   return { command, dir, port, host, open, init }
 }
 
@@ -166,12 +173,30 @@ function openBrowser(url: string): void {
   }
 }
 
+async function cmdSpec(dir: string, taskId: string): Promise<void> {
+  const store = ProjectStore.open(dir)
+  const state = store.state
+  const task = state.tasks.find((t) => t.id === taskId)
+  if (!task) {
+    console.error(`Task not found: ${taskId}`)
+    process.exit(1)
+  }
+  const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
+  process.stdout.write(buildTaskSpec(task, sprint, state.config.name) + '\n')
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   if (!args) return
 
   if (args.command === 'init') {
     await cmdInit(args.dir)
+  } else if (args.command === 'spec') {
+    if (!args.taskId) {
+      console.error('Usage: agentboard spec <dir> <task-id>')
+      process.exit(1)
+    }
+    await cmdSpec(args.dir, args.taskId)
   } else {
     await cmdServe(args)
   }

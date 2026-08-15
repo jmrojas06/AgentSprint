@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import type { ProjectStore, TaskInput, TaskStatus } from '@agentsprint/core'
+import { buildTaskSpec, computeSprintStats } from '@agentsprint/core'
 import type { Broadcast } from './broadcast.js'
 import type { TaskIndex } from './indexdb.js'
 
@@ -53,6 +54,16 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
     return reply.send(task)
   })
 
+  app.get('/api/tasks/:id/spec', async (req, reply) => {
+    const id = (req.params as { id: string }).id
+    const state = store.state
+    const task = state.tasks.find((t) => t.id === id)
+    if (!task) return sendError(reply, 404, `Task not found: ${id}`)
+    const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
+    const spec = buildTaskSpec(task, sprint, state.config.name)
+    return reply.send({ id, spec })
+  })
+
   app.put('/api/tasks/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id
     const patch = req.body as Partial<TaskInput>
@@ -94,6 +105,14 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
   // ── sprints ──────────────────────────────────────────────────────────
 
   app.get('/api/sprints', async () => store.state.sprints)
+
+  app.get('/api/sprints/:id/stats', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id)
+    if (!store.state.sprints.some((s) => s.id === id)) return sendError(reply, 404, `Sprint not found: ${id}`)
+    return reply.send(computeSprintStats(store.state.tasks, id))
+  })
+
+  app.get('/api/stats', async () => computeSprintStats(store.state.tasks, null))
 
   app.post('/api/sprints', async (req, reply) => {
     const { goal } = (req.body ?? {}) as { goal?: string }
