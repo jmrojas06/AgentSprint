@@ -49,7 +49,8 @@
   - MCP: tool `brand_get`; `task_spec` inyecta brand.
   - Tests: core 17, mcp 11, server 11, cli 4 (43 total).
 - [x] `docs/mcp.md` con setup para opencode / Claude Code / Cursor.
-- [ ] Probar de verdad el flujo MCP con un agente (opencode) sobre un repo real.
+- [x] **Probar el flujo de verdad con un agente (opencode) sobre un repo real**: Notely (`github.com/jmrojas06/notely`). Sprints 1-2 completos vía board (10 tareas), encontrando 2 bugs (parse warnings, `node:sqlite`+tsup) — ambos arreglados en `main`.
+- [x] **Auto-conectar el MCP en `agentboard serve`** — pendiente aún. Estado actual: MCP como proceso aparte (`--root <dir>`).
 - [ ] Auto-conectar el MCP en `agentboard serve` (opción `--mcp`).
 
 ### ⬜ Fase 4 — Pulido
@@ -74,8 +75,8 @@
 10. **Brand**: `.agentboard/brand.md` guarda `guidelines` en el body markdown y el resto en frontmatter. El template de init usa un comentario HTML `<!-- -->` (se filtra al leer) para que un board fresco NO se considere "con brand" y no se inyecten instrucciones placeholder en los specs.
 11. **`main()` a nivel de módulo**: en `cli` y `mcp` se invoca solo si es el entry point real (`import.meta.url === pathToFileURL(process.argv[1]).href`), para que importar los módulos en tests no dispare `process.exit`. Ya blindado en ambos.
 12. **CLI sin tests históricos**: se añadió `packages/cli/src/cli.test.ts` (parseArgs + cmdBrand). `console.log` no pasa por `process.stdout.write` en vitest → en CLI usar `process.stdout.write` para salida testeable.
-13. **Tareas que se caen en silencio si el frontmatter YAML no parsea**: un `title: Web: foo` SIN comillas rompe js-yaml (`: ` prohibido en scalars planos) → la tarea desaparece del board sin aviso. Detectado probando Notely. Fix en rama `fix/parse-warnings`: `ProjectStore.lastWarnings` + `console.warn` en `_load` (el archivo sigue en disco, no se borra). Al crear tareas vía API/UI el serializer comillas solo, así que solo afecta a archivos escritos a mano. Mejora pendiente: exponer warnings en `/api/project`.
-14. **`node:sqlite` se rompe al buildea con tsup/esbuild**: esbuild no conoce `node:sqlite` como builtin y reescribe el import a `sqlite` (bare) → en el `dist` compilado el índice SQLite falla en silencio y cae al fallback en memoria. Detectado al probar Notely (allí era crítico). Workaround probado: `createRequire(import.meta.url)` + `require('node:sqlite')`, que esbuild no reescribe. Pendiente aplicar el mismo workaround en `packages/server/src/indexdb.ts`.
+13. **Tareas que se caen en silencio si el frontmatter YAML no parsea**: un `title: Web: foo` SIN comillas rompe js-yaml (`: ` prohibido en scalars planos) → la tarea desaparece del board sin aviso. Detectado probando Notely. ✅ **Arreglado en `main`**: `ProjectStore.lastWarnings` + `console.warn` en `_load` (el archivo sigue en disco, no se borra). Al crear tareas vía API/UI el serializer comillas solo, así que solo afecta a archivos escritos a mano. Mejora pendiente: exponer warnings en `/api/project`.
+14. **`node:sqlite` se rompe al buildea con tsup/esbuild**: esbuild no conoce `node:sqlite` como builtin y reescribe el import a `sqlite` (bare) → en el `dist` compilado el índice SQLite fallaba en silencio y caía al fallback en memoria. Detectado al probar Notely (allí era crítico). ✅ **Arreglado en `main`** (`packages/server/src/indexdb.ts`): `createRequire(import.meta.url)` + `require('node:sqlite')`, que esbuild no reescribe. Test de regresión: `createIndex()` con `dbPath` de archivo crea el `.db` real (server tests 12).
 
 ---
 
