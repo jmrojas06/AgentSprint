@@ -69,4 +69,14 @@ describe('ProjectStore', () => {
     expect(store.state.tasks.find((t) => t.id === 'TK-1')).toBeUndefined()
     expect(fs.existsSync(path.join(dir, '.agentboard', 'tasks', 'TK-1.md'))).toBe(false)
   })
+
+  it('reports unparseable task files in lastWarnings', () => {
+    fs.writeFileSync(
+      path.join(dir, '.agentboard', 'tasks', 'TK-9.md'),
+      '---\nid: TK-9\ntitle: Web: colon breaks YAML\nstatus: To Do\n---\n',
+    )
+    const reopened = ProjectStore.open(dir)
+    expect(reopened.state.tasks.find((t) => t.id === 'TK-9')).toBeUndefined()
+    expect(reopened.lastWarnings.some((w) => w.includes('TK-9.md'))).toBe(true)
+  })
 })

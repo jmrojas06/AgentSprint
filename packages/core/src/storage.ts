@@ -61,6 +61,7 @@ export class ProjectStore extends EventEmitter {
   private tasks = new Map<string, TaskType>()
   private sprints = new Map<number, SprintType>()
   private taskMax = 0
+  private warnings: string[] = []
 
   private constructor(rootDir: string) {
     super()
@@ -137,13 +138,19 @@ export class ProjectStore extends EventEmitter {
     this.tasks.clear()
     this.sprints.clear()
     this.taskMax = 0
+    this.warnings = []
     this.brand = this._readBrand()
 
     if (fs.existsSync(this.tasksDir())) {
       for (const file of fs.readdirSync(this.tasksDir())) {
         if (!file.endsWith('.md')) continue
         const task = this._parseTaskFile(path.join(this.tasksDir(), file))
-        if (!task) continue
+        if (!task) {
+          const warning = `Task file not parseable (skipped): .agentboard/tasks/${file}. Check the YAML frontmatter — e.g. quote titles containing ": " like  title: "Web: foo".`
+          this.warnings.push(warning)
+          console.warn(`[agentboard] ${warning}`)
+          continue
+        }
         this.tasks.set(task.id, task)
         this._bumpTaskMax(task.id)
       }
@@ -197,6 +204,10 @@ export class ProjectStore extends EventEmitter {
   /** Re-scan the board from disk (used by the file watcher). */
   syncFromDisk(): void {
     this._load()
+  }
+
+  get lastWarnings(): readonly string[] {
+    return this.warnings
   }
 
   get state(): ProjectState {
