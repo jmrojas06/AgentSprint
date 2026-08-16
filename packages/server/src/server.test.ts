@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ProjectStore } from '@agentsprint/core'
 import { buildApp } from './index.js'
+import { createIndex } from './indexdb.js'
 import type { FastifyInstance } from 'fastify'
 
 let dir: string
@@ -127,5 +128,37 @@ describe('server API', () => {
     const spec = await api('get', '/api/tasks/TK-1/spec')
     expect(spec.json().spec).toContain('## Brand guidelines')
     expect(spec.json().spec).toContain('Acme Labs')
+  })
+})
+
+describe('createIndex', () => {
+  it('uses a real SQLite file (regression: tsup used to rewrite node:sqlite)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'as-index-'))
+    const dbPath = path.join(dir, 'search.db')
+    try {
+      const task: import('@agentsprint/core').Task = {
+        id: 'TK-42',
+        title: 'Hello from the index',
+        status: 'To Do',
+        sprint: 1,
+        priority: 'medium',
+        assignee: 'agent',
+        estimate: 0,
+        tags: [],
+        dependencies: [],
+        acceptanceCriteria: [],
+        description: '',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }
+      const index = await createIndex(dbPath)
+      index.rebuild([task])
+      expect(index.search('hello').length).toBe(1)
+      expect(index.search('nope').length).toBe(0)
+      await new Promise((r) => setTimeout(r, 50))
+      expect(fs.existsSync(dbPath)).toBe(true)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

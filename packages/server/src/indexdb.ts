@@ -1,4 +1,9 @@
 import type { Task } from '@agentsprint/core'
+import { createRequire } from 'node:module'
+
+// esbuild/tsup rewrites static `import 'node:sqlite'` to `import 'sqlite'`,
+// which breaks at runtime; `require('node:sqlite')` is left untouched.
+const requireBuiltin = createRequire(import.meta.url)
 
 export interface SearchOptions {
   status?: string
@@ -106,7 +111,7 @@ function sqliteIndex(dbPath: string, DatabaseSync: typeof import('node:sqlite')[
 /** Create the search index. Uses SQLite when available, in-memory otherwise. */
 export async function createIndex(dbPath?: string): Promise<TaskIndex> {
   try {
-    const { DatabaseSync } = await import('node:sqlite')
+    const { DatabaseSync } = requireBuiltin('node:sqlite') as typeof import('node:sqlite')
     return sqliteIndex(dbPath ?? ':memory:', DatabaseSync)
   } catch {
     return memoryIndex()
