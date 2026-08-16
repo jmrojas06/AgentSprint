@@ -1,7 +1,7 @@
 # AgentSprint — Progress log
 
 > Documento vivo. Actualizar después de cada sesión de trabajo.
-> Estado global: **Fase 1 completa (main) · Fase 2-3 en curso (rama `feat/mcp`) · Brand kit implementado (sin merge a main)**
+> Estado global: **Fase 1-3 en `main` (fases 2-3 + brand kit mergeados el 16-ago) · Fase 4+ en curso**
 
 > ⚠️ Regla: `main` = estable. Trabajar en ramas `feat/*`. Merge solo con typecheck/test/build verdes.
 
