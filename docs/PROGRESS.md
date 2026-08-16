@@ -75,6 +75,7 @@
 11. **`main()` a nivel de módulo**: en `cli` y `mcp` se invoca solo si es el entry point real (`import.meta.url === pathToFileURL(process.argv[1]).href`), para que importar los módulos en tests no dispare `process.exit`. Ya blindado en ambos.
 12. **CLI sin tests históricos**: se añadió `packages/cli/src/cli.test.ts` (parseArgs + cmdBrand). `console.log` no pasa por `process.stdout.write` en vitest → en CLI usar `process.stdout.write` para salida testeable.
 13. **Tareas que se caen en silencio si el frontmatter YAML no parsea**: un `title: Web: foo` SIN comillas rompe js-yaml (`: ` prohibido en scalars planos) → la tarea desaparece del board sin aviso. Detectado probando Notely. Fix en rama `fix/parse-warnings`: `ProjectStore.lastWarnings` + `console.warn` en `_load` (el archivo sigue en disco, no se borra). Al crear tareas vía API/UI el serializer comillas solo, así que solo afecta a archivos escritos a mano. Mejora pendiente: exponer warnings en `/api/project`.
+14. **`node:sqlite` se rompe al buildea con tsup/esbuild**: esbuild no conoce `node:sqlite` como builtin y reescribe el import a `sqlite` (bare) → en el `dist` compilado el índice SQLite falla en silencio y cae al fallback en memoria. Detectado al probar Notely (allí era crítico). Workaround probado: `createRequire(import.meta.url)` + `require('node:sqlite')`, que esbuild no reescribe. Pendiente aplicar el mismo workaround en `packages/server/src/indexdb.ts`.
 
 ---
 
