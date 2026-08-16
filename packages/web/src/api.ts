@@ -1,4 +1,5 @@
 import type {
+  Brand,
   ProjectConfig,
   ProjectState,
   Sprint,
@@ -41,4 +42,8 @@ export const api = {
 
   updateConfig: (patch: Partial<ProjectConfig>) =>
     request<ProjectConfig>('/api/config', { method: 'PUT', body: JSON.stringify(patch) }),
+
+  getBrand: () => request<Brand>('/api/brand'),
+  updateBrand: (patch: Partial<Brand>) =>
+    request<Brand>('/api/brand', { method: 'PUT', body: JSON.stringify(patch) }),
 }

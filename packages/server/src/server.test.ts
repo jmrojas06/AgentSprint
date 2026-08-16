@@ -111,4 +111,21 @@ describe('server API', () => {
     const { json } = await api('get', '/api/stats')
     expect(json().total).toBe(3)
   })
+
+  it('returns and updates the brand', async () => {
+    const initial = await api('get', '/api/brand')
+    expect(initial.json().name).toBe('')
+
+    const updated = await api('put', '/api/brand', {
+      name: 'Acme Labs',
+      colors: { primary: '#6366f1' },
+      guidelines: 'Use the primary color.',
+    })
+    expect(updated.status).toBe(200)
+    expect(updated.json().name).toBe('Acme Labs')
+
+    const spec = await api('get', '/api/tasks/TK-1/spec')
+    expect(spec.json().spec).toContain('## Brand guidelines')
+    expect(spec.json().spec).toContain('Acme Labs')
+  })
 })

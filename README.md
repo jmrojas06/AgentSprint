@@ -13,6 +13,7 @@ No accounts. No cloud. No lock-in. Your board is a folder in git.
 your-project/
 ├── .agentboard/              ← the board lives in your repo
 │   ├── config.yaml           ← workflow: columns & statuses
+│   ├── brand.md              ← company/brand kit (injected into task specs)
 │   ├── tasks/TK-1.md         ← one task = one Markdown file
 │   ├── sprints/sprint-1.md   ← sprint goal + state
 └── AGENTS.md                 ← tells any agent how to work here
@@ -57,19 +58,28 @@ can participate — just point it at your repo and it follows `AGENTS.md`.
   `status: To Do` → `status: In Progress` → `status: Review` → `status: Done`.
 - **Sprints are files too.** Activate one from the UI or by editing
   `sprints/sprint-1.md`.
-- **MCP server (roadmap).** A native MCP server is planned so agents can
-  claim tasks and report progress through tools instead of raw file edits.
+- **MCP server.** A native MCP server (`agentboard-mcp`) lets agents claim
+  tasks, list boards, and grab a task's spec through tools. See `docs/mcp.md`.
+- **Spec export.** One click (or `agentboard spec <dir> TK-1`) turns a task
+  into a self-contained prompt your agent can execute.
+- **Brand kit.** Configure your company identity, colors, fonts and design
+  files in `brand.md` — they get injected into every task spec so agents
+  follow your brand.
 
 ## Features
 
 - Kanban board with configurable columns (`config.yaml`)
-- Sprint management: plan, activate, close; task counts per sprint
+- Sprint management: plan, activate, close; task counts, progress bars and
+  per-sprint stats
 - Tasks with description, acceptance criteria, priority, estimate, tags,
   dependencies, and a `human`/`agent` assignee
+- Spec export (`buildTaskSpec`) with automatic brand-guideline injection
+- Brand kit editor (identity, color pickers, fonts, design assets, rules)
 - Real-time sync: edit files directly and the board updates instantly
   (file watcher), or click the board and files are written for you
 - Fast search over tasks via a SQLite index (zero native deps — built on
   Node's `node:sqlite`, with an in-memory fallback)
+- MCP server so AI agents can read/claim/complete tasks via tools
 - SPA served by the same server; also runs with `vite dev` for hacking
 
 ## Development
@@ -87,15 +97,17 @@ packages/
 ├── core/    # domain model + git-native storage (.agentboard/*.md)
 ├── server/  # Fastify: REST + SSE + file watcher + SQLite index
 ├── web/     # React + Vite + Tailwind board UI
-└── cli/     # the `agentboard` CLI (init / serve)
+├── cli/     # the `agentboard` CLI (init / serve / spec / brand)
+└── mcp/     # MCP server so agents read/claim/complete tasks
 ```
 
 ## Roadmap
 
 - [x] Git-native storage, domain model, REST API, kanban board
+- [x] MCP server — agents read/claim/complete tasks via tools
+- [x] Spec export: turn a task into a ready-made agent prompt
+- [x] Brand kit: company identity injected into task specs
 - [ ] Sprint engine polish: burndown, velocity, retro notes
-- [ ] **MCP server** — agents read/claim/complete tasks via tools
-- [ ] Spec export: turn a task into a ready-made agent prompt
 - [ ] Review gates, dependencies graph, activity log
 - [ ] npm publishing + Docker image + docs site
 

@@ -2,7 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { ProjectStore, buildTaskSpec } from '@agentsprint/core'
+import { pathToFileURL } from 'node:url'
+import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand } from '@agentsprint/core'
 import { startServer } from '@agentsprint/server'
 
 const VERSION = '0.1.0'
@@ -18,6 +19,7 @@ Commands:
   init [dir]        Scaffold a board in the directory (default: current dir)
   serve [dir]       Start the server + UI (default command)
   spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
+  brand [dir]       Print the company/brand kit for the project
   help              Show this help
 
 Options (serve):
@@ -39,8 +41,8 @@ interface Args {
   init: boolean
 }
 
-function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'help'])
+export function parseArgs(argv: string[]): Args | null {
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'help'])
   let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -91,6 +93,14 @@ function parseArgs(argv: string[]): Args | null {
       process.exit(1)
     }
     return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init }
+  }
+
+  if (command === 'brand') {
+    if (positional.length > 1) {
+      console.error('Usage: agentboard brand [dir]')
+      process.exit(1)
+    }
+    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init }
   }
 
   const dir = positional[0] ? path.resolve(positional[0]) : process.cwd()
@@ -182,7 +192,18 @@ async function cmdSpec(dir: string, taskId: string): Promise<void> {
     process.exit(1)
   }
   const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-  process.stdout.write(buildTaskSpec(task, sprint, state.config.name) + '\n')
+  process.stdout.write(buildTaskSpec(task, sprint, state.config.name, state.brand) + '\n')
+}
+
+export async function cmdBrand(dir: string): Promise<void> {
+  const store = ProjectStore.open(dir)
+  const brand = store.getBrand()
+  if (!hasBrand(brand)) {
+    process.stdout.write('No brand configured yet. Edit `.agentboard/brand.md` or use the UI, then run again.\n\n')
+    process.stdout.write(`Board: ${path.join(dir, '.agentboard')}\n`)
+    return
+  }
+  process.stdout.write(buildBrandSection(brand) + '\n')
 }
 
 async function main(): Promise<void> {
@@ -197,12 +218,17 @@ async function main(): Promise<void> {
       process.exit(1)
     }
     await cmdSpec(args.dir, args.taskId)
+  } else if (args.command === 'brand') {
+    await cmdBrand(args.dir)
   } else {
     await cmdServe(args)
   }
 }
 
-main().catch((err) => {
-  console.error(`\n${(err as Error).message}`)
-  process.exit(1)
-})
+const isEntry = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false
+if (isEntry) {
+  main().catch((err) => {
+    console.error(`\n${(err as Error).message}`)
+    process.exit(1)
+  })
+}

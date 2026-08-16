@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { GitBranch, Plus, Search } from 'lucide-react'
+import { GitBranch, Palette, Plus, Search, Square } from 'lucide-react'
 import type { ProjectState, Task } from './types'
 import { api } from './api'
 import { useProjectEvents } from './hooks/useProjectEvents'
@@ -7,9 +7,11 @@ import { Board } from './components/Board'
 import { SprintPanel } from './components/SprintPanel'
 import { TaskModal } from './components/TaskModal'
 import { NewTaskModal } from './components/NewTaskModal'
+import { BrandPanel } from './components/BrandPanel'
 import { cx } from './ui'
 
 type SprintFilter = 'all' | number
+type SideTab = 'sprints' | 'brand'
 
 export default function App() {
   const [project, setProject] = useState<ProjectState | null>(null)
@@ -18,6 +20,7 @@ export default function App() {
   const [sprintFilter, setSprintFilter] = useState<SprintFilter>('all')
   const [editing, setEditing] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
+  const [sideTab, setSideTab] = useState<SideTab>('sprints')
 
   const reload = useCallback(async () => {
     try {
@@ -173,24 +176,54 @@ export default function App() {
           <Board statuses={statuses} tasks={tasks} onOpen={setEditing} onMove={moveTask} />
         </div>
         <div className="hidden overflow-y-auto lg:block">
-          <SprintPanel
-            sprints={project.sprints}
-            activeSprintId={project.activeSprint?.id ?? null}
-            tasksBySprint={tasksBySprint}
-            doneBySprint={doneBySprint}
-            onActivate={async (id) => {
-              await api.updateSprint(id, { status: 'active' })
-              await reload()
-            }}
-            onClose={async (id) => {
-              await api.updateSprint(id, { status: 'closed' })
-              await reload()
-            }}
-            onCreate={async (goal) => {
-              await api.createSprint(goal)
-              await reload()
-            }}
-          />
+          <div className="mb-2 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
+            <button
+              onClick={() => setSideTab('sprints')}
+              className={cx(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                sideTab === 'sprints' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+              )}
+            >
+              <Square className="h-3 w-3" /> Sprints
+            </button>
+            <button
+              onClick={() => setSideTab('brand')}
+              className={cx(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                sideTab === 'brand' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+              )}
+            >
+              <Palette className="h-3 w-3" /> Brand
+            </button>
+          </div>
+          {sideTab === 'sprints' ? (
+            <SprintPanel
+              sprints={project.sprints}
+              activeSprintId={project.activeSprint?.id ?? null}
+              tasksBySprint={tasksBySprint}
+              doneBySprint={doneBySprint}
+              onActivate={async (id) => {
+                await api.updateSprint(id, { status: 'active' })
+                await reload()
+              }}
+              onClose={async (id) => {
+                await api.updateSprint(id, { status: 'closed' })
+                await reload()
+              }}
+              onCreate={async (goal) => {
+                await api.createSprint(goal)
+                await reload()
+              }}
+            />
+          ) : (
+            <BrandPanel
+              brand={project.brand}
+              onSave={async (patch) => {
+                await api.updateBrand(patch)
+                await reload()
+              }}
+            />
+          )}
         </div>
       </div>
 

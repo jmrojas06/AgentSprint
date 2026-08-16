@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
-import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES } from './types.js'
-import type { ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskStatus } from './types.js'
+import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand } from './types.js'
+import type { Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskStatus } from './types.js'
 
 const AGENTS_MD = `# AgentSprint instructions
 
@@ -17,12 +17,47 @@ This project uses a git-native sprint board under \`.agentboard/\`.
 4. When the task satisfies every acceptance criterion, set \`status: Review\` — a human reviews and moves it to \`Done\`.
 5. Never skip or rewrite tasks. Update the file, don't create duplicates.
 6. Prefer editing files directly over \`agentboard\` CLI/MCP when possible; the board UI reflects file changes instantly.
+7. If \`.agentboard/brand.md\` exists and is configured, follow the brand guidelines when writing code, copy or UI.
+`
+
+const BRAND_TEMPLATE = `---
+name: ""
+tagline: ""
+mission: ""
+tone: ""
+logo: ""
+colors:
+  primary: ""
+  secondary: ""
+  accent: ""
+  background: ""
+  text: ""
+fonts:
+  heading: ""
+  body: ""
+assets: []
+---
+
+<!--
+HOW TO USE THIS FILE (these comments are never injected into task specs).
+
+Your company/brand kit. Frontmatter is structured data (identity, colors,
+fonts, design files); the markdown body below is free-form brand rules.
+These rules are appended to every task spec so AI agents follow your brand
+when they work in this project.
+
+Fill the frontmatter fields above and write real guidelines below, for example:
+- Use the primary color for primary buttons.
+- Address users with a friendly, informal tone.
+- Keep UI copy short and imperative.
+-->
 `
 
 export class ProjectStore extends EventEmitter {
   readonly rootDir: string
   readonly boardDir: string
   private config: ProjectConfigType
+  private brand: BrandType = emptyBrand()
   private tasks = new Map<string, TaskType>()
   private sprints = new Map<number, SprintType>()
   private taskMax = 0
@@ -71,6 +106,9 @@ export class ProjectStore extends EventEmitter {
   private configPath(): string {
     return path.join(this.boardDir, 'config.yaml')
   }
+  private brandPath(): string {
+    return path.join(this.boardDir, 'brand.md')
+  }
   private tasksDir(): string {
     return path.join(this.boardDir, 'tasks')
   }
@@ -99,6 +137,7 @@ export class ProjectStore extends EventEmitter {
     this.tasks.clear()
     this.sprints.clear()
     this.taskMax = 0
+    this.brand = this._readBrand()
 
     if (fs.existsSync(this.tasksDir())) {
       for (const file of fs.readdirSync(this.tasksDir())) {
@@ -140,6 +179,21 @@ export class ProjectStore extends EventEmitter {
     }
   }
 
+  private _readBrand(): BrandType {
+    try {
+      if (!fs.existsSync(this.brandPath())) return emptyBrand()
+      const { data, body } = parseFrontmatter(fs.readFileSync(this.brandPath(), 'utf8'), Brand)
+      return { ...data, guidelines: body.replace(/<!--[\s\S]*?-->/g, '').trim() }
+    } catch {
+      return emptyBrand()
+    }
+  }
+
+  private _writeBrand(): void {
+    const { guidelines, ...data } = this.brand
+    fs.writeFileSync(this.brandPath(), serializeFrontmatter(data, guidelines), 'utf8')
+  }
+
   /** Re-scan the board from disk (used by the file watcher). */
   syncFromDisk(): void {
     this._load()
@@ -150,6 +204,7 @@ export class ProjectStore extends EventEmitter {
     return {
       rootDir: this.rootDir,
       config: this.config,
+      brand: this.brand,
       tasks: [...this.tasks.values()].sort((a, b) => a.id.localeCompare(b.id)),
       sprints: [...this.sprints.values()].sort((a, b) => a.id - b.id),
       activeSprint: active,
@@ -158,6 +213,18 @@ export class ProjectStore extends EventEmitter {
 
   getConfig(): ProjectConfigType {
     return this.config
+  }
+
+  getBrand(): BrandType {
+    return this.brand
+  }
+
+  updateBrand(patch: BrandPatch): BrandType {
+    const next = Brand.parse({ ...this.brand, ...patch, updatedAt: nowIso() })
+    this.brand = next
+    this._writeBrand()
+    this.emit('change')
+    return this.brand
   }
 
   updateConfig(patch: Partial<ProjectConfigType>): ProjectConfigType {
@@ -323,6 +390,10 @@ export class ProjectStore extends EventEmitter {
   private _createSample(): void {
     const agents = path.join(this.rootDir, 'AGENTS.md')
     if (!fs.existsSync(agents)) fs.writeFileSync(agents, AGENTS_MD, 'utf8')
+
+    if (!fs.existsSync(this.brandPath())) {
+      fs.writeFileSync(this.brandPath(), BRAND_TEMPLATE, 'utf8')
+    }
 
     const sprint = this.createSprint('Kickoff — learn the board')
     const now = nowIso()

@@ -60,7 +60,7 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
     const task = state.tasks.find((t) => t.id === id)
     if (!task) return sendError(reply, 404, `Task not found: ${id}`)
     const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-    const spec = buildTaskSpec(task, sprint, state.config.name)
+    const spec = buildTaskSpec(task, sprint, state.config.name, state.brand)
     return reply.send({ id, spec })
   })
 
@@ -145,6 +145,20 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
       const config = store.updateConfig(req.body as never)
       broadcast.send('config', config)
       return reply.send(config)
+    } catch (err) {
+      return sendError(reply, 400, (err as Error).message)
+    }
+  })
+
+  // ── brand ────────────────────────────────────────────────────────────
+
+  app.get('/api/brand', async () => store.getBrand())
+
+  app.put('/api/brand', async (req, reply) => {
+    try {
+      const brand = store.updateBrand(req.body as never)
+      broadcast.send('brand', brand)
+      return reply.send(brand)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
     }

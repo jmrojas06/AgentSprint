@@ -1,7 +1,7 @@
 # AgentSprint — Progress log
 
 > Documento vivo. Actualizar después de cada sesión de trabajo.
-> Estado global: **Fase 1 completa (main) · Fase 2-3 en curso (rama `feat/mcp`)**
+> Estado global: **Fase 1 completa (main) · Fase 2-3 en curso (rama `feat/mcp`) · Brand kit implementado (sin merge a main)**
 
 > ⚠️ Regla: `main` = estable. Trabajar en ramas `feat/*`. Merge solo con typecheck/test/build verdes.
 
@@ -37,10 +37,17 @@
 - [ ] Burndown temporal (por día).
 - [ ] Retro / learnings: archivo `memory/` para el siguiente sprint.
 
-### 🚧 Fase 3 — Integración con agentes (EN CURSO, rama `feat/mcp`)
+### ✅ Fase 3 — Integración con agentes (EN CURSO, rama `feat/mcp`)
 - [x] `AGENTS.md` generado por `init` (cualquier agente entiende el workflow).
-- [x] **Servidor MCP** (`packages/mcp`): 11 tools (`board_summary`, `task_list`, `task_get`, `task_create`, `task_update`, `task_status`, `task_claim`, `task_spec`, `sprint_current`, `sprint_list`, `sprint_activate`). Transporte stdio, `--root <dir>` o `AGENTSPRINT_ROOT`. 9 tests verdes.
+- [x] **Servidor MCP** (`packages/mcp`): 12 tools (`board_summary`, `task_list`, `task_get`, `task_create`, `task_update`, `task_status`, `task_claim`, `task_spec`, `sprint_current`, `sprint_list`, `sprint_activate`, `brand_get`). Transporte stdio, `--root <dir>` o `AGENTSPRINT_ROOT`. 11 tests verdes.
 - [x] **Spec export**: `buildTaskSpec()` en core + `GET /api/tasks/:id/spec` + CLI `agentboard spec <dir> TK-N` + botón "Copy spec" en el modal.
+- [x] **Brand kit** (`.agentboard/brand.md`): identidad, colores/fuentes, archivos de diseño y reglas de marca.
+  - Core: schema Zod `Brand`/`BrandAsset`, `emptyBrand()`/`hasBrand()`, `ProjectStore.getBrand()`/`updateBrand()` (merge+parse+write+emit), inyección en `buildTaskSpec()` vía `buildBrandSection()` (solo si `hasBrand()`).
+  - Server: `GET/PUT /api/brand` (+ broadcast SSE) y brand en `/api/project`; el spec de `/api/tasks/:id/spec` lo incluye.
+  - Web: `BrandPanel` (tabs Sprints | Brand en sidebar) con identidad, color pickers, fuentes, assets y guidelines.
+  - CLI: `agentboard brand [dir]` imprime el brand / avisa si no hay.
+  - MCP: tool `brand_get`; `task_spec` inyecta brand.
+  - Tests: core 17, mcp 11, server 11, cli 4 (43 total).
 - [x] `docs/mcp.md` con setup para opencode / Claude Code / Cursor.
 - [ ] Probar de verdad el flujo MCP con un agente (opencode) sobre un repo real.
 - [ ] Auto-conectar el MCP en `agentboard serve` (opción `--mcp`).
@@ -64,6 +71,9 @@
 7. **SDK MCP v1.30**: `InMemoryTransport.createLinkedPair()` devuelve una **tupla** `[clientTransport, serverTransport]` (no `{client, server}`). Y el orden importa: conectar el server ANTES que el client. Ver `packages/mcp/src/mcp.test.ts`.
 8. **MCP `task_create`**: si el `sprint` indicado no existe, devuelve error en texto (no lanza) — comportamiento intencionado para que el agente vea el motivo. Revisar que no haya campos `sprint` obsoletos.
 9. **El server y el CLI están desacoplados del MCP**: hoy hay que correr el MCP aparte. Pendiente opción `agentboard serve --mcp` para un solo proceso.
+10. **Brand**: `.agentboard/brand.md` guarda `guidelines` en el body markdown y el resto en frontmatter. El template de init usa un comentario HTML `<!-- -->` (se filtra al leer) para que un board fresco NO se considere "con brand" y no se inyecten instrucciones placeholder en los specs.
+11. **`main()` a nivel de módulo**: en `cli` y `mcp` se invoca solo si es el entry point real (`import.meta.url === pathToFileURL(process.argv[1]).href`), para que importar los módulos en tests no dispare `process.exit`. Ya blindado en ambos.
+12. **CLI sin tests históricos**: se añadió `packages/cli/src/cli.test.ts` (parseArgs + cmdBrand). `console.log` no pasa por `process.stdout.write` en vitest → en CLI usar `process.stdout.write` para salida testeable.
 
 ---
 

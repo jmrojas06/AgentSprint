@@ -23,7 +23,7 @@ beforeEach(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-mcp-'))
   store = ProjectStore.init(dir, { sample: true })
 
-  const server = createMcpServer(dir)
+  const server = createMcpServer(dir, { store })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   client = new Client({ name: 'test', version: '1.0.0' })
   await server.connect(serverTransport)
@@ -87,5 +87,23 @@ describe('MCP tools', () => {
     const current = (await callTool('sprint_current', {})) as { sprint: { id: number }; stats: { total: number } }
     expect(current.sprint.id).toBe(1)
     expect(current.stats.total).toBe(2)
+  })
+
+  it('brand_get reports brand after it is configured', async () => {
+    const empty = (await callTool('brand_get', {})) as { message?: string }
+    expect(empty.message).toContain('No brand configured')
+
+    store.updateBrand({ name: 'Acme Labs', colors: { primary: '#6366f1' } })
+    const brand = (await callTool('brand_get', {})) as { name: string; colors: { primary: string } }
+    expect(brand.name).toBe('Acme Labs')
+    expect(brand.colors.primary).toBe('#6366f1')
+  })
+
+  it('task_spec includes brand guidelines when configured', async () => {
+    store.updateBrand({ name: 'Acme Labs', guidelines: 'Always use primary.' })
+    const result = (await client.callTool({ name: 'task_spec', arguments: { id: 'TK-1' } })) as ToolResult
+    const spec = result.content[0]?.text ?? ''
+    expect(spec).toContain('## Brand guidelines')
+    expect(spec).toContain('Acme Labs')
   })
 })

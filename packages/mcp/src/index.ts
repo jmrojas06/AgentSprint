@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@agentsprint/core'
@@ -20,8 +21,8 @@ function textResponse(value: unknown): { content: Array<{ type: 'text'; text: st
   }
 }
 
-export function createMcpServer(rootDir: string): McpServer {
-  const store = ProjectStore.open(rootDir)
+export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }): McpServer {
+  const store = opts?.store ?? ProjectStore.open(rootDir)
   const projectName = store.getConfig().name
 
   const server = new McpServer({ name: 'agentsprint', version: '0.1.0' })
@@ -204,7 +205,29 @@ export function createMcpServer(rootDir: string): McpServer {
       const task = state.tasks.find((t) => t.id === id)
       if (!task) return textResponse(`Task not found: ${id}`)
       const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-      return textResponse(buildTaskSpec(task, sprint, projectName))
+      return textResponse(buildTaskSpec(task, sprint, projectName, store.getBrand()))
+    },
+  )
+
+  // ── brand ────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'brand_get',
+    {
+      title: 'Get brand guidelines',
+      description:
+        'Returns the company/brand kit: identity (name, tagline, mission, tone), design tokens (colors, fonts), design file locations and brand guidelines. Read this before building UI, copy or anything with a visible surface.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const brand = store.getBrand()
+      return textResponse(
+        Object.values(brand.colors).some((c) => c) ||
+          brand.name ||
+          brand.guidelines.trim()
+          ? brand
+          : { message: 'No brand configured. Edit .agentboard/brand.md or use the UI.' },
+      )
     },
   )
 
@@ -280,7 +303,10 @@ export async function main(argv: string[]): Promise<void> {
   await server.connect(new StdioServerTransport())
 }
 
-main(process.argv.slice(2)).catch((err: unknown) => {
-  process.stderr.write(`agentboard-mcp: ${err instanceof Error ? err.message : String(err)}\n`)
-  process.exit(1)
-})
+const isEntry = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false
+if (isEntry) {
+  main(process.argv.slice(2)).catch((err: unknown) => {
+    process.stderr.write(`agentboard-mcp: ${err instanceof Error ? err.message : String(err)}\n`)
+    process.exit(1)
+  })
+}
