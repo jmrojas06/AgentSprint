@@ -4,6 +4,7 @@ import { ProjectStore } from '@agentsprint/core'
 import { Broadcast } from './broadcast.js'
 import { createIndex, type TaskIndex } from './indexdb.js'
 import { createWatcher } from './watcher.js'
+import { recordBurndownSnapshot } from './metrics.js'
 import type { FSWatcher } from 'chokidar'
 
 export interface ProjectInfo {
@@ -72,9 +73,11 @@ export class ProjectManager {
       const store = ProjectStore.open(dir)
       const index = await createIndex()
       index.rebuild(store.state.tasks)
+      recordBurndownSnapshot(store)
       const broadcast = new Broadcast()
       const watcher = createWatcher(store, () => {
         index.rebuild(store.state.tasks)
+        recordBurndownSnapshot(store)
         broadcast.send('change', { project: name, at: new Date().toISOString() })
       })
       handles.push({

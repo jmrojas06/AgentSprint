@@ -1,5 +1,7 @@
 import type {
+  BoardState,
   Brand,
+  Burndown,
   ProjectConfig,
   ProjectState,
   ProjectInfo,
@@ -34,7 +36,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  project: () => request<ProjectState>('/api/project'),
+  project: () => request<BoardState>('/api/project'),
   projects: () => request<ProjectInfo[]>('/api/projects'),
   health: () => request<{ ok: boolean }>('/api/health'),
 
@@ -51,6 +53,8 @@ export const api = {
     request<Sprint>('/api/sprints', { method: 'POST', body: JSON.stringify({ goal }) }),
   updateSprint: (id: number, patch: Partial<{ goal: string; status: SprintStatus }>) =>
     request<Sprint>(`/api/sprints/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  sprintBurndown: (id: number) => request<Burndown>(`/api/sprints/${id}/burndown`),
+  sprintReport: (id: number) => request<{ report: string }>(`/api/sprints/${id}/report`),
 
   updateConfig: (patch: Partial<ProjectConfig>) =>
     request<ProjectConfig>('/api/config', { method: 'PUT', body: JSON.stringify(patch) }),

@@ -61,6 +61,12 @@
   - UI: selector de proyecto en el header (solo visible con >1 proyecto); todos los fetch llevan `?project=`.
   - Compose actualizado: **un solo contenedor `board`** monta `~/Documents/proyects` en `/projects` y sirve `notely` + `AgentSprint` (UI y `/mcp` en :4310). Se eliminó `boardsprint` (:4312). Ambos `opencode.json` apuntan a `http://127.0.0.1:4310/mcp`.
   - Tests: 49 verdes (core 18, mcp 12, server 15 incl. descubrimiento/`?project=`/`project_use`, cli 4).
+- [x] **Mejoras de uso (AS-4)**: burndown, drag & drop, banner de warnings, reporte de sprint.
+  - **Burndown**: `packages/server/src/metrics.ts` registra un snapshot diario del sprint activo en `.agentboard/metrics/sprint-<id>.json` (dedup por fecha; sobrevive reinicios). `GET /api/sprints/:id/burndown` + mini-chart SVG en `SprintPanel` (línea ideal punteada + línea real).
+  - **Drag & drop**: mover tareas entre columnas del kanban con HTML5 DnD (`Board.tsx`), highlight de columna al arrastrar.
+  - **Banner de warnings**: los archivos no parseables se muestran en la UI (dismissible), antes solo vía API/MCP.
+  - **Reporte**: `GET /api/sprints/:id/report` → Markdown (goal, fechas, stats, tareas por estado, sección retro) + botón de descarga `.md`.
+  - Tests: 51 verdes (core 18, mcp 12, server 17, cli 4).
 
 ### ⬜ Fase 4 — Pulido
 - Review gates, grafo de dependencias, activity log, temas claro/oscuro.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { GitBranch, Palette, Plus, Search, Square } from 'lucide-react'
-import type { ProjectState, Task } from './types'
+import { AlertTriangle, GitBranch, Palette, Plus, Search, Square, X } from 'lucide-react'
+import type { BoardState, ProjectState, Task } from './types'
 import { api, setProject } from './api'
 import { useProjectEvents } from './hooks/useProjectEvents'
 import { Board } from './components/Board'
@@ -14,7 +14,7 @@ type SprintFilter = 'all' | number
 type SideTab = 'sprints' | 'brand'
 
 export default function App() {
-  const [project, setProjectState] = useState<ProjectState | null>(null)
+  const [project, setProjectState] = useState<BoardState | null>(null)
   const [projects, setProjects] = useState<Array<{ name: string; rootDir: string; configName: string }>>([])
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -22,6 +22,7 @@ export default function App() {
   const [editing, setEditing] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
+  const [warningsDismissed, setWarningsDismissed] = useState(false)
 
   const reload = useCallback(async () => {
     try {
@@ -44,6 +45,10 @@ export default function App() {
       await reload()
     })()
   }, [reload])
+
+  useEffect(() => {
+    setWarningsDismissed(false)
+  }, [project?.rootDir])
 
   useProjectEvents(reload)
 
@@ -202,6 +207,30 @@ export default function App() {
           )}
           <span className="ml-auto font-mono">{project.tasks.length} tasks</span>
         </div>
+
+        {project.warnings && project.warnings.length > 0 && !warningsDismissed && (
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-600/50 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                {project.warnings.length} file{project.warnings.length === 1 ? '' : 's'} not parseable
+              </p>
+              <ul className="mt-1 space-y-0.5 break-words">
+                {project.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+              <p className="mt-1 text-amber-400/80">Fix the YAML frontmatter — e.g. quote titles containing &quot;: &quot;.</p>
+            </div>
+            <button
+              onClick={() => setWarningsDismissed(true)}
+              className="shrink-0 rounded p-0.5 text-amber-400/70 hover:text-amber-200"
+              title="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="grid flex-1 grid-cols-1 gap-3 overflow-hidden p-3 lg:grid-cols-[1fr_280px]">

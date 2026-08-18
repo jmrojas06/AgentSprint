@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@agentsprint/core'
 import { buildTaskSpec, computeSprintStats } from '@agentsprint/core'
 import type { ProjectHandle, ProjectManager } from './projects.js'
+import { readBurndown } from './metrics.js'
 
 function sendError(reply: FastifyReply, status: number, message: string): void {
   reply.code(status).send({ error: message })
@@ -114,6 +115,47 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     const store = projects.get(projectName(req)).store
     if (!store.state.sprints.some((s) => s.id === id)) return sendError(reply, 404, `Sprint not found: ${id}`)
     return reply.send(computeSprintStats(store.state.tasks, id))
+  })
+
+  app.get('/api/sprints/:id/burndown', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id)
+    const store = projects.get(projectName(req)).store
+    if (!store.state.sprints.some((s) => s.id === id)) return sendError(reply, 404, `Sprint not found: ${id}`)
+    const total = store.state.tasks.filter((t) => t.sprint === id).length
+    const { startedAt, points } = readBurndown(store, id)
+    return reply.send({ sprintId: id, total, startedAt, points })
+  })
+
+  app.get('/api/sprints/:id/report', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id)
+    const store = projects.get(projectName(req)).store
+    const state = store.state
+    const sprint = state.sprints.find((s) => s.id === id)
+    if (!sprint) return sendError(reply, 404, `Sprint not found: ${id}`)
+    const tasks = state.tasks.filter((t) => t.sprint === id)
+    const stats = computeSprintStats(tasks, id)
+    const statuses = state.config.workflow.statuses
+    const group = (status: string) => tasks.filter((t) => t.status === status)
+    const lines: string[] = [
+      `# Sprint ${sprint.id} — ${sprint.goal || 'No goal'}`,
+      '',
+      `- **Status**: ${sprint.status}`,
+      `- **Started**: ${sprint.startedAt ?? '—'}`,
+      `- **Ended**: ${sprint.endedAt ?? '—'}`,
+      `- **Progress**: ${stats.done}/${stats.total} tasks done (${stats.completionPct}%)`,
+      '',
+      '## Tasks',
+    ]
+    for (const status of statuses) {
+      const list = group(status)
+      lines.push('', `### ${status} (${list.length})`, '')
+      if (list.length === 0) lines.push('_none_', '')
+      for (const t of list) {
+        lines.push(`- [${t.priority}] **${t.id}** — ${t.title}${t.assignee ? ` (${t.assignee})` : ''}`)
+      }
+    }
+    lines.push('', '## Retro', '', '_Pendiente: qué fue bien, qué no, qué mejorar._')
+    return reply.send({ report: lines.join('\n') })
   })
 
   app.get('/api/stats', async (req) => {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ProjectStore } from '@agentsprint/core'
 import { buildApp } from './index.js'
 import { createIndex } from './indexdb.js'
+import { recordBurndownSnapshot } from './metrics.js'
 import type { FastifyInstance } from 'fastify'
 
 let dir: string
@@ -106,6 +107,26 @@ describe('server API', () => {
     expect(status).toBe(200)
     expect(json().total).toBe(2)
     expect(json().completionPct).toBe(0)
+  })
+
+  it('records and serves a daily burndown', async () => {
+    await api('patch', '/api/sprints/1', { status: 'active' })
+    store.syncFromDisk()
+    recordBurndownSnapshot(store)
+    const { status, json } = await api('get', '/api/sprints/1/burndown')
+    expect(status).toBe(200)
+    expect(json().sprintId).toBe(1)
+    expect(json().total).toBe(2)
+    expect(json().points.length).toBeGreaterThan(0)
+    expect(json().points[0].remaining).toBe(2)
+  })
+
+  it('returns a markdown sprint report', async () => {
+    const { status, json } = await api('get', '/api/sprints/1/report')
+    expect(status).toBe(200)
+    expect(json().report).toContain('# Sprint 1')
+    expect(json().report).toContain('## Tasks')
+    expect(json().report).toContain('TK-1')
   })
 
   it('returns board-wide stats', async () => {

@@ -1,7 +1,9 @@
 import { useState } from 'react'
-import { CheckCircle2, Circle, Play, Plus, Square } from 'lucide-react'
+import { CheckCircle2, Circle, FileDown, Play, Plus, Square } from 'lucide-react'
 import type { Sprint } from '../types'
+import { api } from '../api'
 import { cx, fmtDate } from '../ui'
+import { BurndownChart } from './BurndownChart'
 
 interface Props {
   sprints: Sprint[]
@@ -11,6 +13,21 @@ interface Props {
   onActivate: (id: number) => void
   onClose: (id: number) => void
   onCreate: (goal: string) => void
+}
+
+async function downloadReport(id: number): Promise<void> {
+  try {
+    const { report } = await api.sprintReport(id)
+    const blob = new Blob([report], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `sprint-${id}-report.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    /* ignore */
+  }
 }
 
 export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySprint, onActivate, onClose, onCreate }: Props) {
@@ -78,6 +95,13 @@ export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySpri
               <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
                 <span className="text-zinc-500">{fmtDate(s.startedAt)}</span>
                 <span className="ml-auto flex gap-1">
+                  <button
+                    onClick={() => downloadReport(s.id)}
+                    className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400 hover:bg-zinc-700"
+                    title="Download sprint report (.md)"
+                  >
+                    <FileDown className="h-3 w-3" />
+                  </button>
                   {!active && s.status === 'planned' && (
                     <button
                       onClick={() => onActivate(s.id)}
@@ -107,6 +131,8 @@ export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySpri
           )
         })}
       </ul>
+
+      {activeSprintId != null && <BurndownChart sprintId={activeSprintId} />}
     </div>
   )
 }
