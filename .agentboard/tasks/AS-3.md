@@ -1,7 +1,7 @@
 ---
 id: AS-3
-title: Multi-proyecto: un server sirve varios proyectos con selector
-status: Review
+title: "Multi-proyecto: un server sirve varios proyectos con selector"
+status: Done
 sprint: 1
 priority: high
 assignee: agent
