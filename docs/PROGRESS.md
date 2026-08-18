@@ -54,6 +54,13 @@
 - [x] **Warnings de parseo expuestos**: `GET /api/project` ahora incluye `warnings` (`ProjectStore.lastWarnings`) y `board_summary` del MCP avisa con un campo `warnings`. Tests añadidos (server + mcp).
 - [x] **Board propio de AgentSprint** (dogfooding): `.agentboard/` con sprint "Robustez + conectividad" (AS-1 warnings, AS-2 MCP-over-HTTP). El propio repo se gestiona con su board.
 - [x] **Docker**: `Dockerfile` multi-stage (build monorepo → run `agentboard serve`). `docker-compose.yml` en `~/Documents/proyects/` orquesta 3 servicios siempre activos (`restart: always`): `board` (Notely, :4310), `boardsprint` (AgentSprint self-host, :4312) y `notely` (app :4311, un contenedor sirve web+API con `@fastify/static`). Ambos boards con `--mcp`. `opencode.json` de los dos repos apunta al MCP **remoto** por URL.
+- [x] **Multi-proyecto (AS-3)**: un solo `agentboard serve <base>` descubre todos los proyectos (carpetas con `.agentboard/`) bajo una carpeta base y no mezcla nada.
+  - `ProjectManager` (`packages/server/src/projects.ts`) abre un store+index+broadcast+watcher por proyecto (lazy por nombre).
+  - API: `GET /api/projects` + todas las rutas se resuelven por `?project=<name>` (default = primer proyecto por orden alfabético). `/api/project` sigue igual.
+  - MCP: nuevas tools `project_list`, `project_current`, `project_use` — el agente **fija el proyecto activo** y todas las demás tools operan sobre él (estado por sesión). `board_summary` refleja el proyecto activo.
+  - UI: selector de proyecto en el header (solo visible con >1 proyecto); todos los fetch llevan `?project=`.
+  - Compose actualizado: **un solo contenedor `board`** monta `~/Documents/proyects` en `/projects` y sirve `notely` + `AgentSprint` (UI y `/mcp` en :4310). Se eliminó `boardsprint` (:4312). Ambos `opencode.json` apuntan a `http://127.0.0.1:4310/mcp`.
+  - Tests: 49 verdes (core 18, mcp 12, server 15 incl. descubrimiento/`?project=`/`project_use`, cli 4).
 
 ### ⬜ Fase 4 — Pulido
 - Review gates, grafo de dependencias, activity log, temas claro/oscuro.

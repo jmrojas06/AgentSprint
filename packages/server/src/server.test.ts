@@ -144,6 +144,111 @@ describe('server API', () => {
   })
 })
 
+describe('multi-project', () => {
+  function parseMcpRes(body: string): unknown {
+    if (body.startsWith('event:')) {
+      const data = body
+        .split('\n')
+        .filter((l) => l.startsWith('data: '))
+        .map((l) => l.slice(6))
+        .join('\n')
+      return JSON.parse(data)
+    }
+    return JSON.parse(body)
+  }
+
+  async function mcpCall(a: ReturnType<typeof buildApp> extends Promise<infer T> ? T : never, sessionId: string, id: number, method: string, params: Record<string, unknown>) {
+    return a.app.inject({
+      method: 'POST',
+      url: '/mcp',
+      payload: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-session-id': sessionId },
+    })
+  }
+
+  it('discovers projects, scopes routes by ?project= and lets the MCP switch active project', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-multi-'))
+    try {
+      ProjectStore.init(path.join(base, 'math'), { sample: true })
+      ProjectStore.init(path.join(base, 'ai'), { sample: true })
+      const built = await buildApp({ rootDir: base, mcp: true })
+      const a = built.app
+
+      const list = await a.inject({ method: 'GET', url: '/api/projects' })
+      expect(list.statusCode).toBe(200)
+      const projects = list.json() as Array<{ name: string; rootDir: string }>
+      expect(projects.map((p) => p.name).sort()).toEqual(['ai', 'math'])
+
+      const defaultProject = await a.inject({ method: 'GET', url: '/api/project' })
+      expect(defaultProject.json().rootDir).toBe(path.join(base, 'ai'))
+
+      const scoped = await a.inject({ method: 'GET', url: '/api/project?project=math' })
+      expect(scoped.json().rootDir).toBe(path.join(base, 'math'))
+
+      const created = await a.inject({
+        method: 'POST',
+        url: '/api/tasks?project=math',
+        payload: { title: 'Only in math', description: 'x', priority: 'medium', assignee: 'agent' },
+      })
+      expect(created.statusCode).toBe(201)
+      const otherProject = await a.inject({ method: 'GET', url: '/api/tasks?project=ai' })
+      expect(otherProject.json().some((t: { title: string }) => t.title === 'Only in math')).toBe(false)
+
+      // MCP: initialize a session, switch active project, verify scoping
+      const init = await a.inject({
+        method: 'POST',
+        url: '/mcp',
+        payload: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0.0' } },
+        }),
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      })
+      const sessionId = String(init.headers['mcp-session-id'])
+      await mcpCall(built, sessionId, 2, 'notifications/initialized', {}).catch(() => {})
+
+      const listRes = await mcpCall(built, sessionId, 3, 'tools/call', {
+        name: 'project_list',
+        arguments: {},
+      })
+      const projList = (parseMcpRes(listRes.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text
+      const parsed = JSON.parse(projList) as Array<{ name: string }>
+      expect(parsed.map((p) => p.name).sort()).toEqual(['ai', 'math'])
+
+      const useRes = await mcpCall(built, sessionId, 4, 'tools/call', {
+        name: 'project_use',
+        arguments: { name: 'math' },
+      })
+      expect((parseMcpRes(useRes.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain('math')
+
+      const currentRes = await mcpCall(built, sessionId, 5, 'tools/call', {
+        name: 'project_current',
+        arguments: {},
+      })
+      expect((parseMcpRes(currentRes.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain('"name": "math"')
+
+      const badUse = await mcpCall(built, sessionId, 6, 'tools/call', {
+        name: 'project_use',
+        arguments: { name: 'nope' },
+      })
+      expect((parseMcpRes(badUse.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain('Error')
+
+      const tasksRes = await mcpCall(built, sessionId, 7, 'tools/call', {
+        name: 'task_list',
+        arguments: {},
+      })
+      const tasksText = (parseMcpRes(tasksRes.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text
+      expect(tasksText).toContain('Only in math')
+
+      await built.close()
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('MCP over HTTP', () => {
   function parseMcpRes(body: string): unknown {
     if (body.startsWith('event:')) {
@@ -197,7 +302,11 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(12)
+      expect(tools.length).toBe(15)
+      const names = tools.map((t) => t.name)
+      expect(names).toContain('project_list')
+      expect(names).toContain('project_current')
+      expect(names).toContain('project_use')
 
       await built.close()
     } finally {

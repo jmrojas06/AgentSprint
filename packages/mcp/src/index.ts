@@ -10,7 +10,20 @@ import type { SprintStatus, TaskInput } from '@agentsprint/core'
 
 const STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 
-function textResponse(value: unknown): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
+/**
+ * Multi-project provider used by the HTTP MCP route. Lets the agent see and
+ * switch between the projects served by the board, and resolves the active
+ * project's store for every tool call.
+ */
+export interface ProjectProvider {
+  list(): Array<{ name: string; rootDir: string; configName: string }>
+  current(): string
+  use(name: string): void
+  store(): ProjectStore
+  rootDir(): string
+}
+
+export function textResponse(value: unknown): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
   return {
     content: [
       {
@@ -21,11 +34,71 @@ function textResponse(value: unknown): { content: Array<{ type: 'text'; text: st
   }
 }
 
-export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }): McpServer {
-  const store = opts?.store ?? ProjectStore.open(rootDir)
-  const projectName = store.getConfig().name
+export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?: { store?: ProjectStore }): McpServer {
+  let provider: ProjectProvider | null = null
+  let baseRoot: string
+  let baseStore: ProjectStore
+
+  if (typeof rootOrProvider === 'string') {
+    baseRoot = rootOrProvider
+    baseStore = opts?.store ?? ProjectStore.open(baseRoot)
+  } else {
+    provider = rootOrProvider
+    baseRoot = provider.rootDir()
+    baseStore = provider.store()
+  }
+
+  const getStore = (): ProjectStore => (provider ? provider.store() : baseStore)
+  const getProjectName = (): string => getStore().getConfig().name || ''
 
   const server = new McpServer({ name: 'agentsprint', version: '0.1.0' })
+
+  // ── projects (multi-project only) ────────────────────────────────────
+
+  if (provider) {
+    server.registerTool(
+      'project_list',
+      {
+        title: 'List projects',
+        description:
+          'List every project served by this board (name, rootDir, configName). Use project_use to pick the one you are working on.',
+        inputSchema: z.object({}),
+      },
+      async () => textResponse(provider!.list()),
+    )
+
+    server.registerTool(
+      'project_current',
+      {
+        title: 'Current project',
+        description: 'Show which project is currently active, so you never work on the wrong folder.',
+        inputSchema: z.object({}),
+      },
+      async () => {
+        const name = provider!.current()
+        const info = provider!.list().find((p) => p.name === name)
+        return textResponse(info ?? { name })
+      },
+    )
+
+    server.registerTool(
+      'project_use',
+      {
+        title: 'Switch project',
+        description:
+          'Set the active project. Call project_list first to see the available names, then project_use with the exact name. All task/sprint/brand tools operate on the active project.',
+        inputSchema: z.object({ name: z.string().min(1) }),
+      },
+      async ({ name }) => {
+        try {
+          provider!.use(name)
+          return textResponse({ ok: true, activeProject: provider!.current() })
+        } catch (err) {
+          return textResponse(`Error: ${(err as Error).message}`)
+        }
+      },
+    )
+  }
 
   // ── board ────────────────────────────────────────────────────────────
 
@@ -38,10 +111,11 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
       inputSchema: z.object({}),
     },
     async () => {
+      const store = getStore()
       const state = store.state
       const stats = computeSprintStats(state.tasks, null)
       return textResponse({
-        project: projectName,
+        project: getProjectName(),
         rootDir: store.rootDir,
         activeSprint: state.activeSprint,
         counts: {
@@ -74,6 +148,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
       }),
     },
     async ({ status, sprint, assignee, q }) => {
+      const store = getStore()
       let tasks = store.state.tasks
       if (status) tasks = tasks.filter((t) => t.status === status)
       if (sprint) tasks = tasks.filter((t) => t.sprint === sprint)
@@ -94,7 +169,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
       inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-\d+$/) }),
     },
     async ({ id }) => {
-      const task = store.state.tasks.find((t) => t.id === id)
+      const task = getStore().state.tasks.find((t) => t.id === id)
       if (!task) return textResponse(`Task not found: ${id}`)
       return textResponse(task)
     },
@@ -120,7 +195,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
     },
     async (input) => {
       try {
-        const task = store.createTask(input as TaskInput)
+        const task = getStore().createTask(input as TaskInput)
         return textResponse(task)
       } catch (err) {
         return textResponse(`Error: ${(err as Error).message}`)
@@ -147,7 +222,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
     },
     async ({ id, ...patch }) => {
       try {
-        const task = store.updateTask(id, patch)
+        const task = getStore().updateTask(id, patch)
         return textResponse(task)
       } catch (err) {
         return textResponse(`Error: ${(err as Error).message}`)
@@ -167,7 +242,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
     },
     async ({ id, status }) => {
       try {
-        const task = store.setTaskStatus(id, status)
+        const task = getStore().setTaskStatus(id, status)
         return textResponse(task)
       } catch (err) {
         return textResponse(`Error: ${(err as Error).message}`)
@@ -185,7 +260,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
     },
     async ({ id }) => {
       try {
-        const task = store.updateTask(id, { status: 'In Progress', assignee: 'agent' })
+        const task = getStore().updateTask(id, { status: 'In Progress', assignee: 'agent' })
         return textResponse(task)
       } catch (err) {
         return textResponse(`Error: ${(err as Error).message}`)
@@ -202,11 +277,12 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
       inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-\d+$/) }),
     },
     async ({ id }) => {
+      const store = getStore()
       const state = store.state
       const task = state.tasks.find((t) => t.id === id)
       if (!task) return textResponse(`Task not found: ${id}`)
       const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-      return textResponse(buildTaskSpec(task, sprint, projectName, store.getBrand()))
+      return textResponse(buildTaskSpec(task, sprint, getProjectName(), store.getBrand()))
     },
   )
 
@@ -221,7 +297,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
       inputSchema: z.object({}),
     },
     async () => {
-      const brand = store.getBrand()
+      const brand = getStore().getBrand()
       return textResponse(
         Object.values(brand.colors).some((c) => c) ||
           brand.name ||
@@ -243,6 +319,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
       inputSchema: z.object({}),
     },
     async () => {
+      const store = getStore()
       const state = store.state
       const active = state.activeSprint
       if (!active) return textResponse({ activeSprint: null, message: 'No active sprint. Use sprint_activate to start one.' })
@@ -262,7 +339,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
       description: 'List all sprints with their status (planned / active / closed).',
       inputSchema: z.object({}),
     },
-    async () => textResponse(store.state.sprints),
+    async () => textResponse(getStore().state.sprints),
   )
 
   server.registerTool(
@@ -274,7 +351,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
     },
     async ({ id }) => {
       try {
-        const sprint = store.setSprintStatus(id, 'active' as SprintStatus)
+        const sprint = getStore().setSprintStatus(id, 'active' as SprintStatus)
         return textResponse(sprint)
       } catch (err) {
         return textResponse(`Error: ${(err as Error).message}`)

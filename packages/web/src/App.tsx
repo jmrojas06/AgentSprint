@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { GitBranch, Palette, Plus, Search, Square } from 'lucide-react'
 import type { ProjectState, Task } from './types'
-import { api } from './api'
+import { api, setProject } from './api'
 import { useProjectEvents } from './hooks/useProjectEvents'
 import { Board } from './components/Board'
 import { SprintPanel } from './components/SprintPanel'
@@ -14,7 +14,8 @@ type SprintFilter = 'all' | number
 type SideTab = 'sprints' | 'brand'
 
 export default function App() {
-  const [project, setProject] = useState<ProjectState | null>(null)
+  const [project, setProjectState] = useState<ProjectState | null>(null)
+  const [projects, setProjects] = useState<Array<{ name: string; rootDir: string; configName: string }>>([])
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [sprintFilter, setSprintFilter] = useState<SprintFilter>('all')
@@ -24,7 +25,7 @@ export default function App() {
 
   const reload = useCallback(async () => {
     try {
-      setProject(await api.project())
+      setProjectState(await api.project())
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -32,10 +33,27 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    void reload()
+    void (async () => {
+      try {
+        const list = await api.projects()
+        setProjects(list)
+        if (list.length > 0) setProject(list[0]!.name)
+      } catch {
+        /* single-project server or offline; api.project() reports the error */
+      }
+      await reload()
+    })()
   }, [reload])
 
   useProjectEvents(reload)
+
+  const switchProject = useCallback(
+    async (name: string) => {
+      setProject(name)
+      await reload()
+    },
+    [reload],
+  )
 
   const tasks = useMemo(() => {
     if (!project) return []
@@ -123,6 +141,21 @@ export default function App() {
           <span className="hidden max-w-[24rem] truncate rounded bg-zinc-900 px-2 py-0.5 font-mono text-[11px] text-zinc-400 sm:block">
             {project.rootDir}
           </span>
+
+          {projects.length > 1 && (
+            <select
+              value={projects.find((p) => project.rootDir === p.rootDir)?.name ?? ''}
+              onChange={(e) => switchProject(e.target.value)}
+              className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs font-medium text-zinc-200 outline-none focus:border-indigo-500"
+              title="Switch project"
+            >
+              {projects.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.configName || p.name}
+                </option>
+              ))}
+            </select>
+          )}
 
           <div className="ml-auto flex items-center gap-2">
             <div className="relative">

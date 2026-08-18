@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import type { ProjectStore } from '@agentsprint/core'
-import { createMcpServer } from '@agentsprint/mcp'
+import { createMcpServer, type ProjectProvider } from '@agentsprint/mcp'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { randomUUID } from 'node:crypto'
+import type { ProjectManager } from './projects.js'
 
 /**
  * Expose the AgentSprint MCP server over Streamable HTTP on the same
@@ -13,12 +13,26 @@ import { randomUUID } from 'node:crypto'
  * single-connection). We use the web-standard transport directly and convert
  * the Web `Response` back into Fastify's reply.
  */
-export function registerMcpRoute(app: FastifyInstance, opts: { rootDir: string; store: ProjectStore }): void {
+export function registerMcpRoute(app: FastifyInstance, opts: { manager: ProjectManager }): void {
   interface Session {
     transport: WebStandardStreamableHTTPServerTransport
     close: () => Promise<void>
   }
   const sessions = new Map<string, Session>()
+
+  function newProvider(): ProjectProvider {
+    let active = opts.manager.defaultName()
+    return {
+      list: () => opts.manager.list(),
+      current: () => active,
+      use: (name) => {
+        if (!opts.manager.list().some((p) => p.name === name)) throw new Error(`Unknown project: ${name}`)
+        active = name
+      },
+      store: () => opts.manager.get(active).store,
+      rootDir: () => opts.manager.get(active).info.rootDir,
+    }
+  }
 
   function newTransport(): WebStandardStreamableHTTPServerTransport {
     return new WebStandardStreamableHTTPServerTransport({
@@ -48,7 +62,7 @@ export function registerMcpRoute(app: FastifyInstance, opts: { rootDir: string; 
     let session = sessionId ? sessions.get(sessionId) : undefined
     if (!session) {
       const transport = newTransport()
-      const mcpServer = createMcpServer(opts.rootDir, { store: opts.store })
+      const mcpServer = createMcpServer(newProvider())
       await mcpServer.connect(transport)
       session = { transport, close: async () => mcpServer.close() }
     }

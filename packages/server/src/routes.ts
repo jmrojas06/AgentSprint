@@ -1,28 +1,26 @@
-import type { FastifyInstance, FastifyReply } from 'fastify'
-import type { ProjectStore, TaskInput, TaskStatus } from '@agentsprint/core'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import type { TaskInput, TaskStatus } from '@agentsprint/core'
 import { buildTaskSpec, computeSprintStats } from '@agentsprint/core'
-import type { Broadcast } from './broadcast.js'
-import type { TaskIndex } from './indexdb.js'
-
-export interface ApiDeps {
-  store: ProjectStore
-  index: TaskIndex
-  broadcast: Broadcast
-}
+import type { ProjectHandle, ProjectManager } from './projects.js'
 
 function sendError(reply: FastifyReply, status: number, message: string): void {
   reply.code(status).send({ error: message })
 }
 
-export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<void> {
-  const { store, index, broadcast } = deps
+function projectName(req: FastifyRequest): string | undefined {
+  const q = (req.query as Record<string, string> | undefined)?.project
+  return q || undefined
+}
 
+export async function registerApi(app: FastifyInstance, projects: ProjectManager): Promise<void> {
   app.get('/api/health', async () => ({ ok: true, version: '0.1.0' }))
 
-  app.get('/api/project', async (_req, reply) => {
-    const state = store.state
-    index.rebuild(state.tasks)
-    return reply.send({ ...state, warnings: [...store.lastWarnings] })
+  app.get('/api/projects', async () => projects.list())
+
+  app.get('/api/project', async (req, reply) => {
+    const { store, index } = projects.get(projectName(req))
+    index.rebuild(store.state.tasks)
+    return reply.send({ ...store.state, warnings: [...store.lastWarnings] })
   })
 
   // ── tasks ────────────────────────────────────────────────────────────
@@ -32,15 +30,16 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
     const status = (req.query as Record<string, string>).status
     const sprint = (req.query as Record<string, string>).sprint
     const assignee = (req.query as Record<string, string>).assignee
-    return reply.send(index.search(q, { status, sprint, assignee }))
+    return reply.send(projects.get(projectName(req)).index.search(q, { status, sprint, assignee }))
   })
 
   app.post('/api/tasks', async (req, reply) => {
     const input = req.body as TaskInput
+    const h = projects.get(projectName(req))
     try {
-      const task = store.createTask(input)
-      index.upsert(task)
-      broadcast.send('task', task)
+      const task = h.store.createTask(input)
+      h.index.upsert(task)
+      h.broadcast.send('task', task)
       return reply.code(201).send(task)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
@@ -49,14 +48,15 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
 
   app.get('/api/tasks/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id
-    const task = store.state.tasks.find((t) => t.id === id)
+    const task = projects.get(projectName(req)).store.state.tasks.find((t) => t.id === id)
     if (!task) return sendError(reply, 404, `Task not found: ${id}`)
     return reply.send(task)
   })
 
   app.get('/api/tasks/:id/spec', async (req, reply) => {
     const id = (req.params as { id: string }).id
-    const state = store.state
+    const h = projects.get(projectName(req))
+    const state = h.store.state
     const task = state.tasks.find((t) => t.id === id)
     if (!task) return sendError(reply, 404, `Task not found: ${id}`)
     const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
@@ -67,10 +67,11 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
   app.put('/api/tasks/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id
     const patch = req.body as Partial<TaskInput>
+    const h = projects.get(projectName(req))
     try {
-      const task = store.updateTask(id, patch)
-      index.upsert(task)
-      broadcast.send('task', task)
+      const task = h.store.updateTask(id, patch)
+      h.index.upsert(task)
+      h.broadcast.send('task', task)
       return reply.send(task)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
@@ -80,10 +81,11 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
   app.patch('/api/tasks/:id/status', async (req, reply) => {
     const id = (req.params as { id: string }).id
     const { status } = req.body as { status: TaskStatus }
+    const h = projects.get(projectName(req))
     try {
-      const task = store.setTaskStatus(id, status)
-      index.upsert(task)
-      broadcast.send('task', task)
+      const task = h.store.setTaskStatus(id, status)
+      h.index.upsert(task)
+      h.broadcast.send('task', task)
       return reply.send(task)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
@@ -92,10 +94,11 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
 
   app.delete('/api/tasks/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id
+    const h = projects.get(projectName(req))
     try {
-      store.deleteTask(id)
-      index.remove(id)
-      broadcast.send('task:deleted', { id })
+      h.store.deleteTask(id)
+      h.index.remove(id)
+      h.broadcast.send('task:deleted', { id })
       return reply.code(204).send()
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
@@ -104,32 +107,38 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
 
   // ── sprints ──────────────────────────────────────────────────────────
 
-  app.get('/api/sprints', async () => store.state.sprints)
+  app.get('/api/sprints', async (req) => projects.get(projectName(req)).store.state.sprints)
 
   app.get('/api/sprints/:id/stats', async (req, reply) => {
     const id = Number((req.params as { id: string }).id)
+    const store = projects.get(projectName(req)).store
     if (!store.state.sprints.some((s) => s.id === id)) return sendError(reply, 404, `Sprint not found: ${id}`)
     return reply.send(computeSprintStats(store.state.tasks, id))
   })
 
-  app.get('/api/stats', async () => computeSprintStats(store.state.tasks, null))
+  app.get('/api/stats', async (req) => {
+    const store = projects.get(projectName(req)).store
+    return computeSprintStats(store.state.tasks, null)
+  })
 
   app.post('/api/sprints', async (req, reply) => {
     const { goal } = (req.body ?? {}) as { goal?: string }
-    const sprint = store.createSprint(goal ?? '')
-    broadcast.send('sprint', sprint)
+    const h = projects.get(projectName(req))
+    const sprint = h.store.createSprint(goal ?? '')
+    h.broadcast.send('sprint', sprint)
     return reply.code(201).send(sprint)
   })
 
   app.patch('/api/sprints/:id', async (req, reply) => {
     const id = Number((req.params as { id: string }).id)
     const body = (req.body ?? {}) as { goal?: string; status?: 'planned' | 'active' | 'closed' }
+    const h = projects.get(projectName(req))
     try {
-      if (body.status) store.setSprintStatus(id, body.status)
-      if (body.goal != null) store.updateSprint(id, { goal: body.goal })
-      const sprint = store.state.sprints.find((s) => s.id === id)
+      if (body.status) h.store.setSprintStatus(id, body.status)
+      if (body.goal != null) h.store.updateSprint(id, { goal: body.goal })
+      const sprint = h.store.state.sprints.find((s) => s.id === id)
       if (!sprint) return sendError(reply, 404, `Sprint not found: ${id}`)
-      broadcast.send('sprint', sprint)
+      h.broadcast.send('sprint', sprint)
       return reply.send(sprint)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
@@ -138,12 +147,13 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
 
   // ── config ───────────────────────────────────────────────────────────
 
-  app.get('/api/config', async () => store.getConfig())
+  app.get('/api/config', async (req) => projects.get(projectName(req)).store.getConfig())
 
   app.put('/api/config', async (req, reply) => {
+    const h = projects.get(projectName(req))
     try {
-      const config = store.updateConfig(req.body as never)
-      broadcast.send('config', config)
+      const config = h.store.updateConfig(req.body as never)
+      h.broadcast.send('config', config)
       return reply.send(config)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
@@ -152,12 +162,13 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
 
   // ── brand ────────────────────────────────────────────────────────────
 
-  app.get('/api/brand', async () => store.getBrand())
+  app.get('/api/brand', async (req) => projects.get(projectName(req)).store.getBrand())
 
   app.put('/api/brand', async (req, reply) => {
+    const h = projects.get(projectName(req))
     try {
-      const brand = store.updateBrand(req.body as never)
-      broadcast.send('brand', brand)
+      const brand = h.store.updateBrand(req.body as never)
+      h.broadcast.send('brand', brand)
       return reply.send(brand)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
@@ -166,7 +177,7 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
 
   // ── events (SSE) ─────────────────────────────────────────────────────
 
-  app.get('/api/events', async (_req, reply) => {
-    broadcast.subscribe(reply)
+  app.get('/api/events', async (req, reply) => {
+    projects.get(projectName(req)).broadcast.subscribe(reply)
   })
 }

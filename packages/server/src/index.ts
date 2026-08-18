@@ -4,11 +4,9 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
 import staticPlugin from '@fastify/static'
 import { ProjectStore } from '@agentsprint/core'
-import { Broadcast } from './broadcast.js'
-import { createIndex } from './indexdb.js'
 import { registerApi } from './routes.js'
 import { registerMcpRoute } from './mcpRoute.js'
-import { createWatcher } from './watcher.js'
+import { ProjectManager } from './projects.js'
 
 export interface ServerOptions {
   rootDir: string
@@ -26,25 +24,20 @@ export interface ServerOptions {
 export interface BuiltApp {
   app: FastifyInstance
   store: ProjectStore
+  projects: ProjectManager
   close: () => Promise<void>
 }
 
 export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
-  const rootDir = path.resolve(opts.rootDir)
-  const store = opts.autoInit
-    ? ProjectStore.init(rootDir, { sample: true })
-    : ProjectStore.open(rootDir)
-
-  const index = await createIndex()
-  index.rebuild(store.state.tasks)
-  const broadcast = new Broadcast()
+  const projects = await ProjectManager.discover(opts.rootDir, { autoInit: opts.autoInit })
+  const defaultProject = projects.get()
 
   const app = Fastify({ logger: opts.logger ?? false })
 
   await app.register(cors, { origin: true })
-  await registerApi(app, { store, index, broadcast })
+  await registerApi(app, projects)
   if (opts.mcp) {
-    registerMcpRoute(app, { rootDir, store })
+    registerMcpRoute(app, { manager: projects })
   }
 
   const webDist = opts.webDist ? path.resolve(opts.webDist) : null
@@ -59,16 +52,12 @@ export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
     })
   }
 
-  const watcher = createWatcher(store, () => {
-    index.rebuild(store.state.tasks)
-    broadcast.send('change', { at: new Date().toISOString() })
-  })
-
   return {
     app,
-    store,
+    store: defaultProject.store,
+    projects,
     close: async () => {
-      await watcher.close()
+      await projects.closeAll()
       await app.close()
     },
   }
@@ -79,10 +68,10 @@ export interface BuiltServer extends BuiltApp {
 }
 
 export async function startServer(opts: ServerOptions): Promise<BuiltServer> {
-  const { app, store, close } = await buildApp(opts)
+  const built = await buildApp(opts)
   const host = opts.host ?? '127.0.0.1'
   const port = opts.port ?? 4310
-  await app.listen({ port, host })
+  await built.app.listen({ port, host })
   const url = `http://${host}:${port}`
-  return { app, store, url, close }
+  return { ...built, url }
 }

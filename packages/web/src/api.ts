@@ -2,6 +2,7 @@ import type {
   Brand,
   ProjectConfig,
   ProjectState,
+  ProjectInfo,
   Sprint,
   SprintStatus,
   Task,
@@ -9,8 +10,18 @@ import type {
   TaskStatus,
 } from './types'
 
+let activeProject: string | undefined
+
+/** Set the project every subsequent request is scoped to. */
+export function setProject(name: string): void {
+  activeProject = name
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const withProject = activeProject
+    ? url + (url.includes('?') ? '&' : '?') + `project=${encodeURIComponent(activeProject)}`
+    : url
+  const res = await fetch(withProject, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
@@ -24,6 +35,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   project: () => request<ProjectState>('/api/project'),
+  projects: () => request<ProjectInfo[]>('/api/projects'),
   health: () => request<{ ok: boolean }>('/api/health'),
 
   createTask: (input: TaskInput) =>

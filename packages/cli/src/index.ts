@@ -133,12 +133,18 @@ async function cmdInit(dir: string): Promise<void> {
 }
 
 async function cmdServe(args: Args): Promise<void> {
-  if (!fs.existsSync(path.join(args.dir, '.agentboard'))) {
+  const boardHere = fs.existsSync(path.join(args.dir, '.agentboard'))
+  const boardBelow =
+    fs.existsSync(args.dir) &&
+    fs
+      .readdirSync(args.dir, { withFileTypes: true })
+      .some((e) => e.isDirectory() && fs.existsSync(path.join(args.dir, e.name, '.agentboard')))
+  if (!boardHere && !boardBelow) {
     if (args.init) {
       ProjectStore.init(args.dir, { sample: true })
       console.log(`✔ Board auto-created in ${args.dir}`)
     } else {
-      console.error(`No board found in ${args.dir}`)
+      console.error(`No AgentSprint board found in ${args.dir}`)
       console.error(`Run: agentboard init ${args.dir}`)
       process.exit(1)
     }
