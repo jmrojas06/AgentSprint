@@ -60,11 +60,31 @@ can participate — just point it at your repo and it follows `AGENTS.md`.
   `sprints/sprint-1.md`.
 - **MCP server.** A native MCP server (`agentboard-mcp`) lets agents claim
   tasks, list boards, and grab a task's spec through tools. See `docs/mcp.md`.
+- **MCP over HTTP.** `agentboard serve --mcp <dir>` exposes the same MCP tools
+  at `http://<host>:4310/mcp` (Streamable HTTP) on the same server as the UI —
+  any MCP client connects by URL, no extra process. Configure opencode with
+  `{ "mcp": { "agentsprint": { "type": "remote", "url": "http://127.0.0.1:4310/mcp" } } }`.
 - **Spec export.** One click (or `agentboard spec <dir> TK-1`) turns a task
   into a self-contained prompt your agent can execute.
 - **Brand kit.** Configure your company identity, colors, fonts and design
   files in `brand.md` — they get injected into every task spec so agents
   follow your brand.
+
+## Docker (always on)
+
+Run the board (UI + `/mcp`) in a container that restarts automatically:
+
+```bash
+docker build -t agentsprint .
+docker run -d --name board --restart always \
+  -p 4310:4310 \
+  -v "$PWD/your-project:/board" \
+  agentsprint serve /board --host 0.0.0.0 --no-open --mcp
+```
+
+For a multi-project setup, a `docker-compose.yml` (in `~/Documents/proyects/`)
+orchestrates `board` (Notely, :4310), `boardsprint` (AgentSprint self-hosted,
+:4312) and the app — all `restart: always` with named volumes.
 
 ## Features
 
@@ -80,6 +100,8 @@ can participate — just point it at your repo and it follows `AGENTS.md`.
 - Fast search over tasks via a SQLite index (zero native deps — built on
   Node's `node:sqlite`, with an in-memory fallback)
 - MCP server so AI agents can read/claim/complete tasks via tools
+- MCP over Streamable HTTP (`serve --mcp`) on the same port as the UI
+- Parse warnings surfaced in `/api/project` and `board_summary`
 - SPA served by the same server; also runs with `vite dev` for hacking
 
 ## Development
