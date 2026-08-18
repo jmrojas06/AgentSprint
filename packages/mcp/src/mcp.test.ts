@@ -106,4 +106,15 @@ describe('MCP tools', () => {
     expect(spec).toContain('## Brand guidelines')
     expect(spec).toContain('Acme Labs')
   })
+
+  it('board_summary surfaces parse warnings', async () => {
+    const bad = path.join(dir, '.agentboard', 'tasks', 'AS-99.md')
+    fs.writeFileSync(bad, '---\ntitle: Bad: YAML\nstatus: To Do\n---\n\nboom\n', 'utf8')
+    store.syncFromDisk()
+
+    const summary = (await callTool('board_summary', {})) as { warnings?: string[] }
+    expect(summary.warnings?.length).toBeGreaterThan(0)
+
+    fs.rmSync(bad)
+  })
 })

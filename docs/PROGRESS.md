@@ -50,8 +50,10 @@
   - Tests: core 17, mcp 11, server 11, cli 4 (43 total).
 - [x] `docs/mcp.md` con setup para opencode / Claude Code / Cursor.
 - [x] **Probar el flujo de verdad con un agente (opencode) sobre un repo real**: Notely (`github.com/jmrojas06/notely`). Sprints 1-2 completos vía board (10 tareas), encontrando 2 bugs (parse warnings, `node:sqlite`+tsup) — ambos arreglados en `main`.
-- [x] **Auto-conectar el MCP en `agentboard serve`** — pendiente aún. Estado actual: MCP como proceso aparte (`--root <dir>`).
-- [ ] Auto-conectar el MCP en `agentboard serve` (opción `--mcp`).
+- [x] **MCP sobre HTTP** (`serve --mcp`): el board ahora expone `POST/GET/DELETE /mcp` (Streamable HTTP) en el mismo puerto que la UI — cualquier agente MCP se conecta por URL, sin proceso aparte. Implementado con `WebStandardStreamableHTTPServerTransport` + conversión a Fastify (una sesión = un `McpServer`, porque el Protocol del SDK es single-connection). Test: initialize → 202 → tools/list (12 tools). Claves: `sessionIdGenerator` para sesiones, `enableJsonResponse` para respuestas JSON cerradas (el modo SSE mantiene el stream abierto y cuelga a `inject`), y el cliente debe mandar `Accept: application/json, text/event-stream`.
+- [x] **Warnings de parseo expuestos**: `GET /api/project` ahora incluye `warnings` (`ProjectStore.lastWarnings`) y `board_summary` del MCP avisa con un campo `warnings`. Tests añadidos (server + mcp).
+- [x] **Board propio de AgentSprint** (dogfooding): `.agentboard/` con sprint "Robustez + conectividad" (AS-1 warnings, AS-2 MCP-over-HTTP). El propio repo se gestiona con su board.
+- [x] **Docker**: `Dockerfile` multi-stage (build monorepo → run `agentboard serve`). `docker-compose.yml` en `~/Documents/proyects/` orquesta 3 servicios siempre activos (`restart: always`): `board` (Notely, :4310), `boardsprint` (AgentSprint self-host, :4312) y `notely` (app :4311, un contenedor sirve web+API con `@fastify/static`). Ambos boards con `--mcp`. `opencode.json` de los dos repos apunta al MCP **remoto** por URL.
 
 ### ⬜ Fase 4 — Pulido
 - Review gates, grafo de dependencias, activity log, temas claro/oscuro.

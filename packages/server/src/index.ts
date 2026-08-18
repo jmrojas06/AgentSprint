@@ -7,6 +7,7 @@ import { ProjectStore } from '@agentsprint/core'
 import { Broadcast } from './broadcast.js'
 import { createIndex } from './indexdb.js'
 import { registerApi } from './routes.js'
+import { registerMcpRoute } from './mcpRoute.js'
 import { createWatcher } from './watcher.js'
 
 export interface ServerOptions {
@@ -17,6 +18,8 @@ export interface ServerOptions {
   webDist?: string | null
   /** Auto-create a board when none exists. Defaults to false. */
   autoInit?: boolean
+  /** Expose the MCP server over Streamable HTTP at /mcp. Defaults to false. */
+  mcp?: boolean
   logger?: boolean
 }
 
@@ -40,6 +43,9 @@ export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
 
   await app.register(cors, { origin: true })
   await registerApi(app, { store, index, broadcast })
+  if (opts.mcp) {
+    registerMcpRoute(app, { rootDir, store })
+  }
 
   const webDist = opts.webDist ? path.resolve(opts.webDist) : null
   if (webDist && fs.existsSync(webDist)) {

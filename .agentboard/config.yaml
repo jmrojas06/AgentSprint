@@ -1,0 +1,11 @@
+---
+name: AgentSprint
+workflow:
+  statuses:
+    - Backlog
+    - To Do
+    - In Progress
+    - Review
+    - Done
+---
+

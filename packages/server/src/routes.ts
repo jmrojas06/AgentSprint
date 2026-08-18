@@ -22,7 +22,7 @@ export async function registerApi(app: FastifyInstance, deps: ApiDeps): Promise<
   app.get('/api/project', async (_req, reply) => {
     const state = store.state
     index.rebuild(state.tasks)
-    return reply.send(state)
+    return reply.send({ ...state, warnings: [...store.lastWarnings] })
   })
 
   // ── tasks ────────────────────────────────────────────────────────────

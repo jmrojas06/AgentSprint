@@ -86,12 +86,18 @@ importers:
       '@agentsprint/core':
         specifier: workspace:*
         version: link:../core
+      '@agentsprint/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@fastify/cors':
         specifier: ^10.0.0
         version: 10.1.0
       '@fastify/static':
         specifier: ^8.0.0
         version: 8.3.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.30.0
+        version: 1.30.0(zod@3.25.76)
       chokidar:
         specifier: ^4.0.0
         version: 4.0.3

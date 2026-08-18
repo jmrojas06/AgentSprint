@@ -27,6 +27,7 @@ Options (serve):
   --host <ip>       Host to bind (default: 127.0.0.1)
   --no-open         Do not open the browser automatically
   --init            Auto-create a board if missing
+  --mcp             Also expose the MCP server at /mcp (streamable HTTP)
   --version         Print the version
 `)
 }
@@ -39,6 +40,7 @@ interface Args {
   host: string
   open: boolean
   init: boolean
+  mcp: boolean
 }
 
 export function parseArgs(argv: string[]): Args | null {
@@ -54,6 +56,7 @@ export function parseArgs(argv: string[]): Args | null {
   let host = '127.0.0.1'
   let open = true
   let init = false
+  let mcp = false
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -78,6 +81,9 @@ export function parseArgs(argv: string[]): Args | null {
       case '--init':
         init = true
         break
+      case '--mcp':
+        mcp = true
+        break
       default:
         if (arg.startsWith('-')) {
           console.error(`Unknown option: ${arg}`)
@@ -92,7 +98,7 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard spec <dir> <task-id>')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init }
+    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init, mcp }
   }
 
   if (command === 'brand') {
@@ -100,11 +106,11 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard brand [dir]')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init }
+    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp }
   }
 
   const dir = positional[0] ? path.resolve(positional[0]) : process.cwd()
-  return { command, dir, port, host, open, init }
+  return { command, dir, port, host, open, init, mcp }
 }
 
 function resolveWebDist(): string | null {
@@ -144,11 +150,15 @@ async function cmdServe(args: Args): Promise<void> {
     port: args.port,
     host: args.host,
     webDist,
+    mcp: args.mcp,
   })
 
   console.log(`\n  AgentSprint v${VERSION}`)
   console.log(`  Board:   ${args.dir}`)
   console.log(`  Server:  ${url}`)
+  if (args.mcp) {
+    console.log(`  MCP:     ${url}/mcp (streamable HTTP)`)
+  }
   if (webDist) {
     console.log(`  UI:      ${url}`)
   } else {

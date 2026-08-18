@@ -129,6 +129,81 @@ describe('server API', () => {
     expect(spec.json().spec).toContain('## Brand guidelines')
     expect(spec.json().spec).toContain('Acme Labs')
   })
+
+  it('surfaces parse warnings in /api/project', async () => {
+    const bad = path.join(dir, '.agentboard', 'tasks', 'AS-99.md')
+    fs.writeFileSync(bad, '---\ntitle: Bad: YAML\nstatus: To Do\n---\n\nboom\n', 'utf8')
+
+    const built2 = await buildApp({ rootDir: dir })
+    const res = await built2.app.inject({ method: 'GET', url: '/api/project' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().warnings.length).toBeGreaterThan(0)
+    await built2.close()
+
+    fs.rmSync(bad)
+  })
+})
+
+describe('MCP over HTTP', () => {
+  function parseMcpRes(body: string): unknown {
+    if (body.startsWith('event:')) {
+      const data = body
+        .split('\n')
+        .filter((l) => l.startsWith('data: '))
+        .map((l) => l.slice(6))
+        .join('\n')
+      return JSON.parse(data)
+    }
+    return JSON.parse(body)
+  }
+
+  it('serves initialize and tools/list at /mcp', async () => {
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-mcp-http-'))
+    try {
+      ProjectStore.init(dir2, { sample: true })
+      const built = await buildApp({ rootDir: dir2, mcp: true })
+      const a = built.app
+      const accept = { accept: 'application/json, text/event-stream' }
+
+      const init = await a.inject({
+        method: 'POST',
+        url: '/mcp',
+        payload: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0.0' } },
+        }),
+        headers: { 'content-type': 'application/json', ...accept },
+      })
+      expect(init.statusCode).toBe(200)
+      expect((parseMcpRes(init.body) as { result: { capabilities: { tools: unknown } } }).result.capabilities.tools).toBeDefined()
+      const sessionId = init.headers['mcp-session-id']
+      expect(sessionId).toBeTruthy()
+
+      const notify = await a.inject({
+        method: 'POST',
+        url: '/mcp',
+        payload: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+        headers: { 'content-type': 'application/json', ...accept, 'mcp-session-id': sessionId! },
+      })
+      expect(notify.statusCode).toBe(202)
+
+      const list = await a.inject({
+        method: 'POST',
+        url: '/mcp',
+        payload: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+        headers: { 'content-type': 'application/json', ...accept, 'mcp-session-id': sessionId! },
+      })
+      expect(list.statusCode).toBe(200)
+      const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
+      expect(tools.length).toBe(12)
+
+      await built.close()
+    } finally {
+      fs.rmSync(dir2, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('createIndex', () => {

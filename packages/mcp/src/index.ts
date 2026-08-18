@@ -53,6 +53,7 @@ export function createMcpServer(rootDir: string, opts?: { store?: ProjectStore }
           total: stats.total,
         },
         completionPct: stats.completionPct,
+        ...(store.lastWarnings.length ? { warnings: [...store.lastWarnings] } : {}),
       })
     },
   )

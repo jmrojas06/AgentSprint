@@ -4,6 +4,14 @@
   "description": "MCP server so AI coding agents can read, claim and complete AgentSprint tasks",
   "license": "MIT",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
     "agentboard-mcp": "./dist/index.js"
   },
