@@ -5,3 +5,8 @@ dist/
 *.tsbuildinfo
 coverage/
 .agentboard/*.db
+*.tgz
+.env
+.env.*
+!.env.example
+.idea/

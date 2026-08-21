@@ -13,6 +13,19 @@ export const ASSIGNEES = ['human', 'agent'] as const
 export const Assignee = z.enum(ASSIGNEES)
 export type Assignee = z.infer<typeof Assignee>
 
+export const ACTIVITY_TYPES = ['created', 'status', 'assignee', 'checklist', 'note', 'update'] as const
+export const ActivityEventType = z.enum(ACTIVITY_TYPES)
+export type ActivityEventType = z.infer<typeof ActivityEventType>
+
+/** One structured entry of a task's timeline (persisted under `## Activity`). */
+export const ActivityEvent = z.object({
+  at: z.string(),
+  actor: z.string().default('user'),
+  type: ActivityEventType,
+  detail: z.string().default(''),
+})
+export type ActivityEvent = z.infer<typeof ActivityEvent>
+
 const taskId = z
   .string()
   .regex(/^[A-Z]{2}-[0-9]+$/, 'Task id must look like TK-1')
@@ -30,10 +43,39 @@ export const Task = z.object({
   acceptanceCriteria: z.array(z.string()).default([]),
   description: z.string().default(''),
   notes: z.string().default(''),
+  activity: z.array(ActivityEvent).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /** Exclusive-lock holder (agent name). Absent/null when unlocked. */
+  lockedBy: z.string().nullable().optional(),
+  /** ISO timestamp of the last lock heartbeat/claim. */
+  lockedAt: z.string().nullable().optional(),
 })
 export type Task = z.infer<typeof Task>
+
+/** A lock older than this many minutes without a heartbeat is considered stale. */
+export const TASK_LOCK_TTL_MINUTES = 30
+
+export interface TaskLockInfo {
+  lockedBy: string
+  lockedAt: string
+}
+
+/**
+ * Active exclusive lock for a task, or null when unlocked/expired.
+ * Expiration is passive: a lock older than TASK_LOCK_TTL_MINUTES is stale
+ * and no longer blocks claims.
+ */
+export function getTaskLock(
+  task: Pick<Task, 'lockedBy' | 'lockedAt'>,
+  now: Date = new Date(),
+): TaskLockInfo | null {
+  if (!task.lockedBy || !task.lockedAt) return null
+  const ageMs = now.getTime() - new Date(task.lockedAt).getTime()
+  if (!Number.isFinite(ageMs)) return null
+  if (ageMs > TASK_LOCK_TTL_MINUTES * 60_000) return null
+  return { lockedBy: task.lockedBy, lockedAt: task.lockedAt }
+}
 
 export interface TaskInput {
   id?: string
@@ -49,6 +91,8 @@ export interface TaskInput {
   description?: string
   notes?: string
   createdAt?: string
+  lockedBy?: string | null
+  lockedAt?: string | null
 }
 
 export const SprintStatus = z.enum(['planned', 'active', 'closed'])

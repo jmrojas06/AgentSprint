@@ -1,17 +1,20 @@
 {
-  "name": "@agentsprint/server",
+  "name": "@jmrojas06/agentsprint-server",
   "version": "0.1.0",
   "description": "REST + SSE + file-watcher server for AgentSprint",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "keywords": ["agents", "sprint", "kanban", "fastify", "sse", "server"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "url": "git+https://github.com/jmrojas06/AgentSprint.git",
     "directory": "packages/server"
   },
   "bugs": {
-    "url": "https://github.com/agentsprint/agentsprint/issues"
+    "url": "https://github.com/jmrojas06/AgentSprint/issues"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -34,8 +37,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@agentsprint/core": "workspace:*",
-    "@agentsprint/mcp": "workspace:*",
+    "@jmrojas06/agentsprint-core": "workspace:*",
+    "@jmrojas06/agentsprint-mcp": "workspace:*",
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^8.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",

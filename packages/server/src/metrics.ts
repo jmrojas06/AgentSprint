@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import type { ProjectStore } from '@agentsprint/core'
+import type { ProjectStore } from '@jmrojas06/agentsprint-core'
 
 export interface BurndownPoint {
   date: string

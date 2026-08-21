@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ProjectStore } from '@agentsprint/core'
+import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildApp } from './index.js'
 import { createIndex } from './indexdb.js'
 import { recordBurndownSnapshot } from './metrics.js'
@@ -234,6 +234,22 @@ describe('server API', () => {
     expect(spec.json().spec).toContain('Always validate input.')
   })
 
+  it('returns the activity timeline for a task', async () => {
+    await api('patch', '/api/tasks/TK-1/status', { status: 'In Progress' })
+    await api('patch', '/api/tasks/TK-1/checklist', { index: 0, completed: true })
+    const res = await api('get', '/api/tasks/TK-1/activity')
+    expect(res.status).toBe(200)
+    const { id, activity } = res.json()
+    expect(id).toBe('TK-1')
+    const types = activity.map((e: { type: string }) => e.type)
+    expect(types[0]).toBe('created')
+    expect(types).toContain('status')
+    expect(types).toContain('checklist')
+
+    const missing = await api('get', '/api/tasks/NO-99/activity')
+    expect(missing.status).toBe(404)
+  })
+
   it('surfaces parse warnings in /api/project', async () => {
     const bad = path.join(dir, '.agentboard', 'tasks', 'AS-99.md')
     fs.writeFileSync(bad, '---\ntitle: Bad: YAML\nstatus: To Do\n---\n\nboom\n', 'utf8')
@@ -406,9 +422,12 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(25)
+      expect(tools.length).toBe(28)
       const names = tools.map((t) => t.name)
       expect(names).toContain('project_list')
+      expect(names).toContain('export_board')
+      expect(names).toContain('task_release')
+      expect(names).toContain('template_list')
       expect(names).toContain('project_current')
       expect(names).toContain('project_use')
       expect(names).toContain('sprint_create')
@@ -433,7 +452,7 @@ describe('createIndex', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'as-index-'))
     const dbPath = path.join(dir, 'search.db')
     try {
-      const task: import('@agentsprint/core').Task = {
+      const task: import('@jmrojas06/agentsprint-core').Task = {
         id: 'TK-42',
         title: 'Hello from the index',
         status: 'To Do',
@@ -446,6 +465,7 @@ describe('createIndex', () => {
         acceptanceCriteria: [],
         description: '',
         notes: '',
+        activity: [],
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       }

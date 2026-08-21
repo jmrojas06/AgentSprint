@@ -1,17 +1,20 @@
 {
-  "name": "@agentsprint/core",
+  "name": "@jmrojas06/agentsprint-core",
   "version": "0.1.0",
   "description": "Domain model and git-native file storage for AgentSprint",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "keywords": ["agents", "sprint", "kanban", "board", "markdown", "git-native", "ai-coding"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "url": "git+https://github.com/jmrojas06/AgentSprint.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/agentsprint/agentsprint/issues"
+    "url": "https://github.com/jmrojas06/AgentSprint/issues"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { ProjectStore } from '@agentsprint/core'
+import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createMcpServer } from './index.js'
 
@@ -60,6 +60,33 @@ describe('MCP tools', () => {
     expect(created.status).toBe('To Do')
   })
 
+  it('template_list returns the sample templates', async () => {
+    const templates = (await callTool('template_list', {})) as Array<{ name: string }>
+    expect(templates.map((t) => t.name).sort()).toEqual(['bug-report', 'chore', 'feature'])
+  })
+
+  it('task_create accepts a template with vars', async () => {
+    const created = (await callTool('task_create', {
+      template: 'bug-report',
+      vars: { summary: 'Board crashes', title: 'Bug: Board crashes' },
+    })) as { title: string; priority: string; tags: string[] }
+    expect(created.title).toBe('Bug: Board crashes')
+    expect(created.priority).toBe('high')
+    expect(created.tags).toEqual(['bug'])
+  })
+
+  it('task_create template overrides beat template defaults', async () => {
+    const created = (await callTool('task_create', {
+      template: 'chore',
+      vars: { title: 'Tidy deps' },
+      priority: 'medium',
+      assignee: 'agent',
+    })) as { title: string; priority: string; assignee: string }
+    expect(created.title).toBe('Tidy deps')
+    expect(created.priority).toBe('medium')
+    expect(created.assignee).toBe('agent')
+  })
+
   it('task_claim moves task to In Progress with agent assignee', async () => {
     const task = (await callTool('task_claim', { id: 'TK-1' })) as { status: string; assignee: string }
     expect(task.status).toBe('In Progress')
@@ -73,6 +100,44 @@ describe('MCP tools', () => {
 
     const forced = (await callTool('task_claim', { id: 'TK-2', force: true })) as { status: string }
     expect(forced.status).toBe('In Progress')
+  })
+
+  it('task_claim takes an exclusive lock: two agents, only one wins', async () => {
+    await store.createTask({ title: 'Contested', sprint: 1 })
+    const tasks = store.state.tasks.filter((t) => t.title === 'Contested')
+    const id = tasks[tasks.length - 1]!.id
+
+    const first = (await callTool('task_claim', { id, agent: 'agent-a' })) as { status: string; lockedBy?: string }
+    expect(first.status).toBe('In Progress')
+
+    const second = (await callTool('task_claim', { id, agent: 'agent-b' })) as { error?: string }
+    expect(second.error).toContain('locked by "agent-a"')
+
+    // agent-a re-claiming refreshes its own lock without error
+    const heartbeat = (await callTool('task_claim', { id, agent: 'agent-a' })) as { status: string }
+    expect(heartbeat.status).toBe('In Progress')
+
+    // force lets agent-b steal the lock
+    const stolen = (await callTool('task_claim', { id, agent: 'agent-b', force: true })) as { status: string; lockedBy?: string }
+    expect(stolen.status).toBe('In Progress')
+    expect(stolen.lockedBy ?? (store.getLock(id) as { lockedBy: string }).lockedBy).toBe('agent-b')
+  })
+
+  it('task_release frees the lock for other agents', async () => {
+    await store.createTask({ title: 'To release', sprint: 1 })
+    const tasks = store.state.tasks.filter((t) => t.title === 'To release')
+    const id = tasks[tasks.length - 1]!.id
+
+    await callTool('task_claim', { id, agent: 'agent-a' })
+    const wrongAgent = (await callTool('task_release', { id, agent: 'agent-b' })) as { error?: string }
+    expect(wrongAgent.error).toContain('not by')
+
+    const released = (await callTool('task_release', { id })) as { ok?: boolean }
+    expect(released.ok).toBe(true)
+    expect(store.getLock(id)).toBeNull()
+
+    const reclaimed = (await callTool('task_claim', { id, agent: 'agent-c' })) as { status: string }
+    expect(reclaimed.status).toBe('In Progress')
   })
 
   it('task_status rejects unknown status', async () => {
@@ -224,7 +289,7 @@ describe('MCP tools', () => {
     const promptList = await client.listPrompts()
     const names = promptList.prompts.map((p) => p.name)
     expect(names).toContain('execute-task')
-    expect(names).toContain('sprint-planning')
+    expect(names).toContain('sprint-plan')
     expect(names).toContain('sprint-retro')
 
     const promptRes = await client.getPrompt({ name: 'execute-task', arguments: { id: 'TK-1' } })
@@ -252,5 +317,30 @@ describe('MCP tools', () => {
     expect(retro.report).toContain('# Sprint 1')
     expect(Array.isArray(retro.suggestedLearnings)).toBe(true)
     expect(retro.suggestedLearnings.length).toBeGreaterThan(0)
+  })
+
+  it('sprint-plan prompt includes backlog, velocity, learnings and plan template', async () => {
+    await store.createTask({ title: 'Backlog item alpha', status: 'Backlog', estimate: 3, priority: 'high' })
+    store.appendLearning('Always ship locks before planning parallel work.')
+    const res = await client.getPrompt({
+      name: 'sprint-plan',
+      arguments: { goal: 'Ship planning', capacity: '8' },
+    })
+    const text = (res.messages[0]?.content as { text: string }).text ?? ''
+    expect(text).toContain('Ship planning')
+    expect(text).toContain('Capacity: 8')
+    expect(text).toContain('## Available backlog')
+    expect(text).toContain('Backlog item alpha')
+    expect(text).toContain('Historical velocity')
+    expect(text).toContain('Always ship locks')
+    expect(text).toContain('| Order | Task | Priority | Estimate | Dependencies | Rationale |')
+    expect(text).toContain('task_update')
+  })
+
+  it('sprint-plan prompt handles empty history gracefully', async () => {
+    const res = await client.getPrompt({ name: 'sprint-plan', arguments: {} })
+    const text = (res.messages[0]?.content as { text: string }).text ?? ''
+    expect(text).toContain('(not provided — propose one from the backlog)')
+    expect(text).toContain('unknown (no closed sprints)')
   })
 })

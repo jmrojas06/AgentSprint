@@ -10,8 +10,57 @@ body,
   height: 100%;
 }
 
+html {
+  color-scheme: dark;
+}
+html.light {
+  color-scheme: light;
+}
+
+/*
+ * Theming without touching component classes:
+ * the UI was built dark-first with zinc-* utilities, so the light theme
+ * mirrors the zinc scale (50 <-> 950) and warms up the accent shades.
+ * `html.light` overrides the variables Tailwind utilities reference;
+ * the default palette stays dark, matching the original design.
+ */
+html.light {
+  --color-zinc-950: #fafafa;
+  --color-zinc-900: #f4f4f5;
+  --color-zinc-800: #e4e4e7;
+  --color-zinc-700: #d4d4d8;
+  --color-zinc-600: #a1a1aa;
+  --color-zinc-500: #71717a;
+  --color-zinc-400: #52525b;
+  --color-zinc-300: #3f3f46;
+  --color-zinc-200: #27272a;
+  --color-zinc-100: #18181b;
+  --color-zinc-50: #09090b;
+
+  /* accents: darker text shades for contrast on light surfaces */
+  --color-indigo-400: #6366f1;
+  --color-indigo-300: #4338ca;
+  --color-indigo-200: #3730a3;
+  --color-emerald-400: #059669;
+  --color-emerald-300: #047857;
+  --color-sky-400: #0284c7;
+  --color-sky-300: #0369a1;
+  --color-amber-400: #d97706;
+  --color-amber-300: #b45309;
+  --color-amber-200: #92400e;
+  --color-violet-400: #7c3aed;
+  --color-violet-300: #6d28d9;
+  --color-red-400: #dc2626;
+  --color-red-300: #b91c1c;
+
+  /* translucent "dark chip" backgrounds become soft tinted chips */
+  --color-indigo-950: #e0e7ff;
+  --color-red-950: #fee2e2;
+  --color-amber-950: #fef3c7;
+}
+
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased;
+  @apply bg-zinc-950 text-zinc-100 antialiased transition-colors duration-200;
 }
 
 ::-webkit-scrollbar {

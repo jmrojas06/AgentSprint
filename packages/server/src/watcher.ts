@@ -1,4 +1,4 @@
-import type { ProjectStore } from '@agentsprint/core'
+import type { ProjectStore } from '@jmrojas06/agentsprint-core'
 import chokidar, { type FSWatcher } from 'chokidar'
 
 /**

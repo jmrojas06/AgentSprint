@@ -44,7 +44,7 @@ tasks from your board — without touching the UI.
 | Prompt | Description |
 | --- | --- |
 | `execute-task` | Pre-formatted handoff prompt to execute a task by ID (with brand injection) |
-| `sprint-planning` | Workflow prompt to analyze backlog and plan next sprint |
+| `sprint-plan` | Agent-assisted sprint planning: receives goal/capacity, returns a reviewable plan from backlog + velocity + learnings |
 | `sprint-retro` | Workflow prompt to analyze sprint velocity and capture learnings |
 
 ## Setup
@@ -88,8 +88,9 @@ Add to `.cursor/mcp.json`:
 }
 ```
 
-> Note: when the package is published to npm the command becomes
-> `npx agentboard-mcp --root <dir>`.
+> Note: after a global install (`npm i -g @jmrojas06/agentsprint-mcp`) the
+> command is simply `agentboard-mcp --root <dir>`; with npx use
+> `npx @jmrojas06/agentsprint-mcp --root <dir>`.
 
 ## Suggested workflow for the agent
 

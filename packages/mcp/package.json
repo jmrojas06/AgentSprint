@@ -1,17 +1,20 @@
 {
-  "name": "@agentsprint/mcp",
+  "name": "@jmrojas06/agentsprint-mcp",
   "version": "0.1.0",
   "description": "MCP server so AI coding agents can read, claim and complete AgentSprint tasks",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "keywords": ["mcp", "model-context-protocol", "ai-agents", "sprint", "kanban"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "url": "git+https://github.com/jmrojas06/AgentSprint.git",
     "directory": "packages/mcp"
   },
   "bugs": {
-    "url": "https://github.com/agentsprint/agentsprint/issues"
+    "url": "https://github.com/jmrojas06/AgentSprint/issues"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -35,7 +38,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@agentsprint/core": "workspace:*",
+    "@jmrojas06/agentsprint-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.24.0"
   },

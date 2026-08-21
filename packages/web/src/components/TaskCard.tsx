@@ -1,6 +1,6 @@
-import { ChevronLeft, ChevronRight, Dot, GitCommitHorizontal } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Dot, GitCommitHorizontal, Lock } from 'lucide-react'
 import type { Task } from '../types'
-import { cx, criterionChecked, getBlockerTasks, priorityDot, priorityLabel, statusAccent } from '../ui'
+import { cx, criterionChecked, getBlockerTasks, getTaskLock, priorityDot, priorityLabel, statusAccent } from '../ui'
 
 interface Props {
   task: Task
@@ -19,6 +19,7 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
   const completed = task.acceptanceCriteria.filter((c) => criterionChecked(c)).length
   const blockers = task.dependencies.length > 0 ? getBlockerTasks(task, allTasks) : []
   const isBlocked = task.dependencies.length > 0 && blockers.length > 0
+  const lock = getTaskLock(task)
 
   return (
     <button
@@ -26,12 +27,22 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
       onClick={() => onOpen(task)}
       className={cx(
         'group w-full rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-left',
-        'transition-colors hover:border-zinc-600 hover:bg-zinc-800/80',
+        'transition-all duration-150 hover:-translate-y-0.5 hover:border-zinc-600 hover:bg-zinc-800/80 hover:shadow-md hover:shadow-black/20',
       )}
     >
       <div className="flex items-center gap-2">
         <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', priorityDot[task.priority])} title={`${priorityLabel[task.priority]} priority`} />
         <span className="font-mono text-xs text-zinc-500">{task.id}</span>
+        {lock && (
+          <span
+            className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+            title={`Locked by ${lock.lockedBy}`}
+            data-testid="task-lock"
+          >
+            <Lock className="h-2.5 w-2.5" />
+            {lock.lockedBy}
+          </span>
+        )}
         <span
           className={cx(
             'ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium',

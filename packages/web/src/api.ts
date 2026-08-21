@@ -1,4 +1,5 @@
 import type {
+  ActivityEvent,
   BoardState,
   Brand,
   Burndown,
@@ -11,6 +12,7 @@ import type {
   Task,
   TaskInput,
   TaskStatus,
+  TaskTemplate,
 } from './types'
 
 let activeProject: string | undefined
@@ -41,8 +43,9 @@ export const api = {
   projects: () => request<ProjectInfo[]>('/api/projects'),
   health: () => request<{ ok: boolean }>('/api/health'),
 
-  createTask: (input: TaskInput) =>
+  createTask: (input: TaskInput & { template?: string; vars?: Record<string, string> }) =>
     request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(input) }),
+  templates: () => request<TaskTemplate[]>('/api/templates'),
   updateTask: (id: string, patch: Partial<TaskInput>) =>
     request<Task>(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   setTaskStatus: (id: string, status: TaskStatus) =>
@@ -51,6 +54,7 @@ export const api = {
     request<Task>(`/api/tasks/${id}/checklist`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
   getTaskSpec: (id: string) => request<{ id: string; spec: string }>(`/api/tasks/${id}/spec`),
+  getTaskActivity: (id: string) => request<{ id: string; activity: ActivityEvent[] }>(`/api/tasks/${id}/activity`),
   getTaskCommits: (id: string, pattern?: string) =>
     request<{ id: string; gitAvailable: boolean; commits: GitCommit[]; branches: string[] }>(
       `/api/tasks/${id}/commits${pattern ? `?pattern=${encodeURIComponent(pattern)}` : ''}`,

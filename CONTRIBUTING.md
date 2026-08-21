@@ -11,7 +11,7 @@ the development workflow, code style, and contribution process.
 ## Local setup
 
 ```bash
-git clone https://github.com/agentsprint/agentsprint.git
+git clone https://github.com/jmrojas06/AgentSprint.git
 cd agentsprint
 pnpm install
 ```

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { createMcpServer, type ProjectProvider } from '@agentsprint/mcp'
+import { createMcpServer, type ProjectProvider } from '@jmrojas06/agentsprint-mcp'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { randomUUID } from 'node:crypto'
 import type { ProjectManager } from './projects.js'

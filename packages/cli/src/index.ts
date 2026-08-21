@@ -3,8 +3,8 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs } from '@agentsprint/core'
-import { startServer } from '@agentsprint/server'
+import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs } from '@jmrojas06/agentsprint-core'
+import { startServer } from '@jmrojas06/agentsprint-server'
 
 const VERSION = '0.1.0'
 
@@ -21,12 +21,16 @@ Commands:
    spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
    brand [dir]       Print the company/brand kit for the project
    lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
-   close [dir] [id]  Close a sprint (auto-appends a retro to learnings.md)
-   import todo <dir> <file>
+    close [dir] [id]  Close a sprint (auto-appends a retro to learnings.md)
+    task new [title] [dir]
+                      Create a task, optionally from a template
+    import todo <dir> <file>
                      Import bullets/checkboxes from a TODO/NOTES markdown file
-   import github <dir> <owner/repo> [--label-tag l=t ...] [--milestone-sprint m=id ...]
+    import github <dir> <owner/repo> [--label-tag l=t ...] [--milestone-sprint m=id ...]
                      Import open GitHub issues via the gh CLI
-   help              Show this help
+    export md [dir] [--sprint <id>]
+                     Write BOARD.md — a static Markdown snapshot of the board
+    help              Show this help
 
 Options (serve):
    --port <n>        Port to listen on (default: 4310)
@@ -39,6 +43,10 @@ Options (serve):
 Options (close):
    --no-retro        Skip the automatic retro appended to learnings.md
 
+Options (task new):
+   --template <name> Create the task from .agentboard/templates/<name>.md
+   --var <k=v>       Fill a template variable (repeatable)
+
    --version         Print the version
 `)
 }
@@ -47,7 +55,11 @@ interface Args {
   command: string
   dir: string
   taskId?: string
+  title?: string
+  template?: string
+  vars?: Record<string, string>
   sprintId?: number
+  exportFormat?: string
   importSource?: 'todo' | 'github'
   importTarget?: string
   labelTags?: Record<string, string[]>
@@ -62,7 +74,7 @@ interface Args {
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'import', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'help'])
   let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -79,6 +91,74 @@ export function parseArgs(argv: string[]): Args | null {
   let retro = true
   const labelTags: Record<string, string[]> = {}
   const milestoneSprints: Record<string, number> = {}
+
+  if (command === 'task') {
+    const sub = argv.shift()
+    if (sub !== 'new') {
+      console.error('Usage: agentboard task new [title] [dir] [--template <name>] [--var <k=v>]')
+      process.exit(1)
+    }
+    let template: string | undefined
+    const vars: Record<string, string> = {}
+    const positional: string[] = []
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!
+      if (arg === '--template') {
+        template = argv[++i]
+        if (!template) {
+          console.error('Usage: --template <name>')
+          process.exit(1)
+        }
+      } else if (arg === '--var') {
+        const kv = (argv[++i] ?? '').split('=')
+        if (kv.length !== 2 || !kv[0] || !kv[1]) {
+          console.error('Usage: --var <name>=<value>')
+          process.exit(1)
+        }
+        vars[kv[0]!] = kv[1]!
+      } else if (arg.startsWith('-')) {
+        console.error(`Unknown option: ${arg}`)
+        process.exit(1)
+      } else {
+        positional.push(arg)
+      }
+    }
+    let dir = process.cwd()
+    let title: string | undefined
+    for (const p of positional) {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) dir = path.resolve(p)
+      else title = title ?? p
+    }
+    return { command: 'task-new', dir, title, template, vars, taskId: undefined, sprintId: undefined, port, host, open, init, mcp, fallback, retro }
+  }
+
+  if (command === 'export') {
+    const sub = argv.shift()
+    if (sub !== 'md') {
+      console.error('Usage: agentboard export md [dir] [--sprint <id>]')
+      process.exit(1)
+    }
+    let exportSprintId: number | undefined
+    const positional: string[] = []
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!
+      if (arg === '--sprint') {
+        const id = Number(argv[++i])
+        if (!Number.isInteger(id) || id <= 0) {
+          console.error('Usage: --sprint <id>')
+          process.exit(1)
+        }
+        exportSprintId = id
+      } else if (arg.startsWith('-')) {
+        console.error(`Unknown option: ${arg}`)
+        process.exit(1)
+      } else {
+        positional.push(arg)
+      }
+    }
+    const exportDir = positional.length > 0 ? path.resolve(positional[0]!) : process.cwd()
+    return { command: 'export', exportFormat: 'md', dir: exportDir, taskId: undefined, sprintId: exportSprintId, port, host, open, init, mcp, fallback, retro }
+  }
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -214,7 +294,7 @@ export function parseArgs(argv: string[]): Args | null {
 function resolveWebDist(): string | null {
   const candidates = [
     fileURLToPath(new URL('../../web/dist', import.meta.url)),
-    path.resolve(process.cwd(), 'node_modules/@agentsprint/web/dist'),
+    path.resolve(process.cwd(), 'node_modules/@jmrojas06/agentsprint-web/dist'),
   ]
   for (const c of candidates) {
     if (fs.existsSync(c)) return c
@@ -226,7 +306,7 @@ async function cmdInit(dir: string): Promise<void> {
   ProjectStore.init(dir, { sample: true })
   const board = path.join(dir, '.agentboard')
   console.log(`✔ Board created at ${board}`)
-  console.log(`✔ Sample tasks + AGENTS.md added. Edit the files or run:`)
+  console.log(`✔ Sample tasks, templates + AGENTS.md added. Edit the files or run:`)
   console.log(`\n  agentboard serve ${dir}\n`)
 }
 
@@ -267,7 +347,7 @@ async function cmdServe(args: Args): Promise<void> {
   if (webDist) {
     console.log(`  UI:      ${url}`)
   } else {
-    console.log(`  UI:      build web with "pnpm --filter @agentsprint/web build"`)
+    console.log(`  UI:      build web with "pnpm --filter @jmrojas06/agentsprint-web build"`)
   }
   console.log('  Press Ctrl+C to stop.\n')
 
@@ -373,6 +453,56 @@ export async function cmdClose(dir: string, sprintId: number | undefined, opts: 
   }
 }
 
+export async function cmdTaskNew(
+  dir: string,
+  title: string | undefined,
+  template: string | undefined,
+  vars: Record<string, string> = {},
+): Promise<void> {
+  const store = ProjectStore.open(dir)
+  let task
+  if (template) {
+    if (!store.getTemplate(template)) {
+      const available = store.listTemplates().map((t) => t.name).join(', ')
+      console.error(`Template not found: ${template}${available ? ` (available: ${available})` : ' (no templates in .agentboard/templates/)'}`)
+      process.exit(1)
+    }
+    task = store.createTaskFromTemplate(template, { vars, overrides: title ? { title } : {} })
+  } else {
+    if (!title) {
+      console.error('Usage: agentboard task new <title> [dir] [--template <name>] [--var <k=v>]')
+      process.exit(1)
+    }
+    task = store.createTask({ title })
+  }
+  console.log(`✔ Created ${task.id}: ${task.title}${template ? ` (from template "${template}")` : ''}`)
+}
+
+export async function cmdExport(
+  dir: string,
+  format: string,
+  sprintId: number | undefined,
+): Promise<void> {
+  if (format !== 'md') {
+    console.error(`Unknown export format: ${format} (supported: md)`)
+    process.exit(1)
+  }
+  const store = ProjectStore.open(dir)
+  let markdown: string
+  try {
+    markdown = buildBoardMarkdown(store.state, {
+      sprintId: sprintId ?? null,
+      learnings: store.getLearnings(),
+    })
+  } catch (err) {
+    console.error((err as Error).message)
+    process.exit(1)
+  }
+  const target = path.join(dir, 'BOARD.md')
+  fs.writeFileSync(target, markdown)
+  console.log(`✔ Board exported to ${target}`)
+}
+
 export async function cmdLint(dir: string): Promise<number> {
   const { issues, ok } = lintProject(dir)
   if (ok) {
@@ -406,17 +536,23 @@ async function main(): Promise<void> {
     process.exit(code)
   } else if (args.command === 'close') {
     await cmdClose(args.dir, args.sprintId, { retro: args.retro })
+  } else if (args.command === 'task-new') {
+    await cmdTaskNew(args.dir, args.title, args.template, args.vars)
   } else if (args.command === 'import') {
     await cmdImport(args.dir, args.importSource!, args.importTarget!, {
       labelTags: args.labelTags,
       milestoneSprints: args.milestoneSprints,
     })
+  } else if (args.command === 'export') {
+    await cmdExport(args.dir, args.exportFormat!, args.sprintId)
   } else {
     await cmdServe(args)
   }
 }
 
-const isEntry = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false
+const isEntry = process.argv[1]
+  ? import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href
+  : false
 if (isEntry) {
   main().catch((err) => {
     console.error(`\n${(err as Error).message}`)

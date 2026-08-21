@@ -1,4 +1,4 @@
-import type { Task } from '@agentsprint/core'
+import type { Task } from '@jmrojas06/agentsprint-core'
 import { createRequire } from 'node:module'
 
 // esbuild/tsup rewrites static `import 'node:sqlite'` to `import 'sqlite'`,

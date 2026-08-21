@@ -3,10 +3,10 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { ProjectStore } from '@agentsprint/core'
-import { buildSprintReport, buildTaskSpec, computeSprintStats } from '@agentsprint/core'
+import { ProjectStore } from '@jmrojas06/agentsprint-core'
+import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
-import type { SprintStatus, TaskInput } from '@agentsprint/core'
+import type { SprintStatus, TaskInput } from '@jmrojas06/agentsprint-core'
 
 const STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 
@@ -180,9 +180,11 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Create task',
       description:
-        'Create a new task. Returns the created task with its generated id. Defaults: status "To Do", priority "medium", assignee "human".',
+        'Create a new task. Returns the created task with its generated id. Defaults: status "To Do", priority "medium", assignee "human". Optionally create from a reusable template in .agentboard/templates/ by passing `template` (name without .md) and `vars` for its {{placeholders}}; explicit fields override the template defaults.',
       inputSchema: z.object({
-        title: z.string().min(1),
+        title: z.string().min(1).optional(),
+        template: z.string().optional(),
+        vars: z.record(z.string()).optional(),
         description: z.string().optional(),
         status: z.enum(STATUSES).optional(),
         sprint: z.number().int().positive().optional(),
@@ -193,14 +195,31 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         acceptanceCriteria: z.array(z.string()).optional(),
       }),
     },
-    async (input) => {
+    async ({ template, vars, ...input }) => {
       try {
-        const task = getStore().createTask(input as TaskInput)
+        const store = getStore()
+        if (!template && !input.title) {
+          return textResponse({ error: 'Provide a title or a template.' })
+        }
+        const task = template
+          ? store.createTaskFromTemplate(template, { vars, overrides: input, actor: 'agent' })
+          : store.createTask(input as TaskInput, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
         return textResponse({ error: (err as Error).message })
       }
     },
+  )
+
+  server.registerTool(
+    'template_list',
+    {
+      title: 'List task templates',
+      description:
+        'List the reusable task templates in .agentboard/templates/ (name, defaults, acceptance criteria and {{placeholder}} variables). Use a name with task_create `template`.',
+      inputSchema: z.object({}),
+    },
+    async () => textResponse(getStore().listTemplates()),
   )
 
   server.registerTool(
@@ -222,7 +241,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id, ...patch }) => {
       try {
-        const task = getStore().updateTask(id, patch)
+        const task = getStore().updateTask(id, patch, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
         return textResponse({ error: (err as Error).message })
@@ -242,7 +261,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id, status }) => {
       try {
-        const task = getStore().setTaskStatus(id, status)
+        const task = getStore().setTaskStatus(id, status, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
         return textResponse({ error: (err as Error).message })
@@ -255,10 +274,14 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Claim a task',
       description:
-        'Mark a task as In Progress and assigned to an agent. Use this when you start working on a task. If the task has incomplete dependencies, the call will fail unless `force` is true.',
-      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-[0-9]+$/), force: z.boolean().optional() }),
+        'Mark a task as In Progress and assigned to an agent. Use this when you start working on a task. If the task has incomplete dependencies, the call will fail unless `force` is true. Claims also take an exclusive lock (30 min TTL): pass `agent` to identify yourself — if another agent holds an active lock the call fails unless `force`.',
+      inputSchema: z.object({
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
+        agent: z.string().min(1).optional(),
+        force: z.boolean().optional(),
+      }),
     },
-    async ({ id, force }) => {
+    async ({ id, agent, force }) => {
       try {
         const store = getStore()
         const blocked = store.isTaskBlocked(id)
@@ -266,8 +289,38 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           const blockers = store.getBlockers(id)
           return textResponse({ error: `Task ${id} is blocked by ${blockers.join(', ')}`, blockers })
         }
-        const task = store.updateTask(id, { status: 'In Progress', assignee: 'agent' })
+        try {
+          store.lockTask(id, agent ?? 'agent')
+        } catch (err) {
+          if (!force) return textResponse({ error: (err as Error).message })
+          await Promise.resolve()
+          store.unlockTask(id, { force: true })
+          store.lockTask(id, agent ?? 'agent')
+        }
+        const task = store.updateTask(id, { status: 'In Progress', assignee: 'agent' }, { actor: 'agent' })
         return textResponse(task)
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  server.registerTool(
+    'task_release',
+    {
+      title: 'Release task lock',
+      description:
+        "Release your exclusive lock on a task so other agents can claim it. Pass `agent` to verify ownership; use `force` to break a foreign or stale lock.",
+      inputSchema: z.object({
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
+        agent: z.string().min(1).optional(),
+        force: z.boolean().optional(),
+      }),
+    },
+    async ({ id, agent, force }) => {
+      try {
+        const task = getStore().unlockTask(id, { agent, force })
+        return textResponse({ ok: true, id: task.id, lockedBy: null })
       } catch (err) {
         return textResponse({ error: (err as Error).message })
       }
@@ -289,7 +342,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id, index, text, completed }) => {
       try {
-        const task = getStore().setTaskChecklist(id, { index, text, completed })
+        const task = getStore().setTaskChecklist(id, { index, text, completed }, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
         return textResponse({ error: (err as Error).message })
@@ -311,7 +364,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id, note, author }) => {
       try {
-        const task = getStore().appendTaskNote(id, note, author)
+        const task = getStore().appendTaskNote(id, note, author ?? 'agent')
         return textResponse(task)
       } catch (err) {
         return textResponse({ error: (err as Error).message })
@@ -348,6 +401,30 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       try {
         getStore().deleteTask(id)
         return textResponse({ ok: true, deleted: id })
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  server.registerTool(
+    'export_board',
+    {
+      title: 'Export board to Markdown',
+      description:
+        'Export the full board as a static Markdown document: sprints with stats (points, completion %), all tasks grouped by status with their acceptance criteria, and current learnings. Optionally limit the export to a single sprint with `sprint`.',
+      inputSchema: z.object({
+        sprint: z.number().int().positive().optional(),
+      }),
+    },
+    async ({ sprint }) => {
+      try {
+        const store = getStore()
+        const markdown = buildBoardMarkdown(store.state, {
+          sprintId: sprint ?? null,
+          learnings: store.getLearnings(),
+        })
+        return textResponse(markdown)
       } catch (err) {
         return textResponse({ error: (err as Error).message })
       }
@@ -710,22 +787,108 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
   )
 
   server.registerPrompt(
-    'sprint-planning',
+    'sprint-plan',
     {
-      title: 'Sprint Planning',
-      description: 'Analyze backlog and plan tasks for the next sprint',
+      title: 'Sprint Planning (agent-assisted)',
+      description:
+        'Analyze the backlog and produce a suggested plan for the next sprint: which tasks to include, order, estimates, priorities and dependencies. Includes backlog, historical velocity and accumulated learnings.',
+      argsSchema: {
+        goal: z.string().optional().describe('Proposed sprint goal (optional).'),
+        capacity: z.string().optional().describe('Capacity for this sprint in story points (optional).'),
+        sprint: z.string().optional().describe('Id of an existing planned sprint to fill (optional).'),
+      },
     },
-    () => ({
-      messages: [
-        {
-          role: 'user',
-          content: {
-            type: 'text',
-            text: 'Let us plan the next sprint. Review the backlog tasks and board summary, propose a concise goal, and select tasks to include.',
+    ({ goal, capacity, sprint }) => {
+      const store = getStore()
+      const state = store.state
+
+      const backlog = state.tasks.filter((t) => t.status === 'Backlog')
+      const closed = state.sprints
+        .filter((s) => s.status === 'closed')
+        .sort((a, b) => b.id - a.id)
+        .slice(0, 3)
+      const velocity =
+        closed.length > 0
+          ? Math.round(
+              closed.reduce(
+                (sum, s) =>
+                  sum +
+                  state.tasks
+                    .filter((t) => t.sprint === s.id && t.status === 'Done')
+                    .reduce((acc, t) => acc + t.estimate, 0),
+                0,
+              ) / closed.length,
+            )
+          : null
+      const plannedSprint = sprint ? state.sprints.find((s) => String(s.id) === sprint) ?? null : null
+      const learnings = store.getLearnings()
+
+      const backlogLines = backlog.length
+        ? backlog
+            .map(
+              (t) =>
+                `- **${t.id}** — ${t.title} [priority: ${t.priority}, estimate: ${t.estimate}${t.tags.length ? `, tags: ${t.tags.join('/')}` : ''}]${t.dependencies.length ? ` (depends on: ${t.dependencies.join(', ')})` : ''}`,
+            )
+            .join('\n')
+        : '_Backlog is empty._'
+      const historyLines = closed.length
+        ? closed.map((s) => `- Sprint ${s.id} (${s.endedAt?.slice(0, 10) ?? '?'}): ${s.goal || 'no goal'}`).join('\n')
+        : '_No closed sprints yet — no velocity data._'
+
+      const text = [
+        'You are planning the next sprint for this AgentSprint board.',
+        '',
+        '## Context',
+        `- Proposed goal: ${goal?.trim() || '(not provided — propose one from the backlog)'}`,
+        `- Capacity: ${capacity?.trim() || (velocity != null ? `(not provided — assume ~${velocity} pts)` : '(not provided)')}`,
+        `- Historical velocity: ${velocity != null ? `${velocity} points/sprint (avg of last ${closed.length} closed sprints)` : 'unknown (no closed sprints)'}`,
+        `- Target sprint: ${plannedSprint ? `existing planned Sprint ${plannedSprint.id} — "${plannedSprint.goal || 'no goal'}"` : 'none selected — propose creating one'}`,
+        '',
+        '## Available backlog',
+        backlogLines,
+        '',
+        '## Recent sprint history',
+        historyLines,
+        '',
+        ...(learnings.trim()
+          ? ['## Learned principles (respect them)', learnings.trim(), '']
+          : []),
+        '## Your job',
+        '1. Propose a concise sprint goal aligned with the context above.',
+        '2. Select tasks from the backlog that fit the capacity, respecting dependencies (a task may only be scheduled if its dependencies are included or already Done).',
+        '3. Propose priority, estimate and dependency ordering for each selected task.',
+        '4. Output a plan using EXACTLY this template:',
+        '',
+        '```markdown',
+        '## Sprint plan proposal',
+        '**Goal:** <one-line goal>',
+        '**Capacity:** <pts> · **Planned total:** <pts> · **Velocity reference:** <pts>',
+        '',
+        '| Order | Task | Priority | Estimate | Dependencies | Rationale |',
+        '|---|---|---|---|---|---|',
+        '| 1 | TK-x | high | 3 | — | ... |',
+        '',
+        '**Carry-over / not included:** <task ids + reason>',
+        '**Risks:** <anything that might block the sprint>',
+        '```',
+        '',
+        '5. Present the plan to the human for review. Do NOT modify the board until they approve.',
+        '6. Once approved, execute it with task_update (sprint, priority, estimate), sprint_create + sprint_activate if needed.',
+        '',
+        'Produce the plan now.',
+      ]
+        .filter(Boolean)
+        .join('\n')
+
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: { type: 'text', text },
           },
-        },
-      ],
-    }),
+        ],
+      }
+    },
   )
 
   server.registerPrompt(
@@ -769,7 +932,9 @@ export async function main(argv: string[]): Promise<void> {
   await server.connect(new StdioServerTransport())
 }
 
-const isEntry = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false
+const isEntry = process.argv[1]
+  ? import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href
+  : false
 if (isEntry) {
   main(process.argv.slice(2)).catch((err: unknown) => {
     process.stderr.write(`agentboard-mcp: ${err instanceof Error ? err.message : String(err)}\n`)

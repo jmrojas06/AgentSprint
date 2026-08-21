@@ -104,19 +104,19 @@ pnpm build
 pnpm agentsprint init <dir>      # o: node packages/cli/dist/index.js init <dir>
 pnpm agentsprint serve <dir>     # arranca todo en http://127.0.0.1:4310
 # dev con hot-reload:
-pnpm --filter @agentsprint/server dev   # terminal 1 (tsup watch)
-pnpm --filter @agentsprint/web dev      # terminal 2 (vite, proxy /api -> 4310)
+pnpm --filter @jmrojas06/agentsprint-server dev   # terminal 1 (tsup watch)
+pnpm --filter @jmrojas06/agentsprint-web dev      # terminal 2 (vite, proxy /api -> 4310)
 ```
 
 ## Stack / estructura
 
 ```
 packages/
-├── core/    # dominio + storage .md  (@agentsprint/core)
-├── server/  # Fastify REST+SSE+watcher+sqlite (@agentsprint/server)
-├── web/     # React+Vite+Tailwind UI        (@agentsprint/web)
-├── cli/     # binario `agentboard`          (@agentsprint/cli)
-└── mcp/     # servidor MCP para agentes     (@agentsprint/mcp) ✅ creado
+├── core/    # dominio + storage .md  (@jmrojas06/agentsprint-core)
+├── server/  # Fastify REST+SSE+watcher+sqlite (@jmrojas06/agentsprint-server)
+├── web/     # React+Vite+Tailwind UI        (@jmrojas06/agentsprint-web)
+├── cli/     # binario `agentboard`          (@jmrojas06/agentsprint-cli)
+└── mcp/     # servidor MCP para agentes     (@jmrojas06/agentsprint-mcp) ✅ creado
 ```
 
 ## Convenciones

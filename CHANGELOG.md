@@ -28,5 +28,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Docker image with healthcheck + docker-compose setup
 - CI (typecheck/test/build) and automated npm publish + GHCR Docker push
 
-[Unreleased]: https://github.com/agentsprint/agentsprint/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/agentsprint/agentsprint/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jmrojas06/AgentSprint/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jmrojas06/AgentSprint/releases/tag/v0.1.0

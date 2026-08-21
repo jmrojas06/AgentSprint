@@ -1,17 +1,20 @@
 {
-  "name": "@agentsprint/cli",
+  "name": "@jmrojas06/agentsprint-cli",
   "version": "0.1.0",
   "description": "AgentSprint command-line tool — git-native sprint board for coding with AI agents",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "keywords": ["cli", "agents", "sprint", "kanban", "board", "ai-coding", "mcp"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "url": "git+https://github.com/jmrojas06/AgentSprint.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/agentsprint/agentsprint/issues"
+    "url": "https://github.com/jmrojas06/AgentSprint/issues"
   },
   "bin": {
     "agentboard": "./dist/index.js"
@@ -28,9 +31,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@agentsprint/core": "workspace:*",
-    "@agentsprint/server": "workspace:*",
-    "@agentsprint/web": "workspace:*"
+    "@jmrojas06/agentsprint-core": "workspace:*",
+    "@jmrojas06/agentsprint-server": "workspace:*",
+    "@jmrojas06/agentsprint-web": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

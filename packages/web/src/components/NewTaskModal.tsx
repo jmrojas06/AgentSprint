@@ -1,25 +1,64 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, X } from 'lucide-react'
-import type { Sprint, TaskPriority } from '../types'
+import type { Sprint, TaskPriority, TaskTemplate } from '../types'
 import { TASK_PRIORITIES } from '../types'
+import { api } from '../api'
 import { priorityDot, priorityLabel } from '../ui'
 
 interface Props {
   sprints: Sprint[]
-  onCreate: (input: { title: string; sprint: number | null; priority: TaskPriority; assignee: 'human' | 'agent' }) => void
+  onCreate: (input: {
+    title: string
+    sprint: number | null
+    priority: TaskPriority
+    assignee: 'human' | 'agent'
+    template?: string
+    vars?: Record<string, string>
+  }) => void
   onClose: () => void
 }
 
 export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
   const [title, setTitle] = useState('')
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [assignee, setAssignee] = useState<'human' | 'agent'>('human')
   const [sprint, setSprint] = useState<number | null>(null)
+  const [templates, setTemplates] = useState<TaskTemplate[]>([])
+  const [template, setTemplate] = useState<string>('')
+
+  useEffect(() => {
+    api.templates().then(setTemplates).catch(() => {})
+  }, [])
+
+  const selectTemplate = (name: string) => {
+    setTemplate(name)
+    const tpl = templates.find((t) => t.name === name)
+    if (tpl) {
+      if (tpl.priority) setPriority(tpl.priority)
+      if (tpl.assignee) setAssignee(tpl.assignee)
+    }
+  }
+
+  const selected = templates.find((t) => t.name === template)
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title.trim()) return
-    onCreate({ title: title.trim(), sprint, priority, assignee })
+    if (!title.trim() && !template) return
+    onCreate({
+      title: title.trim(),
+      sprint,
+      priority,
+      assignee,
+      ...(template ? { template, vars: title.trim() ? { title: title.trim() } : {} } : {}),
+    })
   }
 
   const field = 'w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500'
@@ -47,6 +86,23 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
           placeholder="What should be done?"
           className={field + ' mb-3'}
         />
+
+        <label className={label}>Template</label>
+        <select value={template} onChange={(e) => selectTemplate(e.target.value)} className={field + ' mb-3'}>
+          <option value="">Blank task</option>
+          {templates.map((t) => (
+            <option key={t.name} value={t.name}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        {selected && (
+          <p className="-mt-1 mb-3 text-[11px] leading-snug text-zinc-500">
+            {selected.acceptanceCriteria.length} acceptance criteria
+            {selected.tags?.length ? ` · tags: ${selected.tags.join(', ')}` : ''}
+            {selected.description.includes('{{') ? ' · fill {{variables}} after creation' : ''}
+          </p>
+        )}
 
         <div className="mb-3 grid grid-cols-3 gap-3">
           <div>
@@ -96,7 +152,7 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
           </button>
           <button
             type="submit"
-            disabled={!title.trim()}
+            disabled={!title.trim() && !template}
             className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Plus className="h-3.5 w-3.5" /> Create

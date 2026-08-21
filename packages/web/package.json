@@ -1,8 +1,11 @@
 {
-  "name": "@agentsprint/web",
+  "name": "@jmrojas06/agentsprint-web",
   "version": "0.1.0",
   "description": "Visual sprint board UI for AgentSprint",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "keywords": [
     "kanban",
@@ -12,11 +15,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "url": "git+https://github.com/jmrojas06/AgentSprint.git",
     "directory": "packages/web"
   },
   "bugs": {
-    "url": "https://github.com/agentsprint/agentsprint/issues"
+    "url": "https://github.com/jmrojas06/AgentSprint/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -32,7 +35,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@agentsprint/core": "workspace:*",
+    "@jmrojas06/agentsprint-core": "workspace:*",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

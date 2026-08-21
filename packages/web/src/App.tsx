@@ -1,18 +1,36 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, GitBranch, Palette, Plus, Search, SortAsc, SortDesc, Square, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Bell, BellOff, GitBranch, LayoutGrid, List, Palette, Plus, Search, SortAsc, SortDesc, Square, X } from 'lucide-react'
 import type { BoardState, ProjectState, Task, TaskPriority } from './types'
 import { TASK_PRIORITIES } from './types'
 import { api, setProject } from './api'
 import { useProjectEvents } from './hooks/useProjectEvents'
+import { useReviewNotifications } from './hooks/useReviewNotifications'
 import { Board } from './components/Board'
+import { ListView } from './components/ListView'
 import { SprintPanel } from './components/SprintPanel'
 import { TaskModal } from './components/TaskModal'
 import { NewTaskModal } from './components/NewTaskModal'
 import { BrandPanel } from './components/BrandPanel'
-import { cx, computeVelocity, getBlockerTasks, type SortBy, type SortDir, sortTasks } from './ui'
+import { CommandPalette } from './components/CommandPalette'
+import { ThemeToggle } from './components/ThemeToggle'
+import { cx, computeVelocity, getBlockerTasks, sortTasks, viewFromQuery, type SortBy, type SortDir, type ViewMode } from './ui'
 
 type SprintFilter = 'all' | number
 type SideTab = 'sprints' | 'brand'
+
+const VIEW_STORAGE_KEY = 'agentsprint.view'
+
+function initialView(): ViewMode {
+  const fromUrl = typeof window !== 'undefined' ? viewFromQuery(window.location.search) : null
+  if (fromUrl) return fromUrl
+  try {
+    const saved = localStorage.getItem(VIEW_STORAGE_KEY)
+    if (saved === 'list' || saved === 'kanban') return saved
+  } catch {
+    /* storage unavailable */
+  }
+  return 'kanban'
+}
 
 export default function App() {
   const [project, setProjectState] = useState<BoardState | null>(null)
@@ -25,11 +43,35 @@ export default function App() {
   const [tagFilter, setTagFilter] = useState('')
   const [sortBy, setSortBy] = useState<SortBy>('estimate')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [view, setViewState] = useState<ViewMode>(initialView)
   const [editing, setEditing] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
   const [warningsDismissed, setWarningsDismissed] = useState(false)
   const [commitCounts, setCommitCounts] = useState<Record<string, number>>({})
+  const {
+    supported: notificationsSupported,
+    enabled: notificationsEnabled,
+    request: requestNotifications,
+    disable: disableNotifications,
+    notifyReview,
+  } = useReviewNotifications()
+
+  // Track the previous status of every task to detect Review transitions.
+  const prevStatuses = useRef<Map<string, string> | null>(null)
+  useEffect(() => {
+    if (!project) return
+    const prev = prevStatuses.current
+    prevStatuses.current = new Map(project.tasks.map((t) => [t.id, t.status]))
+    if (!prev || !notificationsEnabled) return
+    for (const task of project.tasks) {
+      const before = prev.get(task.id)
+      if (task.status === 'Review' && before && before !== 'Review') {
+        notifyReview(task, (t) => setEditing(project.tasks.find((x) => x.id === t.id) ?? t))
+      }
+    }
+  }, [project, notificationsEnabled, notifyReview])
 
   const reload = useCallback(async () => {
     try {
@@ -59,6 +101,38 @@ export default function App() {
   }, [project?.rootDir])
 
   useProjectEvents(reload)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const clearFilters = useCallback(() => {
+    setPriorityFilter('')
+    setAssigneeFilter('')
+    setTagFilter('')
+    setQuery('')
+    setSprintFilter('all')
+  }, [])
+
+  const setView = useCallback((next: ViewMode) => {
+    setViewState(next)
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, next)
+    } catch {
+      /* storage unavailable */
+    }
+    const url = new URL(window.location.href)
+    if (next === 'list') url.searchParams.set('view', 'list')
+    else url.searchParams.delete('view')
+    window.history.replaceState(null, '', url)
+  }, [])
 
   const switchProject = useCallback(
     async (name: string) => {
@@ -223,13 +297,7 @@ export default function App() {
 
             {(priorityFilter || assigneeFilter || tagFilter || query || sprintFilter !== 'all') && (
               <button
-                onClick={() => {
-                  setPriorityFilter('')
-                  setAssigneeFilter('')
-                  setTagFilter('')
-                  setQuery('')
-                  setSprintFilter('all')
-                }}
+                onClick={clearFilters}
                 className="rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-1 text-xs text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"
                 title="Clear all filters"
               >
@@ -244,7 +312,7 @@ export default function App() {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search tasks…"
+                placeholder="Search tasks…  ⌘K"
                 className="w-44 rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-7 pr-2 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-indigo-500 sm:w-56"
               />
             </div>
@@ -262,12 +330,59 @@ export default function App() {
               ))}
             </select>
 
+            <div
+              className="flex overflow-hidden rounded-md border border-zinc-700 bg-zinc-900"
+              role="group"
+              aria-label="Board view"
+              data-testid="view-toggle"
+            >
+              <button
+                onClick={() => setView('kanban')}
+                aria-pressed={view === 'kanban'}
+                title="Kanban view"
+                className={cx(
+                  'px-2 py-1.5 text-zinc-400 hover:text-zinc-200',
+                  view === 'kanban' && 'bg-zinc-800 text-indigo-400',
+                )}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setView('list')}
+                aria-pressed={view === 'list'}
+                title="List view"
+                className={cx(
+                  'border-l border-zinc-700 px-2 py-1.5 text-zinc-400 hover:text-zinc-200',
+                  view === 'list' && 'bg-zinc-800 text-indigo-400',
+                )}
+              >
+                <List className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
             <button
               onClick={() => setCreating(true)}
               className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
             >
               <Plus className="h-3.5 w-3.5" /> New task
             </button>
+
+            {notificationsSupported && (
+              <button
+                onClick={() => (notificationsEnabled ? disableNotifications() : void requestNotifications())}
+                aria-pressed={notificationsEnabled}
+                title={notificationsEnabled ? 'Notifications on — click to disable' : 'Enable review notifications'}
+                data-testid="notify-toggle"
+                className={cx(
+                  'rounded-md border border-zinc-700 p-1.5 hover:text-zinc-100',
+                  notificationsEnabled ? 'text-indigo-400' : 'text-zinc-400',
+                )}
+              >
+                {notificationsEnabled ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+              </button>
+            )}
+
+            <ThemeToggle />
           </div>
         </div>
 
@@ -314,18 +429,29 @@ export default function App() {
 
       <div className="grid flex-1 grid-cols-1 gap-3 overflow-hidden p-3 lg:grid-cols-[1fr_280px]">
         <div className="overflow-x-auto">
-          <Board
-            statuses={statuses}
-            tasks={tasks}
-            allTasks={project.tasks}
-            commitCounts={commitCounts}
-            sortBy={sortBy}
-            sortDir={sortDir}
-            onSortBy={setSortBy}
-            onSortDir={setSortDir}
-            onOpen={setEditing}
-            onMove={moveTask}
-          />
+          {view === 'kanban' ? (
+            <Board
+              statuses={statuses}
+              tasks={tasks}
+              allTasks={project.tasks}
+              commitCounts={commitCounts}
+              sortBy={sortBy}
+              sortDir={sortDir}
+              onSortBy={setSortBy}
+              onSortDir={setSortDir}
+              onOpen={setEditing}
+              onMove={moveTask}
+            />
+          ) : (
+            <ListView
+              tasks={tasks}
+              sortBy={sortBy}
+              sortDir={sortDir}
+              onSortBy={setSortBy}
+              onSortDir={setSortDir}
+              onOpen={setEditing}
+            />
+          )}
         </div>
         <div className="hidden overflow-y-auto lg:block">
           <div className="mb-2 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
@@ -395,6 +521,24 @@ export default function App() {
       {creating && (
         <NewTaskModal sprints={project.sprints} onCreate={createTask} onClose={() => setCreating(false)} />
       )}
+
+      <CommandPalette
+        open={paletteOpen}
+        tasks={project.tasks}
+        sprints={project.sprints}
+        activeSprintId={project.activeSprint?.id ?? null}
+        onClose={() => setPaletteOpen(false)}
+        onCreateTask={() => setCreating(true)}
+        onOpenTask={(task) => {
+          const fresh = project.tasks.find((t) => t.id === task.id) ?? task
+          setEditing(fresh)
+        }}
+        onActivateSprint={async (id) => {
+          await api.updateSprint(id, { status: 'active' })
+          await reload()
+        }}
+        onClearFilters={clearFilters}
+      />
     </div>
   )
 }

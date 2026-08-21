@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { CheckSquare, ClipboardCopy, GitCommitHorizontal, GitBranch, Plus, Save, Square, Trash2, X } from 'lucide-react'
+import { CheckSquare, ClipboardCopy, GitCommitHorizontal, GitBranch, Lock, Plus, Save, Square, Trash2, X } from 'lucide-react'
 import type { GitCommit, Sprint, Task, TaskPriority, TaskStatus } from '../types'
 import { TASK_PRIORITIES } from '../types'
 import { api } from '../api'
-import { cx, criterionChecked, criterionText, getBlockerTasks } from '../ui'
+import { ActivityTimeline } from './ActivityTimeline'
+import { cx, criterionChecked, criterionText, getBlockerTasks, getTaskLock } from '../ui'
 
 interface Props {
   task: Task
@@ -18,6 +19,7 @@ interface Props {
 const PRIORITY_ORDER: TaskPriority[] = ['low', 'medium', 'high', 'critical']
 
 export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete, onClose }: Props) {
+  const lock = getTaskLock(task)
   const [title, setTitle] = useState(task.title)
   const [description, setDescription] = useState(task.description)
   const [status, setStatus] = useState<TaskStatus>(task.status as TaskStatus)
@@ -33,6 +35,15 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   const [branches, setBranches] = useState<string[]>([])
   const [gitAvailable, setGitAvailable] = useState(true)
   const [commitsLoading, setCommitsLoading] = useState(false)
+  const [tab, setTab] = useState<'details' | 'activity'>('details')
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   useEffect(() => {
     let cancelled = false
@@ -125,6 +136,16 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
       >
         <div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-3">
           <span className="font-mono text-xs text-zinc-500">{task.id}</span>
+          {lock && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-300"
+              title={`Exclusively locked by ${lock.lockedBy} (auto-expires after 30 min without a heartbeat)`}
+              data-testid="modal-lock"
+            >
+              <Lock className="h-3 w-3" />
+              locked by {lock.lockedBy}
+            </span>
+          )}
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -136,7 +157,26 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           </button>
         </div>
 
+        <div className="flex items-center gap-1 border-b border-zinc-800 px-4 py-1.5">
+          {(['details', 'activity'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cx(
+                'rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors',
+                tab === t ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-300',
+              )}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
         <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 sm:grid-cols-2">
+          {tab === 'activity' ? (
+            <ActivityTimeline taskId={task.id} />
+          ) : (
+          <>
           <div className="sm:col-span-2">
             <label className={label}>Description</label>
             <textarea
@@ -318,6 +358,8 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
               </button>
             </div>
           </div>
+          </>
+          )}
         </div>
 
         <div className="flex items-center gap-2 border-t border-zinc-800 px-4 py-3">

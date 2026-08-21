@@ -8,7 +8,9 @@ services:
     ports:
       - "4310:4310"
     volumes:
-      # Mount any project(s) you want to manage. Point /board at a folder
-      # containing one or more repos with a `.agentboard/` directory.
-      - ./projects:/board
+      # Point /board at a folder containing one or more repos with a
+      # `.agentboard/` directory — each one is discovered as a separate
+      # project. Replace ./your-project with the path to your project.
+      - ./your-project:/board
+    command: serve /board --host 0.0.0.0 --no-open --mcp
     command: serve /board --host 0.0.0.0 --no-open --mcp

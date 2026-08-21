@@ -14,9 +14,13 @@
     "dev": "pnpm --parallel -r dev",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "agentsprint": "pnpm --filter @agentsprint/cli start"
+    "agentsprint": "pnpm --filter @jmrojas06/agentsprint-cli start",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitepress": "^1.6.3"
   }
 }

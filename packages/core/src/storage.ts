@@ -2,9 +2,11 @@ import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
-import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand } from './types.js'
-import type { Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskStatus } from './types.js'
+import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, TASK_LOCK_TTL_MINUTES } from './types.js'
+import type { ActivityEvent as ActivityEventType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
 import { buildSprintReport } from './spec.js'
+import { SAMPLE_TEMPLATES, parseTemplate, readTemplates, renderTemplate } from './templates.js'
+import type { TaskTemplate, TemplateVars } from './templates.js'
 
 const AGENTS_MD = `# AgentSprint instructions
 
@@ -77,6 +79,7 @@ export class ProjectStore extends EventEmitter {
     const store = new ProjectStore(dir)
     fs.mkdirSync(path.join(store.boardDir, 'tasks'), { recursive: true })
     fs.mkdirSync(path.join(store.boardDir, 'sprints'), { recursive: true })
+    fs.mkdirSync(path.join(store.boardDir, 'templates'), { recursive: true })
 
     const fresh = !fs.existsSync(store.configPath())
     if (fresh) {
@@ -119,6 +122,9 @@ export class ProjectStore extends EventEmitter {
   }
   private sprintsDir(): string {
     return path.join(this.boardDir, 'sprints')
+  }
+  private templatesDir(): string {
+    return path.join(this.boardDir, 'templates')
   }
   private taskPath(id: string): string {
     return path.join(this.tasksDir(), `${id}.md`)
@@ -174,8 +180,8 @@ export class ProjectStore extends EventEmitter {
   private _parseTaskFile(file: string): TaskType | null {
     try {
       const { data, body } = parseFrontmatter(fs.readFileSync(file, 'utf8'), Task)
-      const { description, acceptanceCriteria, notes } = parseTaskBody(body)
-      return { ...data, description, acceptanceCriteria, notes }
+      const { description, acceptanceCriteria, notes, activity } = parseTaskBody(body)
+      return { ...data, description, acceptanceCriteria, notes, activity }
     } catch {
       return null
     }
@@ -316,12 +322,54 @@ export class ProjectStore extends EventEmitter {
     return ids.length === 0 ? 1 : Math.max(...ids) + 1
   }
 
+  // ── templates ────────────────────────────────────────────────────────
+
+  /** List every reusable task template in `.agentboard/templates/`. */
+  listTemplates(): TaskTemplate[] {
+    return readTemplates(this.boardDir)
+  }
+
+  /** Get a single template by name (filename without `.md`). */
+  getTemplate(name: string): TaskTemplate | null {
+    const file = path.join(this.templatesDir(), `${name}.md`)
+    if (!fs.existsSync(file)) return null
+    try {
+      return parseTemplate(fs.readFileSync(file, 'utf8'), name)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Create a task from a template, rendering `{{var}}` placeholders with
+   * `vars` and applying `overrides` on top of the template defaults.
+   */
+  createTaskFromTemplate(
+    name: string,
+    opts: { vars?: TemplateVars; overrides?: Partial<TaskInput>; actor?: string } = {},
+  ): TaskType {
+    const template = this.getTemplate(name)
+    if (!template) throw new Error(`Template not found: ${name} (looked in ${this.templatesDir()})`)
+    const rendered = renderTemplate(template, opts.vars ?? {})
+    return this.createTask(
+      {
+        title: rendered.title?.trim() || 'Untitled task',
+        priority: rendered.priority,
+        assignee: rendered.assignee,
+        estimate: rendered.estimate,
+        tags: rendered.tags,
+        acceptanceCriteria: rendered.acceptanceCriteria,
+        description: rendered.description,
+        ...opts.overrides,
+      },
+      { actor: opts.actor },
+    )
+  }
+
   // ── task mutations ───────────────────────────────────────────────────
 
-// Original simple createTask/updateTask removed – replaced with cycle‑aware versions below
-
-  setTaskStatus(id: string, status: TaskStatus): TaskType {
-    return this.updateTask(id, { status })
+  setTaskStatus(id: string, status: TaskStatus, opts: { actor?: string } = {}): TaskType {
+    return this.updateTask(id, { status }, opts)
   }
 
   appendTaskNote(id: string, note: string, author?: string): TaskType {
@@ -331,7 +379,11 @@ export class ProjectStore extends EventEmitter {
     const prefix = author ? `[${timestamp}] (${author})` : `[${timestamp}]`
     const entry = `- ${prefix} ${note.trim()}`
     const updatedNotes = task.notes && task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
-    return this.updateTask(id, { notes: updatedNotes })
+    return this.updateTask(
+      id,
+      { notes: updatedNotes },
+      { actor: author ?? 'user', noteEvent: note.trim() },
+    )
   }
 
   /**
@@ -393,10 +445,11 @@ export class ProjectStore extends EventEmitter {
     return cycles
   }
 
-  // Extend createTask to validate cycles after insertion
-  createTask(input: TaskInput): TaskType {
+  // Extend createTask to validate cycles after insertion and record the `created` activity event
+  createTask(input: TaskInput, opts: { actor?: string } = {}): TaskType {
     const sprint = input.sprint == null ? null : this._requireSprint(input.sprint)
     const id = input.id ?? this._nextTaskId()
+    const createdAt = input.createdAt ?? nowIso()
     const task = Task.parse({
       ...input,
       id,
@@ -404,8 +457,16 @@ export class ProjectStore extends EventEmitter {
       status: input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do'),
       priority: input.priority ?? 'medium',
       assignee: input.assignee ?? 'human',
-      createdAt: input.createdAt ?? nowIso(),
+      createdAt,
       updatedAt: nowIso(),
+      activity: [
+        {
+          at: createdAt,
+          actor: opts.actor ?? 'user',
+          type: 'created',
+          detail: `task created (${input.title.trim()})`,
+        },
+      ],
     })
     this._assertStatus(task.status)
     this.tasks.set(id, task)
@@ -422,19 +483,22 @@ export class ProjectStore extends EventEmitter {
     return task
   }
 
-  // Extend updateTask to validate cycles after mutation
-  updateTask(id: string, patch: Partial<Omit<TaskInput, 'id'>>): TaskType {
+  // Extend updateTask to validate cycles after mutation and record diff-based activity events
+  updateTask(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string } = {}): TaskType {
     const current = this.tasks.get(id)
     if (!current) throw new Error(`Task not found: ${id}`)
+    const now = nowIso()
+    const actor = opts.actor ?? 'user'
     const next = Task.parse({
       ...current,
       ...patch,
       id: current.id,
       createdAt: current.createdAt,
-      updatedAt: nowIso(),
+      updatedAt: now,
     })
     if (next.sprint != null) this._requireSprint(next.sprint)
     this._assertStatus(next.status)
+    next.activity = [...current.activity, ...diffActivityEvents(current, next, patch, { actor, noteEvent: opts.noteEvent, at: now })]
     this.tasks.set(id, next)
     // Check for cycles after update
     const cycles = this.detectCycles()
@@ -453,7 +517,11 @@ export class ProjectStore extends EventEmitter {
  * If `completed` is true, the item is marked with `[x] `; unchecked items are stored
  * as bare text (no prefix), matching the `parseTaskBody` / `buildTaskBody` format.
  */
-  setTaskChecklist(id: string, { index, text, completed }: { index?: number; text?: string; completed?: boolean }): TaskType {
+  setTaskChecklist(
+    id: string,
+    { index, text, completed }: { index?: number; text?: string; completed?: boolean },
+    opts: { actor?: string } = {},
+  ): TaskType {
     const task = this.tasks.get(id)
     if (!task) throw new Error(`Task not found: ${id}`)
     const criteria = [...task.acceptanceCriteria]
@@ -469,7 +537,7 @@ export class ProjectStore extends EventEmitter {
     const raw = criteria[targetIdx]!.replace(/^\s*-?\s*\[[ xX]?\]\s*/, '').trim()
     const mark = completed ? '[x] ' : ''
     criteria[targetIdx] = `${mark}${raw}`
-    return this.updateTask(id, { acceptanceCriteria: criteria })
+    return this.updateTask(id, { acceptanceCriteria: criteria }, opts)
   }
 
 /**
@@ -485,6 +553,49 @@ deleteTask(id: string): void {
   }
   this.emit('change')
 }
+
+  // ── exclusive locks (multi-agent coordination) ──────────────────────
+
+  /** Active lock for a task, or null when unlocked or stale (past TTL). */
+  getLock(id: string): TaskLockInfo | null {
+    const task = this.tasks.get(id)
+    if (!task) throw new Error(`Task not found: ${id}`)
+    return getTaskLock(task)
+  }
+
+  /**
+   * Acquire or heartbeat the exclusive lock on a task for `agent`.
+   * Fails when another agent holds an active lock. Re-claiming your own
+   * lock refreshes `lockedAt` (acts as a heartbeat).
+   */
+  lockTask(id: string, agent = 'agent'): TaskType {
+    const task = this.tasks.get(id)
+    if (!task) throw new Error(`Task not found: ${id}`)
+    const active = getTaskLock(task)
+    if (active && active.lockedBy !== agent) {
+      throw new Error(
+        `Task ${id} is locked by "${active.lockedBy}" since ${active.lockedAt}. Use task_release or wait for expiry (${TASK_LOCK_TTL_MINUTES}m).`,
+      )
+    }
+    return this.updateTask(id, { lockedBy: agent, lockedAt: nowIso() }, { actor: agent })
+  }
+
+  /**
+   * Release the lock on a task. Pass `agent` to verify ownership;
+   * omit it (or pass force: true) to force-release a stale/foreign lock.
+   */
+  unlockTask(id: string, opts: { agent?: string; force?: boolean } = {}): TaskType {
+    const task = this.tasks.get(id)
+    if (!task) throw new Error(`Task not found: ${id}`)
+    if (!task.lockedBy && !task.lockedAt) return task
+    if (!opts.force && opts.agent != null) {
+      const active = getTaskLock(task)
+      if (active && active.lockedBy !== opts.agent) {
+        throw new Error(`Task ${id} is locked by "${active.lockedBy}", not by "${opts.agent}".`)
+      }
+    }
+    return this.updateTask(id, { lockedBy: null, lockedAt: null }, { actor: opts.agent ?? 'user' })
+  }
 
   // ── sprint mutations ─────────────────────────────────────────────────
 
@@ -551,7 +662,11 @@ deleteTask(id: string): void {
     delete data.description
     delete data.acceptanceCriteria
     delete data.notes
-    const body = buildTaskBody(task.description, task.acceptanceCriteria, task.notes)
+    delete data.activity
+    // Lock fields are omitted from frontmatter entirely when unlocked
+    if (data.lockedBy == null) delete data.lockedBy
+    if (data.lockedAt == null) delete data.lockedAt
+    const body = buildTaskBody(task.description, task.acceptanceCriteria, task.notes, task.activity)
     this._atomicWrite(this.taskPath(task.id), serializeFrontmatter(data, body))
   }
 
@@ -585,6 +700,12 @@ deleteTask(id: string): void {
 
     if (!fs.existsSync(this.brandPath())) {
       fs.writeFileSync(this.brandPath(), BRAND_TEMPLATE, 'utf8')
+    }
+
+    fs.mkdirSync(this.templatesDir(), { recursive: true })
+    for (const [file, content] of Object.entries(SAMPLE_TEMPLATES)) {
+      const target = path.join(this.templatesDir(), file)
+      if (!fs.existsSync(target)) fs.writeFileSync(target, content, 'utf8')
     }
 
     const sprint = this.createSprint('Kickoff — learn the board')
@@ -632,4 +753,53 @@ deleteTask(id: string): void {
       createdAt: now,
     })
   }
+}
+
+const isCheckedCriterion = (c?: string): boolean => !!c && /^\[[xX]\]\s*/.test(c)
+const criterionTextOf = (c?: string): string => (c ?? '').replace(/^\s*\[[xX]?\]\s*/, '').trim()
+
+/**
+ * Compute the activity events produced by an update, comparing the previous
+ * and next task states: status changes, assignee changes, checklist toggles,
+ * appended notes and generic field updates.
+ */
+function diffActivityEvents(
+  current: TaskType,
+  next: TaskType,
+  patch: Partial<Omit<TaskInput, 'id'>>,
+  ctx: { actor: string; noteEvent?: string; at: string },
+): ActivityEventType[] {
+  const events: ActivityEventType[] = []
+  if (patch.status != null && patch.status !== current.status) {
+    events.push({ at: ctx.at, actor: ctx.actor, type: 'status', detail: `${current.status} → ${next.status}` })
+  }
+  if (patch.assignee != null && patch.assignee !== current.assignee) {
+    events.push({ at: ctx.at, actor: ctx.actor, type: 'assignee', detail: `${current.assignee} → ${next.assignee}` })
+  }
+  const len = Math.max(current.acceptanceCriteria.length, next.acceptanceCriteria.length)
+  for (let i = 0; i < len; i++) {
+    const wasChecked = isCheckedCriterion(current.acceptanceCriteria[i])
+    const isChecked = isCheckedCriterion(next.acceptanceCriteria[i])
+    if (wasChecked !== isChecked) {
+      events.push({
+        at: ctx.at,
+        actor: ctx.actor,
+        type: 'checklist',
+        detail: `${isChecked ? 'checked' : 'unchecked'} "${criterionTextOf(next.acceptanceCriteria[i])}"`,
+      })
+    }
+  }
+  if (ctx.noteEvent) {
+    events.push({ at: ctx.at, actor: ctx.actor, type: 'note', detail: ctx.noteEvent })
+  }
+  const tracked = ['title', 'description', 'priority', 'sprint', 'estimate', 'tags', 'dependencies'] as const
+  const changed = tracked.filter(
+    (k) =>
+      patch[k] !== undefined &&
+      JSON.stringify(patch[k]) !== JSON.stringify((current as unknown as Record<string, unknown>)[k]),
+  )
+  if (changed.length > 0) {
+    events.push({ at: ctx.at, actor: ctx.actor, type: 'update', detail: `updated ${changed.join(', ')}` })
+  }
+  return events
 }

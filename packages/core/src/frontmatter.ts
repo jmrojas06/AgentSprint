@@ -1,5 +1,7 @@
 import matter from 'gray-matter'
 import type { z } from 'zod'
+import { ActivityEvent } from './types.js'
+import type { ActivityEvent as ActivityEventType } from './types.js'
 
 type DeepNormalized<T> = T extends Date ? string : T extends object ? { [K in keyof T]: DeepNormalized<T[K]> } : T
 
@@ -34,21 +36,49 @@ export function serializeFrontmatter(data: Record<string, unknown>, body: string
   return matter.stringify(body, data)
 }
 
-/** Extract description + acceptance criteria + notes from a markdown task body. */
-export function parseTaskBody(body: string): { description: string; acceptanceCriteria: string[]; notes: string } {
+/**
+ * Activity lines use a machine-readable pipe format:
+ *   - <iso-timestamp> | <actor> | <type> | <detail>
+ */
+const ACTIVITY_LINE = /^-\s*(\S+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.*)$/
+
+/** Parse the `## Activity` section of a task body into structured events. */
+export function parseActivity(body: string): ActivityEventType[] {
+  const raw = section(body, 'Activity')
+  if (!raw) return []
+  const events: ActivityEventType[] = []
+  for (const line of raw.split('\n')) {
+    const m = ACTIVITY_LINE.exec(line.trim())
+    if (!m) continue
+    const parsed = ActivityEvent.safeParse({ at: m[1], actor: m[2], type: m[3], detail: m[4] })
+    if (parsed.success) events.push(parsed.data)
+  }
+  return events
+}
+
+/** Serialize activity events back into `## Activity` section lines. */
+export function serializeActivity(events: ActivityEventType[]): string {
+  if (events.length === 0) return ''
+  const lines = events.map((e) => `- ${e.at} | ${e.actor} | ${e.type} | ${e.detail.replace(/\n/g, ' ')}`)
+  return ['## Activity', '', ...lines].join('\n')
+}
+
+/** Extract description + acceptance criteria + notes + activity from a markdown task body. */
+export function parseTaskBody(body: string): { description: string; acceptanceCriteria: string[]; notes: string; activity: ActivityEventType[] } {
   const description = section(body, 'Description')
   const notes = section(body, 'Notes')
+  const activity = parseActivity(body)
   const rawMatches = [...body.matchAll(/^[-*]\s*\[([ xX])\]\s*(.+)$/gm)]
   const criteria = rawMatches.map((m) => {
     const isChecked = m[1]?.toLowerCase() === 'x'
     const text = m[2]?.trim() ?? ''
     return isChecked ? `[x] ${text}` : text
   })
-  return { description, acceptanceCriteria: criteria, notes }
+  return { description, acceptanceCriteria: criteria, notes, activity }
 }
 
 /** Build a markdown task body from structured fields. */
-export function buildTaskBody(description: string, acceptanceCriteria: string[], notes?: string): string {
+export function buildTaskBody(description: string, acceptanceCriteria: string[], notes?: string, activity: ActivityEventType[] = []): string {
   const parts: string[] = []
   parts.push('## Description\n')
   parts.push(description.trim() ? description.trim() : '_What needs to be done and why._')
@@ -72,6 +102,10 @@ export function buildTaskBody(description: string, acceptanceCriteria: string[],
     parts.push('')
     parts.push('## Notes\n')
     parts.push(notes.trim())
+  }
+  if (activity.length > 0) {
+    parts.push('')
+    parts.push(serializeActivity(activity))
   }
   return parts.join('\n')
 }

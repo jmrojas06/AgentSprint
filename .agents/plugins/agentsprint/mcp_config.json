@@ -3,9 +3,9 @@
     "agentsprint": {
       "command": "node",
       "args": [
-        "/home/jmrojas/Documents/proyects/AgentSprint/packages/mcp/dist/index.js",
+        "packages/mcp/dist/index.js",
         "--root",
-        "/home/jmrojas/Documents/proyects/AgentSprint"
+        "."
       ]
     }
   }

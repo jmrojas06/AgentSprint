@@ -1,281 +1,350 @@
 # AgentSprint
 
-**Git-native sprint board for solo developers who code with AI agents.**
+> The open-source, git-native Kanban board for AI-assisted development.
 
-AgentSprint is a self-hosted, local-first board where *your* tasks live as
-plain Markdown files inside your repository — and your AI coding agent
-(opencode, Claude Code, Cursor, …) works through them in sprints, right
-alongside you.
+AgentSprint gives coding agents a persistent project board inside the repository.
+Tasks are Markdown files, state is versioned with Git, and agents can read,
+create, update, and organize work through MCP or direct file edits.
 
-No accounts. No cloud. No lock-in. Your board is a folder in git.
+[![CI](https://github.com/jmrojas06/AgentSprint/actions/workflows/ci.yml/badge.svg)](https://github.com/jmrojas06/AgentSprint/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@jmrojas06/agentsprint-cli.svg)](https://www.npmjs.com/package/@jmrojas06/agentsprint-cli)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fjmrojas06%2Fagentsprint-2496ED.svg)](https://ghcr.io/jmrojas06/agentsprint)
+[![Docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://jmrojas06.github.io/AgentSprint/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+<p align="center">
+  <a href="https://jmrojas06.github.io/AgentSprint/">
+    <img src="docs/public/demo.gif" alt="AgentSprint board in action" width="800">
+  </a>
+</p>
+
+[Documentation](https://jmrojas06.github.io/AgentSprint/) ·
+[Issues](https://github.com/jmrojas06/AgentSprint/issues) ·
+[Changelog](CHANGELOG.md)
+
+## Why AgentSprint
+
+AI coding agents are good at executing work but forget between sessions. A
+chat context dies with the context window; a `TODO.md` carries no state, no
+sprints, and no acceptance criteria.
+
+AgentSprint keeps project work where the code lives:
+
+- Tasks live in `.agentboard/` inside your repository — not in someone else's cloud.
+- Each task is one Markdown file with YAML frontmatter, readable by humans and agents alike.
+- Status changes are plain text edits, so Git history becomes your board history — reviewable in pull requests, diffable, restorable.
+- Agents participate through MCP or by editing files directly; you review and decide what is done.
+
+No accounts. No server to maintain. Your board is a folder in Git.
+
+## What AgentSprint gives you
+
+- **Git-native task storage** — one task = one Markdown file under `.agentboard/tasks/`
+- **Kanban board** — local web UI with configurable columns, filters, sorting and checklists
+- **Sprint management** — plan, activate, close; stats and burndown per sprint
+- **Persistent context** — learnings memory and brand kit injected into every task spec an agent receives
+- **CLI** — init boards, serve the UI, export specs, lint integrity, import TODOs or GitHub issues
+- **MCP server** — stdio and HTTP transports so any MCP-compatible agent can work the board
+- **REST API + SSE** — every board operation available programmatically, with live updates
+- **File watcher** — edit `.agentboard/` files directly and the UI updates instantly
+- **Full-text search** — SQLite-backed index with zero native dependencies
+- **Docker** — self-hosted image with health check for always-on setups
+
+## How it works
+
+```text
+┌─────────────────────────────────────────────┐
+│ Human / AI coding agent                     │
+│ Claude · Codex · OpenCode · other MCP apps  │
+└──────────────────┬──────────────────────────┘
+                   │ MCP or direct file edits
+                   ▼
+┌─────────────────────────────────────────────┐
+│ AgentSprint                                 │
+│ CLI · MCP server · Kanban UI · REST API     │
+└──────────────────┬──────────────────────────┘
+                   │ reads/writes
+                   ▼
+┌─────────────────────────────────────────────┐
+│ .agentboard/                                │
+│ Markdown tasks · sprints · project context  │
+└─────────────────────────────────────────────┘
 ```
-your-project/
-├── .agentboard/              ← the board lives in your repo
-│   ├── config.yaml           ← workflow: columns & statuses
-│   ├── brand.md              ← company/brand kit (injected into task specs)
-│   ├── tasks/TK-1.md         ← one task = one Markdown file
-│   ├── sprints/sprint-1.md   ← sprint goal + state
-└── AGENTS.md                 ← tells any agent how to work here
-```
 
-## Why
+Because tasks are files inside your repository, they version with your code.
+Commit them, branch them, review them in PRs — the board has the same
+lifecycle as the project itself.
 
-AI coding agents are great at executing but forget between sessions. A
-`TODO.md` or a single chat context doesn't survive a context limit, a reboot,
-or a different agent. AgentSprint gives agents (and you) a **shared, durable,
-human-readable board** with real sprint semantics:
+## Choose your setup
 
-1. You write tasks and plan a sprint in the visual hub.
-2. The agent reads `.agentboard/` and works one task at a time, updating
-   `status` in the file as it goes.
-3. Finished tasks land in **Review** — *you* move them to Done.
-4. Close a sprint, plan the next. Progress is in git, forever.
+AgentSprint is split into multiple internal packages, but users only need to
+choose one entry point: the CLI, MCP server, Docker image, or source
+repository.
 
-## Quick start
+| Use case | Recommended entry point |
+|---|---|
+| Run the board quickly | [CLI](#quick-start-with-the-cli) |
+| Connect an AI agent | [MCP server](#connect-an-ai-agent-with-mcp) |
+| Run with containers | [Docker](#docker) |
+| Modify or contribute | [Source repository](#install-from-source) |
 
-### Option 1: npx (no install, stays in sync with npm)
+You never install the internal packages (`core`, `server`, `web`) manually —
+they ship as dependencies of the entry point you pick.
+
+## Quick start with the CLI
+
+Requires Node.js ≥ 20.
 
 ```bash
-# inside any project you want to manage
-npx agentboard init        # scaffolds .agentboard + sample tasks + AGENTS.md
-npx agentboard serve       # starts the board UI at http://127.0.0.1:4310
+npx @jmrojas06/agentsprint-cli init   # creates .agentboard/ with sample content
+npx @jmrojas06/agentsprint-cli serve  # starts the board at http://127.0.0.1:4310
 ```
 
-> Requires Node.js >= 20. The first run downloads the package on demand.
+What each command does:
 
-### Option 2: Global install
+- `init` — scaffolds `.agentboard/` (config, sample tasks, sprints, templates)
+  plus an `AGENTS.md` that tells any coding agent how to work here.
+- `serve` — starts the local server, serves the Kanban UI and REST API, and
+  watches board files for changes. If port 4310 is busy it automatically picks
+  the next free port.
+
+Prefer a global install so the short `agentboard` binary is on your PATH:
 
 ```bash
-npm install -g @agentsprint/cli
-agentboard init my-project
-agentboard serve my-project
+npm install -g @jmrojas06/agentsprint-cli
+agentboard init
+agentboard serve
 ```
 
-### Option 3: Docker
+Then point your AI coding agent at the repository — it will follow
+`AGENTS.md`.
+
+## Connect an AI agent with MCP
+
+Two different roles:
+
+- The **CLI** initializes the board and runs the local UI/server.
+- The **MCP server** lets an agent read and modify the board through tools —
+  claim tasks, tick acceptance criteria, log notes, manage sprints.
+
+Run the standalone MCP server against your project:
 
 ```bash
-docker build -t agentsprint .
+npx -y @jmrojas06/agentsprint-mcp --root /path/to/your/project
+```
+
+It speaks stdio by default; set `AGENTSPRINT_ROOT` instead of `--root` if your
+client prefers environment variables.
+
+| Client | Transport | Setup |
+|---|---|---|
+| Any MCP client | stdio | Point it at `@jmrojas06/agentsprint-mcp` with `--root <dir>` |
+| Any MCP client (remote) | Streamable HTTP | Start `serve --mcp`, connect to `http://127.0.0.1:4310/mcp` |
+| Claude Code / Codex / others | stdio or HTTP | Follow the client's MCP configuration format using the command above |
+| OpenCode | remote HTTP | See [docs/mcp.md](docs/mcp.md) for the `opencode.json` snippet used during development |
+
+Compatibility note: AgentSprint implements the standard Model Context
+Protocol, which makes it usable from any MCP-capable client. Individual client
+config formats change between versions — if a client doesn't connect, compare
+its config against [docs/mcp.md](docs/mcp.md) and the client's current
+documentation.
+
+### MCP over HTTP
+
+If you want several tools (UI + agent) sharing one running board, start the
+server with `--mcp`:
+
+```bash
+agentboard serve --mcp
+```
+
+The same process then exposes:
+
+- Kanban UI at `http://127.0.0.1:4310`
+- REST API under `http://127.0.0.1:4310/api/*`
+- MCP Streamable HTTP at `http://127.0.0.1:4310/mcp`
+
+Use stdio when the agent should own a dedicated short-lived session; use HTTP
+when the board is already running and the agent just connects by URL.
+
+## Docker
+
+For an always-on board (e.g. a home server), use the published image:
+
+```bash
 docker run -d --name board --restart unless-stopped \
   -p 4310:4310 \
-  -v "$PWD":/board \
-  agentsprint serve /board --host 0.0.0.0 --no-open --mcp
+  -v /path/to/your-project:/board \
+  ghcr.io/jmrojas06/agentsprint serve /board --host 0.0.0.0 --no-open --init
 ```
 
-See [Docker deployment](#docker-deployment) and [docker-compose.yml](docker-compose.yml) for more.
+- `/board` is the volume mount: point it at a directory containing one or more
+  repositories with `.agentboard/`.
+- Port `4310` is fixed inside the container; only remap the host side.
+- `--init` auto-creates a board if none exists in the mounted volume — drop it
+  once your board is initialized.
+- Open `http://localhost:4310` for the UI; add `--mcp` to expose
+  `/mcp` for remote agents.
 
-### Option 4: From source
+A health check hits `/api/health`. For multi-project self-hosting see
+[docker-compose.yml](docker-compose.yml).
+
+## Install from source
+
+This route is for development and contribution, not the quick path for end
+users:
 
 ```bash
-git clone https://github.com/agentsprint/agentsprint.git
-cd agentsprint
+git clone https://github.com/jmrojas06/AgentSprint.git
+cd AgentSprint
 pnpm install
 pnpm build
-pnpm agentsprint init demo-project
-pnpm agentsprint serve demo-project
 ```
 
-## Installation
+Requires Node.js ≥ 20 and pnpm ≥ 9. Run the locally built CLI with
+`pnpm agentsprint <command>`.
 
-AgentSprint runs on Node.js 20+ and works on Linux, macOS, and Windows.
+## Repository layout
 
-| Method | Command | Notes |
-|--------|---------|-------|
-| npx (no install) | `npx agentboard init` | Downloads automatically |
-| npm | `npm i -g @agentsprint/cli` | Global binary `agentboard` |
-| pnpm | `pnpm add -g @agentsprint/cli` | Global binary `agentboard` |
-| Docker | `docker run -p 4310:4310 …` | No Node.js needed |
-| From source | `pnpm build && pnpm agentsprint …` | Latest dev features |
+What `agentboard init` creates in your project:
 
-### System requirements
+```text
+your-project/
+├── AGENTS.md                 ← instructions for any AI coding agent
+└── .agentboard/
+    ├── config.yaml           ← workflow columns & statuses
+    ├── brand.md              ← optional brand kit injected into task specs
+    ├── tasks/                ← one Markdown file per task (TK-1.md, …)
+    ├── sprints/              ← sprint goal + state files
+    └── templates/            ← reusable task templates
+```
 
-- Node.js >= 20
-- pnpm >= 9 (only if installing from source)
-- Docker (only if running the container image)
+A task file pairs YAML frontmatter (machine state) with a Markdown body
+(human + agent context):
+
+```markdown
+---
+id: TK-1
+title: Write your first task spec
+status: To Do          # Backlog → To Do → In Progress → Review → Done
+assignee: human        # human | agent
+---
+## Acceptance criteria
+- [ ] First criterion
+```
+
+Full field reference: [docs/task-format.md](https://jmrojas06.github.io/AgentSprint/task-format).
+
+## Agent workflow
+
+Typical loop with a coding agent:
+
+```text
+1. Developer runs agentboard init and plans tasks/sprints.
+2. Agent reads AGENTS.md and the active sprint.
+3. Agent claims a task — status moves to In Progress.
+4. Agent works on the codebase, ticking acceptance criteria.
+5. Agent moves the task to Review and logs execution notes.
+6. Developer reviews, sets Done; Git records code + board together.
+```
+
+Humans own *Done*. Agents stop at *Review* — you verify the criteria before
+work ships.
 
 ## CLI reference
 
-```
-agentboard [command] [dir]
+| Command | Purpose |
+|---|---|
+| `agentboard init [dir]` | Scaffold `.agentboard/` with sample content |
+| `agentboard serve [dir]` | Start the server, UI and REST API (default command) |
+| `agentboard spec <dir> <id>` | Print a self-contained agent prompt for a task |
+| `agentboard brand [dir]` | Print the project's brand kit |
+| `agentboard lint [dir]` | Check board integrity (YAML, IDs, sprints, dependency cycles) |
+| `agentboard close [dir] [id]` | Close a sprint and append a retrospective |
+| `agentboard task new [title] [dir]` | Create a task, optionally from a template |
+| `agentboard import todo <file>` | Import bullets/checkboxes from a TODO-style Markdown file |
+| `agentboard import github <owner/repo>` | Import open GitHub issues via the `gh` CLI |
+| `agentboard export md` | Write `BOARD.md`, a static Markdown snapshot |
 
-Commands:
-  init [dir]        Scaffold a board in the directory (default: current dir)
-  serve [dir]       Start the server + UI (default command)
-  spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
-  brand [dir]       Print the company/brand kit for the project
-  lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
-  help              Show help
+Details and options: [docs/cli.md](https://jmrojas06.github.io/AgentSprint/cli).
 
-Options:
-  --port <n>        Port to listen on (default: 4310)
-  --host <ip>       Host to bind (default: 127.0.0.1)
-  --no-open         Do not open the browser automatically
-  --no-fallback     Disable auto port fallback if port is busy
-  --init            Auto-create a board if missing (serve)
-  --mcp             Also expose MCP tools at /mcp (streamable HTTP)
-  --version         Print the version
-```
+## MCP tools
 
-When the default port (4310) is busy, AgentSprint automatically tries the
-next available port. Use `--no-fallback` to disable this and fail fast
-with `EADDRINUSE` instead.
+28 tools are exposed over both transports. Highlights:
 
-## Using it with an AI agent
+| Tool | Purpose |
+|---|---|
+| `board_summary` | Active sprint, counts per status, completion % |
+| `task_list` / `task_get` | Browse and read tasks with filters |
+| `task_create` / `task_update` / `task_delete` | Manage tasks |
+| `task_claim` / `task_release` | Claim work exclusively (lock with TTL) |
+| `task_status` | Move a task across the board |
+| `task_checklist` | Tick acceptance criteria |
+| `task_note` | Append timestamped execution notes |
+| `task_spec` | Get the full copy-pasteable prompt for a task |
+| `sprint_activate` / `sprint_close` / `sprint_report` | Drive the sprint lifecycle |
+| `brand_get` / `learnings_get` | Read injected project context |
 
-The `.agentboard/` files are the API. Any agent that can read and edit files
-can participate — just point it at your repo and it follows `AGENTS.md`.
-
-- **One task = one file.** Status lives in the YAML frontmatter:
-  `status: To Do` → `status: In Progress` → `status: Review` → `status: Done`.
-- **Sprints are files too.** Activate one from the UI or by editing
-  `sprints/sprint-1.md`.
-- **MCP server.** A native MCP server (`agentboard-mcp`) lets agents claim
-  tasks, list boards, and grab a task's spec through tools. See `docs/mcp.md`.
-- **MCP over HTTP.** `agentboard serve --mcp <dir>` exposes the same MCP tools
-  at `http://<host>:4310/mcp` (Streamable HTTP) on the same server as the UI —
-  any MCP client connects by URL, no extra process. Configure opencode with
-  `{ "mcp": { "agentsprint": { "type": "remote", "url": "http://127.0.0.1:4310/mcp" } } }`.
-- **Spec export.** One click (or `agentboard spec <dir> TK-1`) turns a task
-  into a self-contained prompt your agent can execute.
-- **Brand kit.** Configure your company identity, colors, fonts and design
-  files in `brand.md` — they get injected into every task spec so agents
-  follow your brand.
-
-## Docker deployment
-
-Run the board (UI + `/mcp`) in a container that restarts automatically.
-Build locally, or pull the published image once a release exists
-(`ghcr.io/agentsprint/agentsprint`):
-
-```bash
-docker build -t agentsprint .
-docker run -d --name board --restart unless-stopped \
-  -p 4310:4310 \
-  -v "$PWD/your-project:/board" \
-  agentsprint serve /board --host 0.0.0.0 --no-open --mcp
-```
-
-For self-hosted multi-project setups, use `docker-compose.yml`:
-
-```bash
-# Edit docker-compose.yml to point at your project directories
-docker compose up -d
-```
-
-The container exposes port 4310, includes a health check (`/api/health`),
-and reads board data from `/board` (mount any host path there).
+Complete reference: [docs/mcp.md](https://jmrojas06.github.io/AgentSprint/mcp).
 
 ## Features
 
-- Kanban board with configurable columns (`config.yaml`)
-- Sprint management: plan, activate, close; task counts, progress bars and
-  per-sprint stats
-- Tasks with description, acceptance criteria, priority, estimate, tags,
-  dependencies, and a `human`/`agent` assignee
-- Spec export (`buildTaskSpec`) with automatic brand-guideline injection
-- Brand kit editor (identity, color pickers, fonts, design assets, rules)
-- Real-time sync: edit files directly and the board updates instantly
-  (file watcher), or click the board and files are written for you
-- Fast search over tasks via a SQLite index (zero native deps — built on
-  Node's `node:sqlite`, with an in-memory fallback)
-- MCP server so AI agents can read/claim/complete tasks via tools
-- MCP over Streamable HTTP (`serve --mcp`) on the same port as the UI
-- Parse warnings surfaced in `/api/project` and `board_summary`
-- SPA served by the same server; also runs with `vite dev` for hacking
+Available today:
 
-## Architecture
-
-AgentSprint is a pnpm monorepo with five packages that depend on each other
-in a DAG:
-
-```
-packages/
-├── core/    → domain model + git-native storage (.agentboard/*.md)
-├── server/  → Fastify: REST + SSE + file watcher + SQLite index  (depends on core, mcp)
-├── web/     → React + Vite + Tailwind board UI                  (depends on core)
-├── cli/     → the `agentboard` CLI (init / serve / spec / brand) (depends on core, server)
-└── mcp/     → MCP server so agents read/claim/complete tasks     (depends on core)
-```
-
-**Data flow:**
-1. Tasks live as `.md` files in `.agentboard/tasks/` with YAML frontmatter.
-2. `core/ProjectStore` reads/writes these files and emits `change` events.
-3. `server/` wraps `ProjectStore` with a Fastify REST API + SSE stream.
-4. `web/` is a React SPA that fetches via REST and listens to SSE for live updates.
-5. `cli/` is the entry point: `agentboard serve` starts the server + serves the UI.
-6. `mcp/` reuses the same `ProjectStore` to expose MCP tools (local stdio + HTTP).
-
-All storage is file-based. No database server is required — SQLite is used
-only for full-text search indexing with an in-memory fallback.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-In short:
-
-```bash
-git clone https://github.com/agentsprint/agentsprint.git
-cd agentsprint
-pnpm install
-pnpm typecheck
-pnpm test
-```
-
-Contributions are welcome! Please:
-1. Fork the repo and create a feature branch
-2. Run `pnpm typecheck && pnpm test` before opening a PR
-3. Keep PRs focused — one feature or fix per PR
-4. Update tests and docs alongside code changes
-
-## Troubleshooting
-
-### Port 4310 already in use
-
-AgentSprint automatically falls back to the next free port (4311, 4312, …).
-To force a specific port, use `--port <n>`. To disable fallback:
-
-```bash
-agentboard serve --port 4310 --no-fallback
-```
-
-If running in Docker and you get a port conflict, map a different host port:
-
-```bash
-docker run -p 4311:4310 ghcr.io/agentsprint/agentsprint serve /board
-```
-
-### "No AgentSprint board found"
-
-Run `agentboard init <dir>` first to scaffold `.agentboard/` with sample content.
-
-### File watcher not picking up changes
-
-Ensure your file system is not in a container without volume mounts.
-The watcher uses `chokidar` and respects `.gitignore`-like patterns.
-
-### MCP tools show "connection refused"
-
-Make sure `agentboard serve --mcp` is running, then verify the MCP URL:
-`http://127.0.0.1:4310/mcp`. Check your MCP client configuration matches.
-
-The initial `pnpm build` compiles all five TypeScript packages. Subsequent
-builds are faster with `pnpm dev` (watch mode).
+- [x] Git-native Markdown tasks with YAML frontmatter
+- [x] Kanban UI with configurable columns, filters and sorting
+- [x] Interactive acceptance-criteria checklists with live sync
+- [x] Sprints: plan, activate, close, stats and burndown
+- [x] Dependency graph with cycle detection and blocked-task awareness
+- [x] Task spec export with brand-kit and learnings injection
+- [x] MCP server (stdio + Streamable HTTP)
+- [x] REST API + SSE real-time updates + file watcher
+- [x] SQLite full-text search with in-memory fallback
+- [x] Board linter, TODO/GitHub issue import, static `BOARD.md` export
+- [x] Docker image with health check + docker-compose
+- [x] Automatic port fallback (`--no-fallback` to disable)
 
 ## Roadmap
 
-- [x] Git-native storage, domain model, REST API, kanban board
-- [x] MCP server — agents read/claim/complete tasks via tools
-- [x] Spec export: turn a task into a ready-made agent prompt
-- [x] Brand kit: company identity injected into task specs
-- [x] Interactive checklists, dependency badges, active filters & sorting
-- [x] Persistent learnings memory with spec injection
-- [x] Docker image, docker-compose, port fallback
-- [x] npm publishing + CI/CD release workflow
-- [ ] Sprint engine polish: burndown, velocity, retro notes
-- [ ] Review gates, dependencies graph, activity log
+- [ ] Velocity charts and retrospectives polish
+- [ ] Review gates
 - [ ] Plugin system for custom task sources
 - [ ] Web component library for embedding boards
 
+## Documentation
+
+Full documentation at **https://jmrojas06.github.io/AgentSprint/**
+
+- [Installation](https://jmrojas06.github.io/AgentSprint/installation)
+- [Quick start](https://jmrojas06.github.io/AgentSprint/quick-start)
+- [Task file format](https://jmrojas06.github.io/AgentSprint/task-format)
+- [CLI reference](https://jmrojas06.github.io/AgentSprint/cli)
+- [MCP server & tools](https://jmrojas06.github.io/AgentSprint/mcp)
+- [REST API](https://jmrojas06.github.io/AgentSprint/api)
+- [Architecture](https://jmrojas06.github.io/AgentSprint/architecture)
+- [Troubleshooting](https://jmrojas06.github.io/AgentSprint/troubleshooting)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing and pull
+request guidelines. In short — fork, branch, and validate with:
+
+```bash
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
 ## License
 
-MIT
+[MIT](LICENSE)
+
+## Support the project
+
+If AgentSprint is useful to you:
+
+- Star the repository.
+- Try it in a real project.
+- Open an issue with feedback.
+- Share your workflow.
+- Contribute documentation or code.

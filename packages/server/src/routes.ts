@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import type { TaskInput, TaskStatus } from '@agentsprint/core'
-import { buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, taskCommitCounts } from '@agentsprint/core'
+import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
+import { buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, taskCommitCounts } from '@jmrojas06/agentsprint-core'
 import type { ProjectHandle, ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
@@ -35,10 +35,15 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
   })
 
   app.post('/api/tasks', async (req, reply) => {
-    const input = req.body as TaskInput
+    const { template, vars, ...input } = (req.body ?? {}) as TaskInput & {
+      template?: string
+      vars?: Record<string, string>
+    }
     const h = projects.get(projectName(req))
     try {
-      const task = h.store.createTask(input)
+      const task = template
+        ? h.store.createTaskFromTemplate(template, { vars, overrides: input })
+        : h.store.createTask(input)
       h.index.upsert(task)
       h.broadcast.send('task', task)
       return reply.code(201).send(task)
@@ -47,6 +52,8 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     }
   })
 
+  app.get('/api/templates', async (req) => projects.get(projectName(req)).store.listTemplates())
+
   app.get('/api/tasks/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id
     const task = projects.get(projectName(req)).store.state.tasks.find((t) => t.id === id)
@@ -54,8 +61,14 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     return reply.send(task)
   })
 
-  app.get('/api/tasks/:id/spec', async (req, reply) => {
+  app.get('/api/tasks/:id/activity', async (req, reply) => {
     const id = (req.params as { id: string }).id
+    const task = projects.get(projectName(req)).store.state.tasks.find((t) => t.id === id)
+    if (!task) return sendError(reply, 404, `Task not found: ${id}`)
+    return reply.send({ id, activity: task.activity })
+  })
+
+  app.get('/api/tasks/:id/spec', async (req, reply) => {    const id = (req.params as { id: string }).id
     const h = projects.get(projectName(req))
     const state = h.store.state
     const task = state.tasks.find((t) => t.id === id)

@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { ProjectStore } from '@agentsprint/core'
+import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { Broadcast } from './broadcast.js'
 import { createIndex, type TaskIndex } from './indexdb.js'
 import { createWatcher } from './watcher.js'

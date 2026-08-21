@@ -1,4 +1,6 @@
 export type {
+  ActivityEvent,
+  ActivityEventType,
   Brand,
   BrandAsset,
   GitCommit,
@@ -10,12 +12,14 @@ export type {
   TaskInput,
   TaskPriority,
   TaskStatus,
-} from '@agentsprint/core'
-
-import type { ProjectState as CoreProjectState } from '@agentsprint/core'
+  TaskTemplate,
+} from '@jmrojas06/agentsprint-core'
 
 export const DEFAULT_STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 export const TASK_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
+export const ACTIVITY_TYPES = ['created', 'status', 'assignee', 'checklist', 'note', 'update'] as const
+
+import type { ProjectState as CoreProjectState } from '@jmrojas06/agentsprint-core'
 
 export interface ProjectInfo {
   name: string
