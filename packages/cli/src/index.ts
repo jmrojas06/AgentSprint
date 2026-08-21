@@ -3,7 +3,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, lintProject } from '@agentsprint/core'
+import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs } from '@agentsprint/core'
 import { startServer } from '@agentsprint/server'
 
 const VERSION = '0.1.0'
@@ -22,6 +22,10 @@ Commands:
    brand [dir]       Print the company/brand kit for the project
    lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
    close [dir] [id]  Close a sprint (auto-appends a retro to learnings.md)
+   import todo <dir> <file>
+                     Import bullets/checkboxes from a TODO/NOTES markdown file
+   import github <dir> <owner/repo> [--label-tag l=t ...] [--milestone-sprint m=id ...]
+                     Import open GitHub issues via the gh CLI
    help              Show this help
 
 Options (serve):
@@ -44,6 +48,10 @@ interface Args {
   dir: string
   taskId?: string
   sprintId?: number
+  importSource?: 'todo' | 'github'
+  importTarget?: string
+  labelTags?: Record<string, string[]>
+  milestoneSprints?: Record<string, number>
   port: number
   host: string
   open: boolean
@@ -54,7 +62,7 @@ interface Args {
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'import', 'help'])
   let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -69,6 +77,8 @@ export function parseArgs(argv: string[]): Args | null {
   let mcp = false
   let fallback = true
   let retro = true
+  const labelTags: Record<string, string[]> = {}
+  const milestoneSprints: Record<string, number> = {}
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -102,6 +112,25 @@ export function parseArgs(argv: string[]): Args | null {
       case '--no-retro':
         retro = false
         break
+      case '--label-tag': {
+        const kv = (argv[++i] ?? '').split('=')
+        if (kv.length !== 2 || !kv[0] || !kv[1]) {
+          console.error('Usage: --label-tag <github-label>=<tag1,tag2>')
+          process.exit(1)
+        }
+        labelTags[kv[0]!] = kv[1]!.split(',').map((t) => t.trim()).filter(Boolean)
+        break
+      }
+      case '--milestone-sprint': {
+        const kv = (argv[++i] ?? '').split('=')
+        const id = Number(kv[1])
+        if (kv.length !== 2 || !kv[0] || !Number.isInteger(id) || id <= 0) {
+          console.error('Usage: --milestone-sprint <milestone-title>=<sprint-id>')
+          process.exit(1)
+        }
+        milestoneSprints[kv[0]!] = id
+        break
+      }
       default:
         if (arg.startsWith('-')) {
           console.error(`Unknown option: ${arg}`)
@@ -127,7 +156,7 @@ export function parseArgs(argv: string[]): Args | null {
     return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp, fallback, retro }
   }
 
-  const rest = command === 'close' ? positional.slice() : []
+  const rest = command === 'close' || command === 'import' ? positional.slice() : []
   let sprintId: number | undefined
   if (command === 'close' && rest.length > 2) {
     console.error('Usage: agentboard close [dir] [sprint-id]')
@@ -142,7 +171,43 @@ export function parseArgs(argv: string[]): Args | null {
       return { command, dir: path.resolve(rest[0]!), sprintId, port, host, open, init, mcp, fallback, retro }
     }
   }
-  const dir = positional.length > 0 && command !== 'close' ? path.resolve(positional[0]) : process.cwd()
+
+  if (command === 'import') {
+    const source = rest[0]
+    if (source !== 'todo' && source !== 'github') {
+      console.error('Usage: agentboard import <todo|github> [dir] <file|owner/repo>')
+      process.exit(1)
+    }
+    const args2 = rest.slice(1)
+    let boardDir = process.cwd()
+    let target: string | undefined
+    if (args2.length === 0) {
+      console.error(`Usage: agentboard import ${source} [dir] <${source === 'todo' ? 'file' : 'owner/repo'}>`)
+      process.exit(1)
+    } else if (args2.length === 1) {
+      target = args2[0]
+    } else {
+      boardDir = path.resolve(args2[0]!)
+      target = args2[1]
+    }
+    return {
+      command,
+      dir: boardDir,
+      importSource: source,
+      importTarget: target,
+      labelTags,
+      milestoneSprints,
+      port,
+      host,
+      open,
+      init,
+      mcp,
+      fallback,
+      retro,
+    }
+  }
+
+  const dir = positional.length > 0 && !['close', 'import'].includes(command) ? path.resolve(positional[0]!) : process.cwd()
   return { command, dir, taskId: undefined, sprintId, port, host, open, init, mcp, fallback, retro }
 }
 
@@ -245,6 +310,42 @@ async function cmdSpec(dir: string, taskId: string): Promise<void> {
   process.stdout.write(buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: store.getLearnings() }) + '\n')
 }
 
+export async function cmdImport(
+  dir: string,
+  source: 'todo' | 'github',
+  target: string,
+  mapping: { labelTags?: Record<string, string[]>; milestoneSprints?: Record<string, number> },
+): Promise<void> {
+  const store = ProjectStore.open(dir)
+  let inputs
+  if (source === 'todo') {
+    if (!fs.existsSync(target)) {
+      console.error(`File not found: ${target}`)
+      process.exit(1)
+    }
+    const items = parseTodoFile(fs.readFileSync(target, 'utf8'))
+    inputs = todosToTaskInputs(items)
+    console.log(`Parsed ${items.length} item(s) from ${path.basename(target)}`)
+  } else {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(target)) {
+      console.error(`Invalid repository: ${target} (expected owner/repo)`)
+      process.exit(1)
+    }
+    try {
+      const issues = await fetchGithubIssues(target)
+      inputs = issuesToTaskInputs(issues, { labelTags: mapping.labelTags, milestoneSprints: mapping.milestoneSprints })
+      console.log(`Fetched ${issues.length} open issue(s) from ${target}`)
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exit(1)
+    }
+  }
+  const { created, skippedDuplicates } = importTasks(store, inputs)
+  for (const c of created) console.log(`✔ Created ${c.id}: ${c.title}`)
+  for (const s of skippedDuplicates) console.log(`↷ Skipped (duplicate of "${s.matchedWith}"): ${s.title}`)
+  console.log(`\nImport complete: ${created.length} created, ${skippedDuplicates.length} skipped as duplicates.`)
+}
+
 export async function cmdBrand(dir: string): Promise<void> {
   const store = ProjectStore.open(dir)
   const brand = store.getBrand()
@@ -256,8 +357,7 @@ export async function cmdBrand(dir: string): Promise<void> {
   process.stdout.write(buildBrandSection(brand) + '\n')
 }
 
-export async function cmdClose(dir: string, sprintId: number | undefined, opts: { retro: boolean }): Promise<void> {
-  const store = ProjectStore.open(dir)
+export async function cmdClose(dir: string, sprintId: number | undefined, opts: { retro: boolean }): Promise<void> {  const store = ProjectStore.open(dir)
   const targetId = sprintId ?? store.state.activeSprint?.id
   if (!targetId) {
     console.error('No active sprint and no sprint id provided.')
@@ -306,6 +406,11 @@ async function main(): Promise<void> {
     process.exit(code)
   } else if (args.command === 'close') {
     await cmdClose(args.dir, args.sprintId, { retro: args.retro })
+  } else if (args.command === 'import') {
+    await cmdImport(args.dir, args.importSource!, args.importTarget!, {
+      labelTags: args.labelTags,
+      milestoneSprints: args.milestoneSprints,
+    })
   } else {
     await cmdServe(args)
   }
