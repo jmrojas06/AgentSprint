@@ -34,15 +34,21 @@ export function serializeFrontmatter(data: Record<string, unknown>, body: string
   return matter.stringify(body, data)
 }
 
-/** Extract description + acceptance criteria from a markdown task body. */
-export function parseTaskBody(body: string): { description: string; acceptanceCriteria: string[] } {
+/** Extract description + acceptance criteria + notes from a markdown task body. */
+export function parseTaskBody(body: string): { description: string; acceptanceCriteria: string[]; notes: string } {
   const description = section(body, 'Description')
-  const criteria = [...body.matchAll(/^[-*]\s*\[(?:x| )\]\s*(.+)$/gm)].map((m) => m[1]?.trim() ?? '')
-  return { description, acceptanceCriteria: criteria }
+  const notes = section(body, 'Notes')
+  const rawMatches = [...body.matchAll(/^[-*]\s*\[([ xX])\]\s*(.+)$/gm)]
+  const criteria = rawMatches.map((m) => {
+    const isChecked = m[1]?.toLowerCase() === 'x'
+    const text = m[2]?.trim() ?? ''
+    return isChecked ? `[x] ${text}` : text
+  })
+  return { description, acceptanceCriteria: criteria, notes }
 }
 
 /** Build a markdown task body from structured fields. */
-export function buildTaskBody(description: string, acceptanceCriteria: string[]): string {
+export function buildTaskBody(description: string, acceptanceCriteria: string[], notes?: string): string {
   const parts: string[] = []
   parts.push('## Description\n')
   parts.push(description.trim() ? description.trim() : '_What needs to be done and why._')
@@ -51,7 +57,21 @@ export function buildTaskBody(description: string, acceptanceCriteria: string[])
   if (acceptanceCriteria.length === 0) {
     parts.push('- [ ] ')
   } else {
-    parts.push(...acceptanceCriteria.map((c) => `- [ ] ${c}`))
+    for (const c of acceptanceCriteria) {
+      const trimmed = c.trim()
+      if (/^\[[xX]\]\s*/.test(trimmed)) {
+        parts.push(`- [x] ${trimmed.replace(/^\[[xX]\]\s*/, '')}`)
+      } else if (/^\[\s*\]\s*/.test(trimmed)) {
+        parts.push(`- [ ] ${trimmed.replace(/^\[\s*\]\s*/, '')}`)
+      } else {
+        parts.push(`- [ ] ${trimmed}`)
+      }
+    }
+  }
+  if (notes && notes.trim()) {
+    parts.push('')
+    parts.push('## Notes\n')
+    parts.push(notes.trim())
   }
   return parts.join('\n')
 }

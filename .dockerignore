@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.git/
+.github/
+*.log
+.DS_Store
+*.tsbuildinfo
+coverage/
+.agentboard/
+.agents/
+*.db
+npm-debug.log*

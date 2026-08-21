@@ -1,0 +1,60 @@
+name: Bug report
+description: Report something broken or unexpected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug!
+  - type: input
+    id: version
+    attributes:
+      label: AgentSprint version
+      description: Output of `agentboard --version` (or commit hash if from source)
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation method
+      options:
+        - npx
+        - npm global install
+        - Docker
+        - From source (pnpm)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `agentboard serve`
+        2. Open http://127.0.0.1:4310
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include console output / logs if relevant
+    validations:
+      required: true

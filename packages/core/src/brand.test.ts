@@ -61,7 +61,7 @@ describe('brand spec injection', () => {
       guidelines: 'Always use the primary color.',
     })
     const task = store.state.tasks.find((t) => t.id === 'TK-1')!
-    const spec = buildTaskSpec(task, null, 'demo', store.getBrand())
+    const spec = buildTaskSpec(task, null, 'demo', { brand: store.getBrand() })
     expect(spec).toContain('## Brand guidelines')
     expect(spec).toContain('**Company:** Acme Labs')
     expect(spec).toContain('`primary`: #6366f1')

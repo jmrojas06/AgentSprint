@@ -4,6 +4,15 @@
   "description": "MCP server so AI coding agents can read, claim and complete AgentSprint tasks",
   "license": "MIT",
   "type": "module",
+  "keywords": ["mcp", "model-context-protocol", "ai-agents", "sprint", "kanban"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/agentsprint/agentsprint/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,6 +25,9 @@
     "agentboard-mcp": "./dist/index.js"
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -24,7 +36,7 @@
   },
   "dependencies": {
     "@agentsprint/core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

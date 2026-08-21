@@ -1,13 +1,25 @@
 {
   "name": "@agentsprint/cli",
   "version": "0.1.0",
-  "description": "AgentSprint command-line tool",
+  "description": "AgentSprint command-line tool — git-native sprint board for coding with AI agents",
   "license": "MIT",
   "type": "module",
+  "keywords": ["cli", "agents", "sprint", "kanban", "board", "ai-coding", "mcp"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/agentsprint/agentsprint/issues"
+  },
   "bin": {
     "agentboard": "./dist/index.js"
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -17,7 +29,8 @@
   },
   "dependencies": {
     "@agentsprint/core": "workspace:*",
-    "@agentsprint/server": "workspace:*"
+    "@agentsprint/server": "workspace:*",
+    "@agentsprint/web": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

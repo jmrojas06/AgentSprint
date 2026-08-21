@@ -19,6 +19,8 @@ export interface ServerOptions {
   /** Expose the MCP server over Streamable HTTP at /mcp. Defaults to false. */
   mcp?: boolean
   logger?: boolean
+  /** When true (default), automatically tries the next port if the requested one is busy. */
+  fallback?: boolean
 }
 
 export interface BuiltApp {
@@ -70,8 +72,26 @@ export interface BuiltServer extends BuiltApp {
 export async function startServer(opts: ServerOptions): Promise<BuiltServer> {
   const built = await buildApp(opts)
   const host = opts.host ?? '127.0.0.1'
-  const port = opts.port ?? 4310
-  await built.app.listen({ port, host })
-  const url = `http://${host}:${port}`
+  const startPort = opts.port ?? 4310
+  const fallback = opts.fallback ?? true
+
+  let port = startPort
+  while (true) {
+    try {
+      await built.app.listen({ port, host })
+      break
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      if (code === 'EADDRINUSE' && fallback && port < startPort + 100) {
+        console.warn(`[agentboard] Port ${port} is in use, trying ${port + 1}...`)
+        port += 1
+        continue
+      }
+      throw e
+    }
+  }
+
+  const actualPort = (built.app.server.address() as { port: number })?.port ?? port
+  const url = `http://${host}:${actualPort}`
   return { ...built, url }
 }

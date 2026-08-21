@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@agentsprint/core'
-import { buildTaskSpec, computeSprintStats } from '@agentsprint/core'
+import { buildSprintReport, buildTaskSpec, computeSprintStats } from '@agentsprint/core'
 import type { ProjectHandle, ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
@@ -61,7 +61,7 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     const task = state.tasks.find((t) => t.id === id)
     if (!task) return sendError(reply, 404, `Task not found: ${id}`)
     const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-    const spec = buildTaskSpec(task, sprint, state.config.name, state.brand)
+    const spec = buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: h.store.getLearnings() })
     return reply.send({ id, spec })
   })
 
@@ -106,6 +106,20 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     }
   })
 
+  app.patch('/api/tasks/:id/checklist', async (req, reply) => {
+    const id = (req.params as { id: string }).id
+    const { index, text, completed } = req.body as { index?: number; text?: string; completed?: boolean }
+    const h = projects.get(projectName(req))
+    try {
+      const task = h.store.setTaskChecklist(id, { index, text, completed })
+      h.index.upsert(task)
+      h.broadcast.send('task', task)
+      return reply.send(task)
+    } catch (err) {
+      return sendError(reply, 400, (err as Error).message)
+    }
+  })
+
   // ── sprints ──────────────────────────────────────────────────────────
 
   app.get('/api/sprints', async (req) => projects.get(projectName(req)).store.state.sprints)
@@ -132,30 +146,8 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     const state = store.state
     const sprint = state.sprints.find((s) => s.id === id)
     if (!sprint) return sendError(reply, 404, `Sprint not found: ${id}`)
-    const tasks = state.tasks.filter((t) => t.sprint === id)
-    const stats = computeSprintStats(tasks, id)
-    const statuses = state.config.workflow.statuses
-    const group = (status: string) => tasks.filter((t) => t.status === status)
-    const lines: string[] = [
-      `# Sprint ${sprint.id} — ${sprint.goal || 'No goal'}`,
-      '',
-      `- **Status**: ${sprint.status}`,
-      `- **Started**: ${sprint.startedAt ?? '—'}`,
-      `- **Ended**: ${sprint.endedAt ?? '—'}`,
-      `- **Progress**: ${stats.done}/${stats.total} tasks done (${stats.completionPct}%)`,
-      '',
-      '## Tasks',
-    ]
-    for (const status of statuses) {
-      const list = group(status)
-      lines.push('', `### ${status} (${list.length})`, '')
-      if (list.length === 0) lines.push('_none_', '')
-      for (const t of list) {
-        lines.push(`- [${t.priority}] **${t.id}** — ${t.title}${t.assignee ? ` (${t.assignee})` : ''}`)
-      }
-    }
-    lines.push('', '## Retro', '', '_Pendiente: qué fue bien, qué no, qué mejorar._')
-    return reply.send({ report: lines.join('\n') })
+    const report = buildSprintReport(sprint, state.tasks, state.config.workflow.statuses)
+    return reply.send({ report })
   })
 
   app.get('/api/stats', async (req) => {
@@ -215,6 +207,29 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
     }
+  })
+
+  // ── memory (learnings) ───────────────────────────────────────────────────
+
+  app.get('/api/memory', async (req) => {
+    const { store } = projects.get(projectName(req))
+    return { content: store.getLearnings() }
+  })
+
+  app.put('/api/memory', async (req, reply) => {
+    const h = projects.get(projectName(req))
+    const { content } = req.body as { content: string }
+    h.store.setLearnings(content)
+    h.broadcast.send('memory', { content })
+    return reply.send({ content })
+  })
+
+  app.post('/api/memory/append', async (req, reply) => {
+    const h = projects.get(projectName(req))
+    const { entry } = req.body as { entry: string }
+    const content = h.store.appendLearning(entry)
+    h.broadcast.send('memory', { content })
+    return reply.send({ content })
   })
 
   // ── events (SSE) ─────────────────────────────────────────────────────

@@ -4,7 +4,19 @@
   "description": "Visual sprint board UI for AgentSprint",
   "license": "MIT",
   "type": "module",
-  "private": true,
+  "keywords": ["kanban", "board", "react", "ui"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "directory": "packages/web"
+  },
+  "bugs": {
+    "url": "https://github.com/agentsprint/agentsprint/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist"],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

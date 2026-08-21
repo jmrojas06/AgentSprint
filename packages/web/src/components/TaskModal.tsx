@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { ClipboardCopy, Plus, Save, Trash2, X } from 'lucide-react'
+import { CheckSquare, ClipboardCopy, Plus, Save, Square, Trash2, X } from 'lucide-react'
 import type { Sprint, Task, TaskPriority, TaskStatus } from '../types'
 import { TASK_PRIORITIES } from '../types'
 import { api } from '../api'
+import { cx, criterionChecked, criterionText, getBlockerTasks } from '../ui'
 
 interface Props {
   task: Task
+  allTasks: Task[]
   sprints: Sprint[]
   statuses: string[]
   onSave: (id: string, patch: Partial<Task>) => void
@@ -15,7 +17,7 @@ interface Props {
 
 const PRIORITY_ORDER: TaskPriority[] = ['low', 'medium', 'high', 'critical']
 
-export function TaskModal({ task, sprints, statuses, onSave, onDelete, onClose }: Props) {
+export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete, onClose }: Props) {
   const [title, setTitle] = useState(task.title)
   const [description, setDescription] = useState(task.description)
   const [status, setStatus] = useState<TaskStatus>(task.status as TaskStatus)
@@ -55,6 +57,21 @@ export function TaskModal({ task, sprints, statuses, onSave, onDelete, onClose }
     if (!c) return
     setCriteria((prev) => [...prev, c])
     setCriteriaInput('')
+  }
+
+  const toggleCriterion = async (idx: number) => {
+    const currentlyChecked = criterionChecked(criteria[idx]!)
+    const next = !currentlyChecked
+    setCriteria((prev) =>
+      prev.map((c, i) => (i === idx ? (next ? `[x] ${criterionText(c)}` : criterionText(c)) : c)),
+    )
+    try {
+      await api.setTaskChecklist(task.id, { index: idx, completed: next })
+    } catch {
+      setCriteria((prev) =>
+        prev.map((c, i) => (i === idx ? (currentlyChecked ? `[x] ${criterionText(c)}` : criterionText(c)) : c)),
+      )
+    }
   }
 
   const save = () => {
@@ -168,21 +185,65 @@ export function TaskModal({ task, sprints, statuses, onSave, onDelete, onClose }
             <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="api, bug, docs" className={field} />
           </div>
 
+          {task.dependencies.length > 0 && (
+            <div className="sm:col-span-2">
+              <label className={label}>Dependencies</label>
+              <ul className="mb-2 space-y-1">
+                {task.dependencies.map((depId) => {
+                  const dep = allTasks.find((t) => t.id === depId)
+                  const isBlocked = dep && dep.status !== 'Done'
+                  return (
+                    <li key={depId} className="flex items-center gap-2 rounded bg-zinc-950/60 px-2 py-1">
+                      <span className="font-mono text-[10px] text-zinc-500">{depId}</span>
+                      {dep ? (
+                        <>
+                          <span className={cx('text-xs', isBlocked ? 'text-red-400' : 'text-emerald-400')}>
+                            {dep.status}
+                          </span>
+                          <span className="text-xs text-zinc-300">{dep.title}</span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-red-400">not found</span>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
+
           <div className="sm:col-span-2">
             <label className={label}>Acceptance criteria</label>
             <ul className="mb-2 space-y-1">
-              {criteria.map((c, i) => (
-                <li key={i} className="flex items-center gap-2 rounded bg-zinc-950/60 px-2 py-1">
-                  <span className="text-xs text-zinc-300">{c}</span>
-                  <button
-                    onClick={() => setCriteria(criteria.filter((_, j) => j !== i))}
-                    className="ml-auto rounded p-0.5 text-zinc-500 hover:text-red-400"
-                    title="Remove criterion"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </li>
-              ))}
+              {criteria.map((c, i) => {
+                const checked = criterionChecked(c)
+                const text = criterionText(c)
+                return (
+                  <li key={i} className="flex items-center gap-2 rounded bg-zinc-950/60 px-2 py-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleCriterion(i)}
+                      className={cx(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+                        checked
+                          ? 'border-indigo-500 bg-indigo-600/20 text-indigo-400'
+                          : 'border-zinc-600 text-transparent hover:border-zinc-500',
+                      )}
+                      title={checked ? 'Mark incomplete' : 'Mark complete'}
+                    >
+                      {checked ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+                    </button>
+                    <span className={cx('text-xs', checked ? 'line-through text-zinc-500' : 'text-zinc-300')}>{text}</span>
+                    <button
+                      onClick={() => setCriteria(criteria.filter((_, j) => j !== i))}
+                      className="ml-auto rounded p-0.5 text-zinc-500 hover:text-red-400"
+                      title="Remove criterion"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
             <div className="flex gap-1.5">
               <input

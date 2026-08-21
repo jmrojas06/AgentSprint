@@ -15,7 +15,7 @@ export type Assignee = z.infer<typeof Assignee>
 
 const taskId = z
   .string()
-  .regex(/^[A-Z]{2}-\d+$/, 'Task id must look like TK-1')
+  .regex(/^[A-Z]{2}-[0-9]+$/, 'Task id must look like TK-1')
 
 export const Task = z.object({
   id: taskId,
@@ -29,6 +29,7 @@ export const Task = z.object({
   dependencies: z.array(taskId).default([]),
   acceptanceCriteria: z.array(z.string()).default([]),
   description: z.string().default(''),
+  notes: z.string().default(''),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -46,6 +47,7 @@ export interface TaskInput {
   dependencies?: string[]
   acceptanceCriteria?: string[]
   description?: string
+  notes?: string
   createdAt?: string
 }
 

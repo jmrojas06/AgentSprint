@@ -4,6 +4,15 @@
   "description": "Domain model and git-native file storage for AgentSprint",
   "license": "MIT",
   "type": "module",
+  "keywords": ["agents", "sprint", "kanban", "board", "markdown", "git-native", "ai-coding"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/agentsprint/agentsprint/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -13,6 +22,9 @@
     }
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

@@ -1,5 +1,5 @@
 import type { Brand, Sprint, Task } from './types.js'
-import { hasBrand } from './types.js'
+import { hasBrand, DEFAULT_STATUSES } from './types.js'
 
 /**
  * Render the brand guidelines block appended to task specs when the
@@ -47,9 +47,10 @@ export function buildBrandSection(brand: Brand): string | null {
 /**
  * Turn a task into a self-contained prompt that an AI coding agent can
  * execute without any other context. This is the "handoff" document.
- * Pass the project brand to append brand guidelines.
+ * Pass the project brand to append brand guidelines and `allTasks` to
+ * show the status of each dependency.
  */
-export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: string, brand?: Brand | null): string {
+export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: string, options?: { brand?: Brand | null; allTasks?: Task[]; learnings?: string | null }): string {
   const lines: string[] = []
   lines.push(`# ${task.id} — ${task.title}`)
   lines.push('')
@@ -69,7 +70,11 @@ export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: st
   if (task.acceptanceCriteria.length === 0) {
     lines.push('- [ ] ')
   } else {
-    lines.push(...task.acceptanceCriteria.map((c) => `- [ ] ${c}`))
+    lines.push(...task.acceptanceCriteria.map((c) => {
+      const checked = /^\[x\]\s*/i.test(c.trim())
+      const text = c.replace(/^\[x\]\s*/i, '').replace(/^\[\s*\]\s*/i, '').trim()
+      return `- [${checked ? 'x' : ' '}] ${text}`
+    }))
   }
   lines.push('')
   if (task.tags.length > 0) {
@@ -77,13 +82,32 @@ export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: st
     lines.push('')
   }
   if (task.dependencies.length > 0) {
-    lines.push(`**Depends on:** ${task.dependencies.join(', ')}`)
+    if (options?.allTasks) {
+      const depDetails = task.dependencies
+        .map((depId) => {
+          const dep = options!.allTasks!.find((t) => t.id === depId)
+          if (!dep) return `${depId} — _not found_`
+          return `${depId} — ${dep.title} (${dep.status})`
+        })
+        .join(', ')
+      lines.push(`**Depends on:** ${depDetails}`)
+    } else {
+      lines.push(`**Depends on:** ${task.dependencies.join(', ')}`)
+    }
     lines.push('')
   }
 
-  const brandSection = brand ? buildBrandSection(brand) : null
+  const brandSection = options?.brand ? buildBrandSection(options.brand) : null
   if (brandSection) {
     lines.push(brandSection)
+  }
+
+  const learnings = options?.learnings?.trim()
+  if (learnings) {
+    lines.push('## Learned principles')
+    lines.push('')
+    lines.push(learnings)
+    lines.push('')
   }
 
   lines.push('## Rules for the agent')
@@ -130,4 +154,33 @@ export function computeSprintStats(tasks: Task[], sprintId: number | null): Spri
     pointsDone,
     completionPct: total === 0 ? 0 : Math.round((done / total) * 100),
   }
+}
+
+/**
+ * Generate a Markdown report summarizing sprint progress, status breakdown, and retro.
+ */
+export function buildSprintReport(sprint: Sprint, tasks: Task[], statuses: readonly string[] = DEFAULT_STATUSES): string {
+  const sprintTasks = tasks.filter((t) => t.sprint === sprint.id)
+  const stats = computeSprintStats(sprintTasks, sprint.id)
+  const group = (status: string) => sprintTasks.filter((t) => t.status === status)
+  const lines: string[] = [
+    `# Sprint ${sprint.id} — ${sprint.goal || 'No goal'}`,
+    '',
+    `- **Status**: ${sprint.status}`,
+    `- **Started**: ${sprint.startedAt ?? '—'}`,
+    `- **Ended**: ${sprint.endedAt ?? '—'}`,
+    `- **Progress**: ${stats.done}/${stats.total} tasks done (${stats.completionPct}%)`,
+    '',
+    '## Tasks',
+  ]
+  for (const status of statuses) {
+    const list = group(status)
+    lines.push('', `### ${status} (${list.length})`, '')
+    if (list.length === 0) lines.push('_none_', '')
+    for (const t of list) {
+      lines.push(`- [${t.priority}] **${t.id}** — ${t.title}${t.assignee ? ` (${t.assignee})` : ''}`)
+    }
+  }
+  lines.push('', '## Retro', '', '_Pendiente: qué fue bien, qué no, qué mejorar._')
+  return lines.join('\n')
 }

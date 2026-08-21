@@ -4,6 +4,15 @@
   "description": "REST + SSE + file-watcher server for AgentSprint",
   "license": "MIT",
   "type": "module",
+  "keywords": ["agents", "sprint", "kanban", "fastify", "sse", "server"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentsprint/agentsprint.git",
+    "directory": "packages/server"
+  },
+  "bugs": {
+    "url": "https://github.com/agentsprint/agentsprint/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,6 +24,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

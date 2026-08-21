@@ -79,4 +79,118 @@ describe('ProjectStore', () => {
     expect(reopened.state.tasks.find((t) => t.id === 'TK-9')).toBeUndefined()
     expect(reopened.lastWarnings.some((w) => w.includes('TK-9.md'))).toBe(true)
   })
+
+  it('appends timestamped notes to task', () => {
+    store.appendTaskNote('TK-1', 'Investigated API endpoints', 'agent')
+    const t = store.state.tasks.find((x) => x.id === 'TK-1')
+    expect(t?.notes).toContain('Investigated API endpoints')
+    expect(t?.notes).toContain('(agent)')
+
+    const reopened = ProjectStore.open(dir)
+    expect(reopened.state.tasks.find((x) => x.id === 'TK-1')?.notes).toContain('Investigated API endpoints')
+  })
+
+   it('toggles and sets acceptance criteria checklists', () => {
+     store.setTaskChecklist('TK-1', { index: 0, completed: true })
+     let t = store.state.tasks.find((x) => x.id === 'TK-1')
+     expect(t?.acceptanceCriteria[0]).toContain('[x]')
+
+     store.setTaskChecklist('TK-1', { text: 'acceptance criterion', completed: true })
+     t = store.state.tasks.find((x) => x.id === 'TK-1')
+     expect(t?.acceptanceCriteria[1]).toContain('[x]')
+
+     const content = fs.readFileSync(path.join(dir, '.agentboard', 'tasks', 'TK-1.md'), 'utf8')
+     expect(content).toContain('- [x]')
+   })
+ })
+
+ describe('dependency graph & blockers', () => {
+   it('detects when a task is blocked by an incomplete dependency', () => {
+     expect(store.isTaskBlocked('TK-2')).toBe(true)
+     const blockers = store.getBlockers('TK-2')
+     expect(blockers).toContain('TK-1')
+   })
+
+   it('detects when a task is unblocked once its dependency is done', () => {
+     store.setTaskStatus('TK-1', 'Done')
+     expect(store.isTaskBlocked('TK-2')).toBe(false)
+     expect(store.getBlockers('TK-2')).toEqual([])
+   })
+
+   it('treats a task with no dependencies as not blocked', () => {
+     expect(store.isTaskBlocked('TK-1')).toBe(false)
+   })
+
+    it('detects no cycles in the sample board', () => {
+      expect(store.detectCycles()).toEqual([])
+    })
+
+    it('rejects creating a task that creates a dependency cycle', () => {
+      store.createTask({ id: 'TK-10', title: 'A', status: 'To Do', dependencies: ['TK-20'] })
+      expect(() =>
+        store.createTask({ id: 'TK-20', title: 'B', dependencies: ['TK-10'], status: 'To Do' }),
+      ).toThrow(/cycle/i)
+    })
+
+    it('rejects updating a task to create a dependency cycle', () => {
+      store.createTask({ id: 'TK-10', title: 'A', status: 'To Do' })
+      store.createTask({ id: 'TK-20', title: 'B', status: 'To Do', dependencies: ['TK-10'] })
+      expect(() => store.updateTask('TK-10', { dependencies: ['TK-20'] })).toThrow(/cycle/i)
+    })
+  })
+
+  describe('checklist round-trip', () => {
+    it('checkmarks do not accumulate doubled prefixes', () => {
+      store.setTaskChecklist('TK-1', { index: 0, completed: true })
+      let t = store.state.tasks.find((x) => x.id === 'TK-1')!
+      expect(t.acceptanceCriteria[0]).toBe('[x] The task has a clear description')
+
+      const reopened = ProjectStore.open(dir)
+      t = reopened.state.tasks.find((x) => x.id === 'TK-1')!
+      expect(t.acceptanceCriteria[0]).toBe('[x] The task has a clear description')
+
+      const content = fs.readFileSync(path.join(dir, '.agentboard', 'tasks', 'TK-1.md'), 'utf8')
+      expect(content).toContain('- [x] The task has a clear description')
+      expect(content).not.toContain('- [ ] - [x]')
+    })
+
+    it('unchecking strips the [x] prefix cleanly', () => {
+      store.setTaskChecklist('TK-1', { index: 0, completed: true })
+      store.setTaskChecklist('TK-1', { index: 0, completed: false })
+      const t = store.state.tasks.find((x) => x.id === 'TK-1')!
+      expect(t.acceptanceCriteria[0]).toBe('The task has a clear description')
+    })
+  })
+
+
+describe('learnings', () => {
+  it('returns empty string before any learnings are saved', () => {
+    expect(store.getLearnings()).toBe('')
+  })
+
+  it('setLearnings persists content to disk', () => {
+    const content = '## Retro\n\n- Always check edge cases\n- Keep commits small'
+    store.setLearnings(content)
+    expect(store.getLearnings()).toBe(content)
+    const file = fs.readFileSync(path.join(dir, '.agentboard', 'learnings.md'), 'utf8')
+    expect(file).toBe(content)
+  })
+
+  it('appendLearning creates a bulleted list', () => {
+    store.appendLearning('First insight')
+    store.appendLearning('Second insight')
+    const result = store.getLearnings()
+    expect(result).toBe('- First insight\n- Second insight')
+  })
+
+  it('appendLearning starts fresh when file is empty', () => {
+    store.appendLearning('Only learning')
+    expect(store.getLearnings()).toBe('- Only learning')
+  })
+
+  it('reopening the project loads existing learnings from disk', () => {
+    store.setLearnings('Persisted learning')
+    const reopened = ProjectStore.open(dir)
+    expect(reopened.getLearnings()).toBe('Persisted learning')
+  })
 })

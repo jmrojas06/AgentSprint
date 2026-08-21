@@ -20,6 +20,9 @@ importers:
       '@agentsprint/server':
         specifier: workspace:*
         version: link:../server
+      '@agentsprint/web':
+        specifier: workspace:*
+        version: link:../web
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -62,7 +65,7 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@modelcontextprotocol/sdk':
-        specifier: ^1.0.0
+        specifier: ^1.30.0
         version: 1.30.0(zod@3.25.76)
       zod:
         specifier: ^3.24.0

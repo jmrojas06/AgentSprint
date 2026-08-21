@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, GitBranch, Palette, Plus, Search, Square, X } from 'lucide-react'
-import type { BoardState, ProjectState, Task } from './types'
+import { AlertTriangle, GitBranch, Palette, Plus, Search, SortAsc, SortDesc, Square, X } from 'lucide-react'
+import type { BoardState, ProjectState, Task, TaskPriority } from './types'
+import { TASK_PRIORITIES } from './types'
 import { api, setProject } from './api'
 import { useProjectEvents } from './hooks/useProjectEvents'
 import { Board } from './components/Board'
@@ -8,7 +9,7 @@ import { SprintPanel } from './components/SprintPanel'
 import { TaskModal } from './components/TaskModal'
 import { NewTaskModal } from './components/NewTaskModal'
 import { BrandPanel } from './components/BrandPanel'
-import { cx } from './ui'
+import { cx, getBlockerTasks, type SortBy, type SortDir, sortTasks } from './ui'
 
 type SprintFilter = 'all' | number
 type SideTab = 'sprints' | 'brand'
@@ -19,6 +20,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [sprintFilter, setSprintFilter] = useState<SprintFilter>('all')
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('')
+  const [assigneeFilter, setAssigneeFilter] = useState<'agent' | 'human' | ''>('')
+  const [tagFilter, setTagFilter] = useState('')
+  const [sortBy, setSortBy] = useState<SortBy>('estimate')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [editing, setEditing] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
@@ -65,10 +71,13 @@ export default function App() {
     const q = query.trim().toLowerCase()
     return project.tasks.filter((t) => {
       if (sprintFilter !== 'all' && t.sprint !== sprintFilter) return false
+      if (priorityFilter && t.priority !== priorityFilter) return false
+      if (assigneeFilter && t.assignee !== assigneeFilter) return false
+      if (tagFilter && !t.tags.some((tag) => tag.toLowerCase().includes(tagFilter.toLowerCase()))) return false
       if (!q) return true
       return `${t.id} ${t.title} ${t.description} ${t.tags.join(' ')}`.toLowerCase().includes(q)
     })
-  }, [project, query, sprintFilter])
+  }, [project, query, sprintFilter, priorityFilter, assigneeFilter, tagFilter])
 
   const tasksBySprint = useMemo(() => {
     const map = new Map<number, number>()
@@ -112,6 +121,15 @@ export default function App() {
 
   const moveTask = async (task: Task, next: string) => {
     try {
+      if (next === 'In Progress' && task.dependencies.length > 0) {
+        const blockers = getBlockerTasks(task, project.tasks)
+        if (blockers.length > 0) {
+          const depIds = blockers.map((b) => b.id).join(', ')
+          if (!confirm(`"${task.title}" is blocked by ${depIds}. Move to In Progress anyway?`)) {
+            return
+          }
+        }
+      }
       await api.setTaskStatus(task.id, next as Task['status'])
       await reload()
     } catch (e) {
@@ -147,7 +165,7 @@ export default function App() {
             {project.rootDir}
           </span>
 
-          {projects.length > 1 && (
+           {projects.length > 1 && (
             <select
               value={projects.find((p) => project.rootDir === p.rootDir)?.name ?? ''}
               onChange={(e) => switchProject(e.target.value)}
@@ -161,6 +179,57 @@ export default function App() {
               ))}
             </select>
           )}
+
+          <div className="ml-2 flex flex-wrap items-center gap-1.5">
+            <select
+              value={priorityFilter}
+              onChange={(e) => setPriorityFilter(e.target.value as TaskPriority | '')}
+              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
+              title="Filter by priority"
+            >
+              <option value="">All priorities</option>
+              {TASK_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={assigneeFilter}
+              onChange={(e) => setAssigneeFilter(e.target.value as 'agent' | 'human' | '')}
+              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
+              title="Filter by assignee"
+            >
+              <option value="">All assignees</option>
+              <option value="agent">Agent</option>
+              <option value="human">Human</option>
+            </select>
+
+            <input
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+              placeholder="Tag…"
+              className="w-20 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+              title="Filter by tag"
+            />
+
+            {(priorityFilter || assigneeFilter || tagFilter || query || sprintFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setPriorityFilter('')
+                  setAssigneeFilter('')
+                  setTagFilter('')
+                  setQuery('')
+                  setSprintFilter('all')
+                }}
+                className="rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-1 text-xs text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"
+                title="Clear all filters"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
 
           <div className="ml-auto flex items-center gap-2">
             <div className="relative">
@@ -205,7 +274,10 @@ export default function App() {
           ) : (
             <span>No active sprint — activate one to start planning</span>
           )}
-          <span className="ml-auto font-mono">{project.tasks.length} tasks</span>
+          <span className="ml-auto font-mono">
+            {tasks.length}/{project.tasks.length} tasks visible
+            {(priorityFilter || assigneeFilter || tagFilter || query || sprintFilter !== 'all') && ' (filtered)'}
+          </span>
         </div>
 
         {project.warnings && project.warnings.length > 0 && !warningsDismissed && (
@@ -235,7 +307,17 @@ export default function App() {
 
       <div className="grid flex-1 grid-cols-1 gap-3 overflow-hidden p-3 lg:grid-cols-[1fr_280px]">
         <div className="overflow-x-auto">
-          <Board statuses={statuses} tasks={tasks} onOpen={setEditing} onMove={moveTask} />
+          <Board
+            statuses={statuses}
+            tasks={tasks}
+            allTasks={project.tasks}
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onSortBy={setSortBy}
+            onSortDir={setSortDir}
+            onOpen={setEditing}
+            onMove={moveTask}
+          />
         </div>
         <div className="hidden overflow-y-auto lg:block">
           <div className="mb-2 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
@@ -292,6 +374,7 @@ export default function App() {
       {editing && (
         <TaskModal
           task={editing}
+          allTasks={project.tasks}
           sprints={project.sprints}
           statuses={statuses}
           onSave={saveTask}

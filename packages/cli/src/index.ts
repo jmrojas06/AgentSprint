@@ -3,7 +3,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand } from '@agentsprint/core'
+import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, lintProject } from '@agentsprint/core'
 import { startServer } from '@agentsprint/server'
 
 const VERSION = '0.1.0'
@@ -16,19 +16,21 @@ Usage:
   agentboard [command] [dir]
 
 Commands:
-  init [dir]        Scaffold a board in the directory (default: current dir)
-  serve [dir]       Start the server + UI (default command)
-  spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
-  brand [dir]       Print the company/brand kit for the project
-  help              Show this help
+   init [dir]        Scaffold a board in the directory (default: current dir)
+   serve [dir]       Start the server + UI (default command)
+   spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
+   brand [dir]       Print the company/brand kit for the project
+   lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
+   help              Show this help
 
 Options (serve):
-  --port <n>        Port to listen on (default: 4310)
-  --host <ip>       Host to bind (default: 127.0.0.1)
-  --no-open         Do not open the browser automatically
-  --init            Auto-create a board if missing
-  --mcp             Also expose the MCP server at /mcp (streamable HTTP)
-  --version         Print the version
+   --port <n>        Port to listen on (default: 4310)
+   --host <ip>       Host to bind (default: 127.0.0.1)
+   --no-open         Do not open the browser automatically
+   --no-fallback     Do not auto-find a free port if the requested one is busy
+   --init            Auto-create a board if missing
+   --mcp             Also expose the MCP server at /mcp (streamable HTTP)
+   --version         Print the version
 `)
 }
 
@@ -41,10 +43,11 @@ interface Args {
   open: boolean
   init: boolean
   mcp: boolean
+  fallback: boolean
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'help'])
   let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -57,6 +60,7 @@ export function parseArgs(argv: string[]): Args | null {
   let open = true
   let init = false
   let mcp = false
+  let fallback = true
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -81,6 +85,9 @@ export function parseArgs(argv: string[]): Args | null {
       case '--init':
         init = true
         break
+      case '--no-fallback':
+        fallback = false
+        break
       case '--mcp':
         mcp = true
         break
@@ -98,7 +105,7 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard spec <dir> <task-id>')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init, mcp }
+    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init, mcp, fallback }
   }
 
   if (command === 'brand') {
@@ -106,11 +113,11 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard brand [dir]')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp }
+    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp, fallback }
   }
 
   const dir = positional[0] ? path.resolve(positional[0]) : process.cwd()
-  return { command, dir, port, host, open, init, mcp }
+  return { command, dir, port, host, open, init, mcp, fallback }
 }
 
 function resolveWebDist(): string | null {
@@ -157,6 +164,7 @@ async function cmdServe(args: Args): Promise<void> {
     host: args.host,
     webDist,
     mcp: args.mcp,
+    fallback: args.fallback,
   })
 
   console.log(`\n  AgentSprint v${VERSION}`)
@@ -208,7 +216,7 @@ async function cmdSpec(dir: string, taskId: string): Promise<void> {
     process.exit(1)
   }
   const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-  process.stdout.write(buildTaskSpec(task, sprint, state.config.name, state.brand) + '\n')
+  process.stdout.write(buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: store.getLearnings() }) + '\n')
 }
 
 export async function cmdBrand(dir: string): Promise<void> {
@@ -220,6 +228,20 @@ export async function cmdBrand(dir: string): Promise<void> {
     return
   }
   process.stdout.write(buildBrandSection(brand) + '\n')
+}
+
+export async function cmdLint(dir: string): Promise<number> {
+  const { issues, ok } = lintProject(dir)
+  if (ok) {
+    console.log(`✔ ${path.join(dir, '.agentboard')} is healthy — no issues found.`)
+    return 0
+  }
+  for (const issue of issues) {
+    const icon = issue.severity === 'error' ? '✖' : '⚠'
+    console.error(`${icon} ${issue.file}  [${issue.code}]  ${issue.message}`)
+  }
+  console.error(`\nFound ${issues.length} issue(s).`)
+  return 1
 }
 
 async function main(): Promise<void> {
@@ -236,6 +258,9 @@ async function main(): Promise<void> {
     await cmdSpec(args.dir, args.taskId)
   } else if (args.command === 'brand') {
     await cmdBrand(args.dir)
+  } else if (args.command === 'lint') {
+    const code = await cmdLint(args.dir)
+    process.exit(code)
   } else {
     await cmdServe(args)
   }

@@ -134,6 +134,15 @@ describe('server API', () => {
     expect(json().total).toBe(3)
   })
 
+  it('updates task checklist via PATCH /api/tasks/:id/checklist', async () => {
+    const res = await api('patch', '/api/tasks/TK-1/checklist', { index: 0, completed: true })
+    expect(res.status).toBe(200)
+    expect(res.json().acceptanceCriteria[0]).toContain('[x]')
+
+    const res2 = await api('patch', '/api/tasks/TK-1/checklist', { index: 0, completed: false })
+    expect(res2.json().acceptanceCriteria[0]).not.toContain('[x]')
+  })
+
   it('returns and updates the brand', async () => {
     const initial = await api('get', '/api/brand')
     expect(initial.json().name).toBe('')
@@ -149,6 +158,29 @@ describe('server API', () => {
     const spec = await api('get', '/api/tasks/TK-1/spec')
     expect(spec.json().spec).toContain('## Brand guidelines')
     expect(spec.json().spec).toContain('Acme Labs')
+  })
+
+  it('gets and sets memory (learnings)', async () => {
+    const initial = await api('get', '/api/memory')
+    expect(initial.json().content).toBe('')
+
+    const res = await api('put', '/api/memory', { content: 'Rule: write tests first.' })
+    expect(res.status).toBe(200)
+    expect(res.json().content).toBe('Rule: write tests first.')
+
+    const fetched = await api('get', '/api/memory')
+    expect(fetched.json().content).toBe('Rule: write tests first.')
+
+    const appended = await api('post', '/api/memory/append', { entry: 'Use small commits.' })
+    expect(appended.json().content).toContain('Use small commits.')
+    expect(appended.json().content).toContain('Rule: write tests first.')
+  })
+
+  it('injects learnings into task spec', async () => {
+    await api('put', '/api/memory', { content: 'Always validate input.' })
+    const spec = await api('get', '/api/tasks/TK-1/spec')
+    expect(spec.json().spec).toContain('## Learned principles')
+    expect(spec.json().spec).toContain('Always validate input.')
   })
 
   it('surfaces parse warnings in /api/project', async () => {
@@ -254,7 +286,7 @@ describe('multi-project', () => {
         name: 'project_use',
         arguments: { name: 'nope' },
       })
-      expect((parseMcpRes(badUse.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain('Error')
+      expect((parseMcpRes(badUse.body) as { result: { content: Array<{ text: string }> }       }).result.content[0]!.text).toContain('Unknown project')
 
       const tasksRes = await mcpCall(built, sessionId, 7, 'tools/call', {
         name: 'task_list',
@@ -323,11 +355,20 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(15)
+      expect(tools.length).toBe(24)
       const names = tools.map((t) => t.name)
       expect(names).toContain('project_list')
       expect(names).toContain('project_current')
       expect(names).toContain('project_use')
+      expect(names).toContain('sprint_create')
+      expect(names).toContain('sprint_close')
+      expect(names).toContain('sprint_report')
+      expect(names).toContain('task_delete')
+      expect(names).toContain('task_checklist')
+      expect(names).toContain('task_note')
+      expect(names).toContain('brand_update')
+      expect(names).toContain('learnings_get')
+      expect(names).toContain('learnings_append')
 
       await built.close()
     } finally {
@@ -353,6 +394,7 @@ describe('createIndex', () => {
         dependencies: [],
         acceptanceCriteria: [],
         description: '',
+        notes: '',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
       }

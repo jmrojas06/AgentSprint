@@ -2,8 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ProjectStore, buildTaskSpec, computeSprintStats } from '../src/index.js'
-
+import { ProjectStore, buildSprintReport, buildTaskSpec, computeSprintStats } from '../src/index.js'
 let dir: string
 let store: ProjectStore
 
@@ -29,6 +28,22 @@ describe('buildTaskSpec', () => {
     expect(spec).toContain('## Rules for the agent')
     expect(spec).toContain('**Status:** To Do')
   })
+
+  it('injects learnings into the spec when provided', () => {
+    const task = store.state.tasks.find((t) => t.id === 'TK-1')!
+    const learnings = 'Avoid circular deps — they cause deadlocks.'
+    const spec = buildTaskSpec(task, null, 'demo', { learnings })
+    expect(spec).toContain('## Learned principles')
+    expect(spec).toContain(learnings)
+  })
+
+  it('marks checked criteria with [x] in the spec', () => {
+    store.setTaskChecklist('TK-1', { index: 0, completed: true })
+    const task = store.state.tasks.find((t) => t.id === 'TK-1')!
+    const spec = buildTaskSpec(task, null, 'demo')
+    expect(spec).toContain('- [x] The task has a clear description')
+    expect(spec).not.toContain('- [ ] The task has a clear description')
+  })
 })
 
 describe('computeSprintStats', () => {
@@ -52,3 +67,4 @@ describe('computeSprintStats', () => {
     expect(stats.total).toBe(3)
   })
 })
+

@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM node:24-alpine AS build
 RUN npm i -g pnpm@11
 WORKDIR /app
@@ -11,11 +13,13 @@ RUN pnpm install --frozen-lockfile
 COPY packages packages
 RUN pnpm build
 
-FROM node:24-alpine
-RUN npm i -g pnpm@11
+FROM node:24-alpine AS runtime
+RUN apk add --no-cache ca-certificates tini
 WORKDIR /app
 COPY --from=build /app .
 ENV NODE_ENV=production
 EXPOSE 4310
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:4310/api/health || exit 1
 ENTRYPOINT ["node", "/app/packages/cli/dist/index.js"]
 CMD ["serve", "/board", "--host", "0.0.0.0", "--no-open"]

@@ -15,10 +15,37 @@ tasks from your board — without touching the UI.
 | `task_update` | Update task fields |
 | `task_status` | Move a task to a status |
 | `task_claim` | Claim a task: set `In Progress` + assignee `agent` |
+| `task_checklist` | Check/uncheck an acceptance criterion by index or text |
+| `task_note` | Append a timestamped execution note/log under `## Notes` |
+| `task_delete` | Permanently delete a task |
 | `task_spec` | Get the copy-paste agent prompt for a task |
+| `brand_get` | Get brand kit guidelines, design tokens and assets |
+| `brand_update` | Update company/brand kit (tokens, fonts, colors, guidelines) |
 | `sprint_current` | Active sprint + its tasks + stats (read this first) |
 | `sprint_list` | List all sprints |
+| `sprint_create` | Create a new planned sprint |
 | `sprint_activate` | Set a sprint active |
+| `sprint_close` | Close the active sprint (or specified by id) |
+| `sprint_report` | Generate Markdown summary report of a sprint |
+| `project_list` | (Multi-project) List available projects |
+| `project_current` | (Multi-project) Show active project |
+| `project_use` | (Multi-project) Switch active project |
+
+## Resources
+
+| Resource URI | Description |
+| --- | --- |
+| `agentboard://tasks` | Live list of all tasks on the board |
+| `agentboard://sprint/current` | Active sprint, associated tasks, and sprint statistics |
+| `agentboard://brand` | Brand kit tokens, assets, and guidelines |
+
+## Prompts
+
+| Prompt | Description |
+| --- | --- |
+| `execute-task` | Pre-formatted handoff prompt to execute a task by ID (with brand injection) |
+| `sprint-planning` | Workflow prompt to analyze backlog and plan next sprint |
+| `sprint-retro` | Workflow prompt to analyze sprint velocity and capture learnings |
 
 ## Setup
 

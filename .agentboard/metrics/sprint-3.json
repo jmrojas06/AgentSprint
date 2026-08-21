@@ -1,0 +1,14 @@
+{
+  "sprintId": 3,
+  "startedAt": "2026-08-20T17:00:00.000Z",
+  "points": [
+    {
+      "date": "2026-08-20",
+      "remaining": 2
+    },
+    {
+      "date": "2026-08-21",
+      "remaining": 2
+    }
+  ]
+}

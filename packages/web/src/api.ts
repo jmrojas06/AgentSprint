@@ -46,6 +46,8 @@ export const api = {
     request<Task>(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   setTaskStatus: (id: string, status: TaskStatus) =>
     request<Task>(`/api/tasks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  setTaskChecklist: (id: string, patch: { index?: number; text?: string; completed?: boolean }) =>
+    request<Task>(`/api/tasks/${id}/checklist`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
   getTaskSpec: (id: string) => request<{ id: string; spec: string }>(`/api/tasks/${id}/spec`),
 

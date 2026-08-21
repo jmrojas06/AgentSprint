@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@agentsprint/core'
-import { buildTaskSpec, computeSprintStats } from '@agentsprint/core'
+import { buildSprintReport, buildTaskSpec, computeSprintStats } from '@agentsprint/core'
 import { z } from 'zod'
 import type { SprintStatus, TaskInput } from '@agentsprint/core'
 
@@ -94,7 +94,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           provider!.use(name)
           return textResponse({ ok: true, activeProject: provider!.current() })
         } catch (err) {
-          return textResponse(`Error: ${(err as Error).message}`)
+          return textResponse({ error: (err as Error).message })
         }
       },
     )
@@ -166,7 +166,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Get task',
       description: 'Get a single task by id (e.g. TK-1).',
-      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-\d+$/) }),
+      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-[0-9]+$/) }),
     },
     async ({ id }) => {
       const task = getStore().state.tasks.find((t) => t.id === id)
@@ -198,7 +198,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().createTask(input as TaskInput)
         return textResponse(task)
       } catch (err) {
-        return textResponse(`Error: ${(err as Error).message}`)
+        return textResponse({ error: (err as Error).message })
       }
     },
   )
@@ -209,7 +209,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       title: 'Update task',
       description: 'Update fields of an existing task (title, description, priority, assignee, sprint, tags, acceptanceCriteria, estimate).',
       inputSchema: z.object({
-        id: z.string().regex(/^[A-Z]{2}-\d+$/),
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
         title: z.string().min(1).optional(),
         description: z.string().optional(),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
@@ -225,7 +225,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().updateTask(id, patch)
         return textResponse(task)
       } catch (err) {
-        return textResponse(`Error: ${(err as Error).message}`)
+        return textResponse({ error: (err as Error).message })
       }
     },
   )
@@ -236,7 +236,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       title: 'Set task status',
       description: 'Move a task to a given status. When starting work use task_claim instead.',
       inputSchema: z.object({
-        id: z.string().regex(/^[A-Z]{2}-\d+$/),
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
         status: z.enum(STATUSES),
       }),
     },
@@ -245,7 +245,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().setTaskStatus(id, status)
         return textResponse(task)
       } catch (err) {
-        return textResponse(`Error: ${(err as Error).message}`)
+        return textResponse({ error: (err as Error).message })
       }
     },
   )
@@ -255,15 +255,66 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Claim a task',
       description:
-        'Mark a task as In Progress and assigned to an agent. Use this when you start working on a task. After claiming, if the task is not the current one, you may return it with task_status.',
-      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-\d+$/) }),
+        'Mark a task as In Progress and assigned to an agent. Use this when you start working on a task. If the task has incomplete dependencies, the call will fail unless `force` is true.',
+      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-[0-9]+$/), force: z.boolean().optional() }),
     },
-    async ({ id }) => {
+    async ({ id, force }) => {
       try {
-        const task = getStore().updateTask(id, { status: 'In Progress', assignee: 'agent' })
+        const store = getStore()
+        const blocked = store.isTaskBlocked(id)
+        if (blocked && !force) {
+          const blockers = store.getBlockers(id)
+          return textResponse({ error: `Task ${id} is blocked by ${blockers.join(', ')}`, blockers })
+        }
+        const task = store.updateTask(id, { status: 'In Progress', assignee: 'agent' })
         return textResponse(task)
       } catch (err) {
-        return textResponse(`Error: ${(err as Error).message}`)
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  server.registerTool(
+    'task_checklist',
+    {
+      title: 'Update task checklist',
+      description:
+        'Toggle or set the completion status of an acceptance criterion on a task by index (0-based) or text substring match.',
+      inputSchema: z.object({
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
+        index: z.number().int().min(0).optional(),
+        text: z.string().optional(),
+        completed: z.boolean().optional(),
+      }),
+    },
+    async ({ id, index, text, completed }) => {
+      try {
+        const task = getStore().setTaskChecklist(id, { index, text, completed })
+        return textResponse(task)
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  server.registerTool(
+    'task_note',
+    {
+      title: 'Append note to task',
+      description:
+        'Append a timestamped execution note, decision, or blocker under ## Notes in the task body.',
+      inputSchema: z.object({
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
+        note: z.string().min(1),
+        author: z.string().optional(),
+      }),
+    },
+    async ({ id, note, author }) => {
+      try {
+        const task = getStore().appendTaskNote(id, note, author)
+        return textResponse(task)
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
       }
     },
   )
@@ -274,7 +325,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       title: 'Get task spec',
       description:
         'Returns a self-contained, copy-pasteable prompt for the task (mission + acceptance criteria + agent rules). Use this to get context before implementing.',
-      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-\d+$/) }),
+      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-[0-9]+$/) }),
     },
     async ({ id }) => {
       const store = getStore()
@@ -282,7 +333,24 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       const task = state.tasks.find((t) => t.id === id)
       if (!task) return textResponse(`Task not found: ${id}`)
       const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-      return textResponse(buildTaskSpec(task, sprint, getProjectName(), store.getBrand()))
+      return textResponse(buildTaskSpec(task, sprint, getProjectName(), { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings() }))
+    },
+  )
+
+  server.registerTool(
+    'task_delete',
+    {
+      title: 'Delete task',
+      description: 'Permanently delete a task by id (e.g. TK-1).',
+      inputSchema: z.object({ id: z.string().regex(/^[A-Z]{2}-[0-9]+$/) }),
+    },
+    async ({ id }) => {
+      try {
+        getStore().deleteTask(id)
+        return textResponse({ ok: true, deleted: id })
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
     },
   )
 
@@ -305,6 +373,85 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           ? brand
           : { message: 'No brand configured. Edit .agentboard/brand.md or use the UI.' },
       )
+    },
+  )
+
+  server.registerTool(
+    'brand_update',
+    {
+      title: 'Update brand guidelines',
+      description:
+        'Update company/brand kit (identity, design tokens, colors, fonts, assets, and guidelines).',
+      inputSchema: z.object({
+        name: z.string().optional(),
+        tagline: z.string().optional(),
+        mission: z.string().optional(),
+        tone: z.string().optional(),
+        logo: z.string().optional(),
+        colors: z
+          .object({
+            primary: z.string().optional(),
+            secondary: z.string().optional(),
+            accent: z.string().optional(),
+            background: z.string().optional(),
+            text: z.string().optional(),
+          })
+          .optional(),
+        fonts: z
+          .object({
+            heading: z.string().optional(),
+            body: z.string().optional(),
+          })
+          .optional(),
+        assets: z
+          .array(
+            z.object({
+              name: z.string(),
+              path: z.string(),
+            }),
+          )
+          .optional(),
+        guidelines: z.string().optional(),
+      }),
+    },
+    async (patch) => {
+      try {
+        const brand = getStore().updateBrand(patch)
+        return textResponse(brand)
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  // ── learnings ──────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'learnings_get',
+    {
+      title: 'Get learnings',
+      description:
+        'Return the full contents of `.agentboard/learnings.md` — retro notes, rules and principles captured from past sprints. Useful before planning so you don’t repeat mistakes.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const content = getStore().getLearnings()
+      return textResponse(content ? { content } : { message: 'No learnings recorded yet.' })
+    },
+  )
+
+  server.registerTool(
+    'learnings_append',
+    {
+      title: 'Append learning',
+      description: 'Append a single learning/retro entry to `.agentboard/learnings.md`.',
+      inputSchema: z.object({
+        entry: z.string().describe('A rule, insight or retro bullet to remember.'),
+      }),
+    },
+    async ({ entry }) => {
+      const content = getStore().appendLearning(entry)
+      return textResponse({ ok: true, content })
     },
   )
 
@@ -354,9 +501,209 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const sprint = getStore().setSprintStatus(id, 'active' as SprintStatus)
         return textResponse(sprint)
       } catch (err) {
-        return textResponse(`Error: ${(err as Error).message}`)
+        return textResponse({ error: (err as Error).message })
       }
     },
+  )
+
+  server.registerTool(
+    'sprint_create',
+    {
+      title: 'Create sprint',
+      description: 'Create a new planned sprint with an optional goal. Returns the created sprint.',
+      inputSchema: z.object({
+        goal: z.string().optional(),
+      }),
+    },
+    async ({ goal }) => {
+      try {
+        const sprint = getStore().createSprint(goal ?? '')
+        return textResponse(sprint)
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  server.registerTool(
+    'sprint_close',
+    {
+      title: 'Close sprint',
+      description:
+        'Mark a sprint as closed (sets endedAt to now). If id is omitted, closes the currently active sprint.',
+      inputSchema: z.object({
+        id: z.number().int().positive().optional(),
+      }),
+    },
+    async ({ id }) => {
+      try {
+        const store = getStore()
+        const targetId = id ?? store.state.activeSprint?.id
+        if (!targetId) return textResponse('Error: no active sprint to close and no sprint id provided.')
+        const sprint = store.setSprintStatus(targetId, 'closed')
+        return textResponse(sprint)
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  server.registerTool(
+    'sprint_report',
+    {
+      title: 'Get sprint report',
+      description:
+        'Generate a full Markdown summary report of a sprint (goal, status, dates, progress, task breakdown and retro section). If id is omitted, reports the active sprint.',
+      inputSchema: z.object({
+        id: z.number().int().positive().optional(),
+      }),
+    },
+    async ({ id }) => {
+      const store = getStore()
+      const state = store.state
+      const targetId = id ?? state.activeSprint?.id
+      if (!targetId) return textResponse('Error: no active sprint and no sprint id provided.')
+      const sprint = state.sprints.find((s) => s.id === targetId)
+      if (!sprint) return textResponse(`Sprint not found: ${targetId}`)
+      const report = buildSprintReport(sprint, state.tasks, state.config.workflow.statuses)
+      return textResponse(report)
+    },
+  )
+
+  // ── resources ─────────────────────────────────────────────────────────
+
+  server.registerResource(
+    'tasks',
+    'agentboard://tasks',
+    {
+      title: 'AgentSprint Tasks',
+      description: 'List of all tasks in the board',
+      mimeType: 'application/json',
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          text: JSON.stringify(getStore().state.tasks, null, 2),
+        },
+      ],
+    }),
+  )
+
+  server.registerResource(
+    'sprint_current',
+    'agentboard://sprint/current',
+    {
+      title: 'Active Sprint',
+      description: 'Currently active sprint, its tasks and stats',
+      mimeType: 'application/json',
+    },
+    async (uri) => {
+      const store = getStore()
+      const state = store.state
+      const active = state.activeSprint
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(
+              {
+                sprint: active,
+                stats: active ? computeSprintStats(state.tasks, active.id) : null,
+                tasks: active ? state.tasks.filter((t) => t.sprint === active.id) : [],
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }
+    },
+  )
+
+  server.registerResource(
+    'brand',
+    'agentboard://brand',
+    {
+      title: 'Brand Kit',
+      description: 'Brand identity, colors, typography and guidelines',
+      mimeType: 'application/json',
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          text: JSON.stringify(getStore().getBrand(), null, 2),
+        },
+      ],
+    }),
+  )
+
+  // ── prompts ───────────────────────────────────────────────────────────
+
+  server.registerPrompt(
+    'execute-task',
+    {
+      title: 'Execute Task',
+      description: 'Get full instructions and spec to execute an AgentSprint task',
+      argsSchema: { id: z.string() },
+    },
+    ({ id }) => {
+      const store = getStore()
+      const state = store.state
+      const task = state.tasks.find((t) => t.id === id)
+      const sprint = task?.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
+      const spec = task ? buildTaskSpec(task, sprint, getProjectName(), { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings() }) : `Task ${id} not found.`
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: `Please implement this task according to the specification below:\n\n${spec}`,
+            },
+          },
+        ],
+      }
+    },
+  )
+
+  server.registerPrompt(
+    'sprint-planning',
+    {
+      title: 'Sprint Planning',
+      description: 'Analyze backlog and plan tasks for the next sprint',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: 'Let us plan the next sprint. Review the backlog tasks and board summary, propose a concise goal, and select tasks to include.',
+          },
+        },
+      ],
+    }),
+  )
+
+  server.registerPrompt(
+    'sprint-retro',
+    {
+      title: 'Sprint Retrospective',
+      description: 'Review completed sprint metrics, blockers, and learnings',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: 'Let us perform a sprint retrospective. Review the sprint report, analyze completed vs open tasks, note what went well, and document learnings.',
+          },
+        },
+      ],
+    }),
   )
 
   return server

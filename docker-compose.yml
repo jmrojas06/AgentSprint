@@ -1,0 +1,14 @@
+name: agentsprint
+services:
+  agentsprint:
+    build: .
+    image: agentsprint:latest
+    container_name: agentsprint
+    restart: unless-stopped
+    ports:
+      - "4310:4310"
+    volumes:
+      # Mount any project(s) you want to manage. Point /board at a folder
+      # containing one or more repos with a `.agentboard/` directory.
+      - ./projects:/board
+    command: serve /board --host 0.0.0.0 --no-open --mcp

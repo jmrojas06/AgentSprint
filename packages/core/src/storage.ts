@@ -110,6 +110,9 @@ export class ProjectStore extends EventEmitter {
   private brandPath(): string {
     return path.join(this.boardDir, 'brand.md')
   }
+  private learningsPath(): string {
+    return path.join(this.boardDir, 'learnings.md')
+  }
   private tasksDir(): string {
     return path.join(this.boardDir, 'tasks')
   }
@@ -170,8 +173,8 @@ export class ProjectStore extends EventEmitter {
   private _parseTaskFile(file: string): TaskType | null {
     try {
       const { data, body } = parseFrontmatter(fs.readFileSync(file, 'utf8'), Task)
-      const { description, acceptanceCriteria } = parseTaskBody(body)
-      return { ...data, description, acceptanceCriteria }
+      const { description, acceptanceCriteria, notes } = parseTaskBody(body)
+      return { ...data, description, acceptanceCriteria, notes }
     } catch {
       return null
     }
@@ -238,6 +241,31 @@ export class ProjectStore extends EventEmitter {
     return this.brand
   }
 
+  /** Read learnings/retrospectives from `.agentboard/learnings.md` (empty string if missing). */
+  getLearnings(): string {
+    try {
+      if (!fs.existsSync(this.learningsPath())) return ''
+      return fs.readFileSync(this.learningsPath(), 'utf8').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  /** Overwrite the entire learnings file. */
+  setLearnings(content: string): string {
+    this._atomicWrite(this.learningsPath(), content)
+    this.emit('change')
+    return content
+  }
+
+  /** Append a new learning entry (e.g. a retro bullet or rule learned). */
+  appendLearning(entry: string): string {
+    const existing = this.getLearnings()
+    const trimmed = entry.trim()
+    const next = existing ? `${existing}\n- ${trimmed}` : `- ${trimmed}`
+    return this.setLearnings(next)
+  }
+
   updateConfig(patch: Partial<ProjectConfigType>): ProjectConfigType {
     const next = ProjectConfig.parse({ ...this.config, ...patch })
     this.config = next
@@ -263,6 +291,82 @@ export class ProjectStore extends EventEmitter {
 
   // ── task mutations ───────────────────────────────────────────────────
 
+// Original simple createTask/updateTask removed – replaced with cycle‑aware versions below
+
+  setTaskStatus(id: string, status: TaskStatus): TaskType {
+    return this.updateTask(id, { status })
+  }
+
+  appendTaskNote(id: string, note: string, author?: string): TaskType {
+    const task = this.tasks.get(id)
+    if (!task) throw new Error(`Task not found: ${id}`)
+    const timestamp = nowIso()
+    const prefix = author ? `[${timestamp}] (${author})` : `[${timestamp}]`
+    const entry = `- ${prefix} ${note.trim()}`
+    const updatedNotes = task.notes && task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
+    return this.updateTask(id, { notes: updatedNotes })
+  }
+
+  /**
+   * Determine if a task is blocked by any incomplete dependencies.
+   * A task is blocked when at least one of its `dependencies` is not in `Done` status.
+   */
+  isTaskBlocked(id: string): boolean {
+    const task = this.tasks.get(id)
+    if (!task) throw new Error(`Task not found: ${id}`)
+    return task.dependencies.some((depId) => {
+      const dep = this.tasks.get(depId)
+      return !dep || dep.status !== 'Done'
+    })
+  }
+
+  /**
+   * Return the list of dependency IDs that are currently blocking the task.
+   */
+  getBlockers(id: string): string[] {
+    const task = this.tasks.get(id)
+    if (!task) throw new Error(`Task not found: ${id}`)
+    return task.dependencies.filter((depId) => {
+      const dep = this.tasks.get(depId)
+      return !dep || dep.status !== 'Done'
+    })
+  }
+
+  /**
+   * Detect cycles in the task dependency graph.
+   * Returns an array of cycles, each cycle is an array of task IDs.
+   * If any cycle exists, callers should throw an error.
+   */
+  detectCycles(): string[][] {
+    const visited = new Set<string>()
+    const stack = new Set<string>()
+    const cycles: string[][] = []
+
+    const dfs = (id: string, path: string[]) => {
+      if (stack.has(id)) {
+        const cycleStart = path.indexOf(id)
+        cycles.push(path.slice(cycleStart))
+        return
+      }
+      if (visited.has(id)) return
+      visited.add(id)
+      stack.add(id)
+      const task = this.tasks.get(id)
+      if (task) {
+        for (const dep of task.dependencies) {
+          dfs(dep, [...path, dep])
+        }
+      }
+      stack.delete(id)
+    }
+
+    for (const id of this.tasks.keys()) {
+      if (!visited.has(id)) dfs(id, [id])
+    }
+    return cycles
+  }
+
+  // Extend createTask to validate cycles after insertion
   createTask(input: TaskInput): TaskType {
     const sprint = input.sprint == null ? null : this._requireSprint(input.sprint)
     const id = input.id ?? this._nextTaskId()
@@ -279,11 +383,19 @@ export class ProjectStore extends EventEmitter {
     this._assertStatus(task.status)
     this.tasks.set(id, task)
     this._bumpTaskMax(id)
+    // Check for cycles before persisting
+    const cycles = this.detectCycles()
+    if (cycles.length > 0) {
+      // revert addition
+      this.tasks.delete(id)
+      throw new Error(`Dependency cycle detected: ${cycles.map((c) => c.join(' -> ')).join('; ')}`)
+    }
     this._writeTask(task)
     this.emit('change')
     return task
   }
 
+  // Extend updateTask to validate cycles after mutation
   updateTask(id: string, patch: Partial<Omit<TaskInput, 'id'>>): TaskType {
     const current = this.tasks.get(id)
     if (!current) throw new Error(`Task not found: ${id}`)
@@ -297,25 +409,55 @@ export class ProjectStore extends EventEmitter {
     if (next.sprint != null) this._requireSprint(next.sprint)
     this._assertStatus(next.status)
     this.tasks.set(id, next)
+    // Check for cycles after update
+    const cycles = this.detectCycles()
+    if (cycles.length > 0) {
+      // revert to previous state
+      this.tasks.set(id, current)
+      throw new Error(`Dependency cycle detected: ${cycles.map((c) => c.join(' -> ')).join('; ')}`)
+    }
     this._writeTask(next)
     this.emit('change')
     return next
   }
-
-  setTaskStatus(id: string, status: TaskStatus): TaskType {
-    return this.updateTask(id, { status })
-  }
-
-  deleteTask(id: string): void {
-    if (!this.tasks.has(id)) throw new Error(`Task not found: ${id}`)
-    this.tasks.delete(id)
-    try {
-      fs.rmSync(this.taskPath(id))
-    } catch {
-      /* already gone */
+/**
+ * Update task checklist items.
+ * Accepts either an index (0‑based) or a text substring to locate the criterion.
+ * If `completed` is true, the item is marked with `[x] `; unchecked items are stored
+ * as bare text (no prefix), matching the `parseTaskBody` / `buildTaskBody` format.
+ */
+  setTaskChecklist(id: string, { index, text, completed }: { index?: number; text?: string; completed?: boolean }): TaskType {
+    const task = this.tasks.get(id)
+    if (!task) throw new Error(`Task not found: ${id}`)
+    const criteria = [...task.acceptanceCriteria]
+    let targetIdx = -1
+    if (typeof index === 'number') {
+      targetIdx = index
+    } else if (text) {
+      targetIdx = criteria.findIndex((c) => c.includes(text))
     }
-    this.emit('change')
+    if (targetIdx < 0 || targetIdx >= criteria.length) {
+      throw new Error(`Acceptance criterion not found for task ${id}`)
+    }
+    const raw = criteria[targetIdx]!.replace(/^\s*-?\s*\[[ xX]?\]\s*/, '').trim()
+    const mark = completed ? '[x] ' : ''
+    criteria[targetIdx] = `${mark}${raw}`
+    return this.updateTask(id, { acceptanceCriteria: criteria })
   }
+
+/**
+ * Delete a task permanently.
+ */
+deleteTask(id: string): void {
+  if (!this.tasks.has(id)) throw new Error(`Task not found: ${id}`)
+  this.tasks.delete(id)
+  try {
+    fs.rmSync(this.taskPath(id))
+  } catch {
+    /* already gone */
+  }
+  this.emit('change')
+}
 
   // ── sprint mutations ─────────────────────────────────────────────────
 
@@ -370,7 +512,8 @@ export class ProjectStore extends EventEmitter {
     const data: Record<string, unknown> = { ...task }
     delete data.description
     delete data.acceptanceCriteria
-    const body = buildTaskBody(task.description, task.acceptanceCriteria)
+    delete data.notes
+    const body = buildTaskBody(task.description, task.acceptanceCriteria, task.notes)
     this._atomicWrite(this.taskPath(task.id), serializeFrontmatter(data, body))
   }
 

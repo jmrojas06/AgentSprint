@@ -19,20 +19,21 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
   return JSON.parse(result.content[0]?.text ?? 'null')
 }
 
-beforeEach(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-mcp-'))
-  store = ProjectStore.init(dir, { sample: true })
 
-  const server = createMcpServer(dir, { store })
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-  client = new Client({ name: 'test', version: '1.0.0' })
-  await server.connect(serverTransport)
-  await client.connect(clientTransport)
-})
 
 afterEach(async () => {
-  await client.close()
+  if (client) await client.close()
   fs.rmSync(dir, { recursive: true, force: true })
+})
+beforeEach(async () => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-'))
+  await fs.promises.mkdir(path.join(dir, '.agentboard'), { recursive: true })
+  store = await ProjectStore.init(dir, { sample: true })
+  const server = await createMcpServer(dir, { store })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  client = new Client({ name: 'test-client', version: '0.0.0' })
+  await client.connect(clientTransport)
 })
 
 describe('MCP tools', () => {
@@ -65,16 +66,28 @@ describe('MCP tools', () => {
     expect(task.assignee).toBe('agent')
   })
 
+  it('task_claim blocks tasks with incomplete dependencies unless force is true', async () => {
+    const blocked = (await callTool('task_claim', { id: 'TK-2' })) as { error?: string; blockers?: string[] }
+    expect(blocked.error).toContain('blocked')
+    expect(blocked.blockers).toContain('TK-1')
+
+    const forced = (await callTool('task_claim', { id: 'TK-2', force: true })) as { status: string }
+    expect(forced.status).toBe('In Progress')
+  })
+
   it('task_status rejects unknown status', async () => {
     await expect(callTool('task_status', { id: 'TK-1', status: 'Nope' })).rejects.toThrow()
   })
 
-  it('task_spec produces a spec prompt', async () => {
-    const result = (await client.callTool({ name: 'task_spec', arguments: { id: 'TK-1' } })) as ToolResult
+  it('task_spec produces a spec prompt with dependency statuses', async () => {
+    const result = (await client.callTool({ name: 'task_spec', arguments: { id: 'TK-2' } })) as ToolResult
     const spec = result.content[0]?.text ?? ''
-    expect(spec).toContain('# TK-1')
+    expect(spec).toContain('# TK-2')
     expect(spec).toContain('## Acceptance criteria')
     expect(spec).toContain('## Rules for the agent')
+    expect(spec).toContain('Depends on')
+    expect(spec).toContain('TK-1')
+    expect(spec).toContain('To Do')
   })
 
   it('sprint_current reports no active sprint', async () => {
@@ -107,6 +120,27 @@ describe('MCP tools', () => {
     expect(spec).toContain('Acme Labs')
   })
 
+  it('learnings_get returns empty when no learnings saved', async () => {
+    const res = (await callTool('learnings_get', {})) as { message?: string }
+    expect(res.message).toContain('No learnings recorded')
+  })
+
+  it('learnings_append and learnings_get round-trip', async () => {
+    const app = (await callTool('learnings_append', { entry: 'Write tests first' })) as { ok: boolean }
+    expect(app.ok).toBe(true)
+
+    const fetched = (await callTool('learnings_get', {})) as { ok: boolean; content: string }
+    expect(fetched.content).toBe('- Write tests first')
+  })
+
+  it('task_spec injects learnings when present', async () => {
+    store.setLearnings('Avoid circular dependencies.')
+    const result = (await client.callTool({ name: 'task_spec', arguments: { id: 'TK-1' } })) as ToolResult
+    const spec = result.content[0]?.text ?? ''
+    expect(spec).toContain('## Learned principles')
+    expect(spec).toContain('Avoid circular dependencies.')
+  })
+
   it('board_summary surfaces parse warnings', async () => {
     const bad = path.join(dir, '.agentboard', 'tasks', 'AS-99.md')
     fs.writeFileSync(bad, '---\ntitle: Bad: YAML\nstatus: To Do\n---\n\nboom\n', 'utf8')
@@ -116,5 +150,85 @@ describe('MCP tools', () => {
     expect(summary.warnings?.length).toBeGreaterThan(0)
 
     fs.rmSync(bad)
+  })
+
+  it('sprint_create creates a new sprint', async () => {
+    const sprint = (await callTool('sprint_create', { goal: 'Ship new MCP tools' })) as { id: number; goal: string; status: string }
+    expect(sprint.id).toBe(2)
+    expect(sprint.goal).toBe('Ship new MCP tools')
+    expect(sprint.status).toBe('planned')
+  })
+
+  it('sprint_close closes the active sprint and sets endedAt', async () => {
+    await callTool('sprint_activate', { id: 1 })
+    const closed = (await callTool('sprint_close', {})) as { id: number; status: string; endedAt: string }
+    expect(closed.id).toBe(1)
+    expect(closed.status).toBe('closed')
+    expect(closed.endedAt).toBeTruthy()
+  })
+
+  it('sprint_report generates markdown summary of the sprint', async () => {
+    const result = (await client.callTool({ name: 'sprint_report', arguments: { id: 1 } })) as ToolResult
+    const report = result.content[0]?.text ?? ''
+    expect(report).toContain('# Sprint 1')
+    expect(report).toContain('## Tasks')
+    expect(report).toContain('## Retro')
+  })
+
+  it('task_delete permanently removes a task', async () => {
+    const res = (await callTool('task_delete', { id: 'TK-1' })) as { ok: boolean; deleted: string }
+    expect(res.ok).toBe(true)
+    expect(res.deleted).toBe('TK-1')
+    const getRes = (await client.callTool({ name: 'task_get', arguments: { id: 'TK-1' } })) as ToolResult
+    expect(getRes.content[0]?.text).toContain('Task not found: TK-1')
+  })
+
+  it('task_checklist updates acceptance criterion status', async () => {
+    const updated = (await callTool('task_checklist', { id: 'TK-1', index: 0, completed: true })) as { acceptanceCriteria: string[] }
+    expect(updated.acceptanceCriteria[0]).toContain('[x]')
+
+    const toggled = (await callTool('task_checklist', { id: 'TK-1', index: 0 })) as { acceptanceCriteria: string[] }
+    expect(toggled.acceptanceCriteria[0]).not.toContain('[x]')
+  })
+
+  it('task_note appends a note to the task body', async () => {
+    const updated = (await callTool('task_note', { id: 'TK-1', note: 'Checked edge case', author: 'agent' })) as { notes: string }
+    expect(updated.notes).toContain('Checked edge case')
+    expect(updated.notes).toContain('(agent)')
+  })
+
+  it('brand_update updates brand kit fields', async () => {
+    const updated = (await callTool('brand_update', {
+      name: 'AgentSprint Corp',
+      colors: { primary: '#4f46e5' },
+      guidelines: 'Clean code and comprehensive tests.',
+    })) as { name: string; colors: { primary: string }; guidelines: string }
+
+    expect(updated.name).toBe('AgentSprint Corp')
+    expect(updated.colors.primary).toBe('#4f46e5')
+    expect(updated.guidelines).toContain('Clean code')
+  })
+
+  it('lists and reads MCP resources', async () => {
+    const resList = await client.listResources()
+    expect(resList.resources.map((r) => r.uri)).toContain('agentboard://tasks')
+    expect(resList.resources.map((r) => r.uri)).toContain('agentboard://sprint/current')
+    expect(resList.resources.map((r) => r.uri)).toContain('agentboard://brand')
+
+    const taskRes = await client.readResource({ uri: 'agentboard://tasks' })
+    const first = taskRes.contents[0]
+    expect(first && 'text' in first ? first.text : '').toContain('TK-1')
+  })
+
+  it('lists and gets MCP prompts', async () => {
+    const promptList = await client.listPrompts()
+    const names = promptList.prompts.map((p) => p.name)
+    expect(names).toContain('execute-task')
+    expect(names).toContain('sprint-planning')
+    expect(names).toContain('sprint-retro')
+
+    const promptRes = await client.getPrompt({ name: 'execute-task', arguments: { id: 'TK-1' } })
+    expect(promptRes.messages[0]?.content.type).toBe('text')
+    expect((promptRes.messages[0]?.content as { text: string }).text).toContain('TK-1')
   })
 })

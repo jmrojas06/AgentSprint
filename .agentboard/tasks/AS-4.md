@@ -1,7 +1,7 @@
 ---
 id: AS-4
-title: Mejoras de uso — burndown, drag & drop, banner de warnings, reporte
-status: Review
+title: 'Mejoras de uso — burndown, drag & drop, banner de warnings, reporte'
+status: Done
 sprint: 1
 priority: medium
 assignee: agent
@@ -11,7 +11,7 @@ tags:
   - web
 dependencies: []
 createdAt: '2026-08-18T16:00:00.000Z'
-updatedAt: '2026-08-18T17:00:00.000Z'
+updatedAt: '2026-08-21T14:50:59.945Z'
 ---
 ## Description
 

@@ -1,19 +1,23 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Dot } from 'lucide-react'
 import type { Task } from '../types'
-import { cx, priorityDot, priorityLabel, statusAccent } from '../ui'
+import { cx, criterionChecked, getBlockerTasks, priorityDot, priorityLabel, statusAccent } from '../ui'
 
 interface Props {
   task: Task
+  allTasks: Task[]
   statuses: string[]
   onOpen: (task: Task) => void
   onMove: (task: Task, next: string) => void
 }
 
-export function TaskCard({ task, statuses, onOpen, onMove }: Props) {
+export function TaskCard({ task, allTasks, statuses, onOpen, onMove }: Props) {
   const idx = statuses.indexOf(task.status)
   const prev = idx > 0 ? statuses[idx - 1] : null
   const next = idx >= 0 && idx < statuses.length - 1 ? statuses[idx + 1] : null
-  const done = task.acceptanceCriteria.length
+  const total = task.acceptanceCriteria.length
+  const completed = task.acceptanceCriteria.filter((c) => criterionChecked(c)).length
+  const blockers = task.dependencies.length > 0 ? getBlockerTasks(task, allTasks) : []
+  const isBlocked = task.dependencies.length > 0 && blockers.length > 0
 
   return (
     <button
@@ -50,9 +54,21 @@ export function TaskCard({ task, statuses, onOpen, onMove }: Props) {
       )}
 
       <div className="mt-3 flex items-center gap-2">
-        {done > 0 && (
+        {total > 0 && (
           <span className="text-[11px] text-zinc-500">
-            {done} {done === 1 ? 'criterion' : 'criteria'}
+            {completed}/{total} AC
+          </span>
+        )}
+        {task.dependencies.length > 0 && (
+          <span
+            className={cx(
+              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+              isBlocked ? 'bg-red-500/15 text-red-300' : 'bg-emerald-500/15 text-emerald-300',
+            )}
+            title={isBlocked ? `Blocked by ${blockers.map((b) => b.id).join(', ')}` : 'All dependencies complete'}
+          >
+            <Dot className="h-3 w-3" />
+            {isBlocked ? `Blocked by ${blockers.length}` : 'Ready'}
           </span>
         )}
         <span className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
