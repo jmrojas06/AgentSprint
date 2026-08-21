@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@agentsprint/core'
-import { cmdBrand, cmdLint, parseArgs } from './index.js'
+import { cmdBrand, cmdClose, cmdLint, parseArgs } from './index.js'
 import { startServer } from '@agentsprint/server'
 
 let dir: string
@@ -116,6 +116,41 @@ describe('cmdLint', () => {
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('NO_BOARD'))
     spy.mockRestore()
     fs.rmSync(empty, { recursive: true, force: true })
+  })
+})
+
+describe('cmdClose', () => {
+  it('closes a sprint and appends the retro to learnings.md', async () => {
+    ProjectStore.init(dir, { sample: true })
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await cmdClose(dir, 1, { retro: true })
+    spy.mockRestore()
+    const learningsPath = path.join(dir, '.agentboard', 'learnings.md')
+    expect(fs.existsSync(learningsPath)).toBe(true)
+    expect(fs.readFileSync(learningsPath, 'utf8')).toContain('## Sprint 1 retro —')
+    const reopened = ProjectStore.open(dir)
+    expect(reopened.state.sprints.find((s) => s.id === 1)?.status).toBe('closed')
+  })
+
+  it('skips the retro with --no-retro', async () => {
+    ProjectStore.init(dir, { sample: true })
+    const args = parseArgs(['close', dir, '--no-retro'])
+    expect(args?.retro).toBe(false)
+    expect(args?.command).toBe('close')
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await cmdClose(dir, 1, { retro: false })
+    spy.mockRestore()
+    expect(fs.existsSync(path.join(dir, '.agentboard', 'learnings.md'))).toBe(false)
+  })
+
+  it('parses bare sprint ids and flags', () => {
+    const a = parseArgs(['close', '2'])
+    expect(a?.command).toBe('close')
+    expect(a?.sprintId).toBe(2)
+    expect(a?.retro).toBe(true)
+    const b = parseArgs(['close', '/tmp/foo', '3'])
+    expect(b?.dir).toBe('/tmp/foo')
+    expect(b?.sprintId).toBe(3)
   })
 })
 

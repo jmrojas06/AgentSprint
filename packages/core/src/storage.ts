@@ -4,6 +4,7 @@ import path from 'node:path'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
 import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand } from './types.js'
 import type { Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskStatus } from './types.js'
+import { buildSprintReport } from './spec.js'
 
 const AGENTS_MD = `# AgentSprint instructions
 
@@ -266,6 +267,32 @@ export class ProjectStore extends EventEmitter {
     return this.setLearnings(next)
   }
 
+  /**
+   * Append a multi-line section (e.g. an automatic sprint retro) to the
+   * learnings file, preceded by a `## header` line.
+   */
+  appendLearningsSection(header: string, body: string): string {
+    const existing = this.getLearnings()
+    const section = `## ${header.trim()}\n\n${body.trim()}`
+    const next = existing ? `${existing}\n\n${section}` : section
+    return this.setLearnings(next)
+  }
+
+  /**
+   * Build the automatic retro summary for a sprint: report plus blockers found.
+   * Used when a sprint is closed (see `setSprintStatus`).
+   */
+  buildSprintRetro(id: number): string {
+    const sprint = this._requireSprint(id)
+    const report = buildSprintReport(sprint, this.state.tasks, this.config.workflow.statuses)
+    const blocked = this.state.tasks.filter((t) => t.sprint === id && t.status !== 'Done' && t.dependencies.some((d) => {
+      const dep = this.tasks.get(d)
+      return !dep || dep.status !== 'Done'
+    }))
+    if (blocked.length === 0) return report
+    return `${report}\n\n## Blockers found\n${blocked.map((t) => `- ${t.id} (${t.status}) blocked by ${this.getBlockers(t.id).join(', ')}`).join('\n')}\n`
+  }
+
   updateConfig(patch: Partial<ProjectConfigType>): ProjectConfigType {
     const next = ProjectConfig.parse({ ...this.config, ...patch })
     this.config = next
@@ -486,7 +513,11 @@ deleteTask(id: string): void {
     return updated
   }
 
-  setSprintStatus(id: number, status: SprintStatus): SprintType {
+  /**
+   * Change sprint status. When closing a sprint (and `opts.retro !== false`),
+   * an automatic retrospective is appended to `.agentboard/learnings.md`.
+   */
+  setSprintStatus(id: number, status: SprintStatus, opts: { retro?: boolean } = {}): SprintType {
     const sprint = this._requireSprint(id)
     const updated: SprintType = { ...sprint, status }
     if (status === 'active') {
@@ -502,6 +533,13 @@ deleteTask(id: string): void {
     }
     this.sprints.set(id, updated)
     this._writeSprint(updated)
+    const closing = sprint.status !== 'closed' && status === 'closed'
+    if (closing && opts.retro !== false) {
+      this.appendLearningsSection(
+        `Sprint ${id} retro — ${nowIso().slice(0, 10)}`,
+        this.buildSprintRetro(id),
+      )
+    }
     this.emit('change')
     return updated
   }

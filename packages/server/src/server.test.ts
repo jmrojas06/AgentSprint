@@ -406,7 +406,7 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(24)
+      expect(tools.length).toBe(25)
       const names = tools.map((t) => t.name)
       expect(names).toContain('project_list')
       expect(names).toContain('project_current')

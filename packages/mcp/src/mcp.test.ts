@@ -231,4 +231,26 @@ describe('MCP tools', () => {
     expect(promptRes.messages[0]?.content.type).toBe('text')
     expect((promptRes.messages[0]?.content as { text: string }).text).toContain('TK-1')
   })
+
+  it('appends the automatic retro to learnings.md when closing a sprint', async () => {
+    await callTool('sprint_close', { id: 1 })
+    const learningsPath = path.join(dir, '.agentboard', 'learnings.md')
+    expect(fs.existsSync(learningsPath)).toBe(true)
+    expect(fs.readFileSync(learningsPath, 'utf8')).toContain('## Sprint 1 retro —')
+  })
+
+  it('skips the retro on sprint_close with retro=false', async () => {
+    await callTool('sprint_close', { id: 1, retro: false })
+    expect(fs.existsSync(path.join(dir, '.agentboard', 'learnings.md'))).toBe(false)
+  })
+
+  it('returns a retro report and suggested learnings via sprint_retro', async () => {
+    const retro = (await callTool('sprint_retro', { id: 1 })) as {
+      report: string
+      suggestedLearnings: string[]
+    }
+    expect(retro.report).toContain('# Sprint 1')
+    expect(Array.isArray(retro.suggestedLearnings)).toBe(true)
+    expect(retro.suggestedLearnings.length).toBeGreaterThan(0)
+  })
 })

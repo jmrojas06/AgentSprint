@@ -530,7 +530,31 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Close sprint',
       description:
-        'Mark a sprint as closed (sets endedAt to now). If id is omitted, closes the currently active sprint.',
+        'Mark a sprint as closed (sets endedAt to now). If id is omitted, closes the currently active sprint. By default an automatic retrospective is appended to .agentboard/learnings.md; pass retro=false to skip it.',
+      inputSchema: z.object({
+        id: z.number().int().positive().optional(),
+        retro: z.boolean().optional(),
+      }),
+    },
+    async ({ id, retro }) => {
+      try {
+        const store = getStore()
+        const targetId = id ?? store.state.activeSprint?.id
+        if (!targetId) return textResponse('Error: no active sprint to close and no sprint id provided.')
+        const sprint = store.setSprintStatus(targetId, 'closed', { retro })
+        return textResponse(sprint)
+      } catch (err) {
+        return textResponse({ error: (err as Error).message })
+      }
+    },
+  )
+
+  server.registerTool(
+    'sprint_retro',
+    {
+      title: 'Get sprint retro',
+      description:
+        'Generate the retrospective for a sprint (report + blockers found) together with a list of suggested learnings worth persisting. If id is omitted, uses the active sprint.',
       inputSchema: z.object({
         id: z.number().int().positive().optional(),
       }),
@@ -538,10 +562,27 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id }) => {
       try {
         const store = getStore()
-        const targetId = id ?? store.state.activeSprint?.id
-        if (!targetId) return textResponse('Error: no active sprint to close and no sprint id provided.')
-        const sprint = store.setSprintStatus(targetId, 'closed')
-        return textResponse(sprint)
+        const state = store.state
+        const targetId = id ?? state.activeSprint?.id
+        if (!targetId) return textResponse('Error: no active sprint and no sprint id provided.')
+        const sprint = state.sprints.find((s) => s.id === targetId)
+        if (!sprint) return textResponse(`Sprint not found: ${targetId}`)
+        const report = store.buildSprintRetro(targetId)
+        const sprintTasks = state.tasks.filter((t) => t.sprint === targetId)
+        const done = sprintTasks.filter((t) => t.status === 'Done')
+        const pending = sprintTasks.filter((t) => t.status !== 'Done')
+        const suggestedLearnings: string[] = []
+        if (pending.length > 0) {
+          suggestedLearnings.push(`${pending.length} task(s) did not finish (${pending.map((t) => t.id).join(', ')}) — consider carrying them over with updated estimates.`)
+        }
+        for (const task of pending) {
+          const blockers = store.getBlockers(task.id)
+          if (blockers.length > 0) {
+            suggestedLearnings.push(`${task.id} stayed blocked by ${blockers.join(', ')} — review dependency ordering before planning the next sprint.`)
+          }
+        }
+        suggestedLearnings.push(`${done.length}/${sprintTasks.length} tasks completed — record what made the difference (scope, clarity of AC, agent vs human).`)
+        return textResponse({ report, suggestedLearnings })
       } catch (err) {
         return textResponse({ error: (err as Error).message })
       }

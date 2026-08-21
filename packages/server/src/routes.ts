@@ -182,10 +182,10 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
 
   app.patch('/api/sprints/:id', async (req, reply) => {
     const id = Number((req.params as { id: string }).id)
-    const body = (req.body ?? {}) as { goal?: string; status?: 'planned' | 'active' | 'closed' }
+    const body = (req.body ?? {}) as { goal?: string; status?: 'planned' | 'active' | 'closed'; retro?: boolean }
     const h = projects.get(projectName(req))
     try {
-      if (body.status) h.store.setSprintStatus(id, body.status)
+      if (body.status) h.store.setSprintStatus(id, body.status, { retro: body.retro })
       if (body.goal != null) h.store.updateSprint(id, { goal: body.goal })
       const sprint = h.store.state.sprints.find((s) => s.id === id)
       if (!sprint) return sendError(reply, 404, `Sprint not found: ${id}`)

@@ -21,6 +21,7 @@ Commands:
    spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
    brand [dir]       Print the company/brand kit for the project
    lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
+   close [dir] [id]  Close a sprint (auto-appends a retro to learnings.md)
    help              Show this help
 
 Options (serve):
@@ -30,6 +31,10 @@ Options (serve):
    --no-fallback     Do not auto-find a free port if the requested one is busy
    --init            Auto-create a board if missing
    --mcp             Also expose the MCP server at /mcp (streamable HTTP)
+
+Options (close):
+   --no-retro        Skip the automatic retro appended to learnings.md
+
    --version         Print the version
 `)
 }
@@ -38,16 +43,18 @@ interface Args {
   command: string
   dir: string
   taskId?: string
+  sprintId?: number
   port: number
   host: string
   open: boolean
   init: boolean
   mcp: boolean
   fallback: boolean
+  retro: boolean
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'help'])
   let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -61,6 +68,7 @@ export function parseArgs(argv: string[]): Args | null {
   let init = false
   let mcp = false
   let fallback = true
+  let retro = true
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -91,6 +99,9 @@ export function parseArgs(argv: string[]): Args | null {
       case '--mcp':
         mcp = true
         break
+      case '--no-retro':
+        retro = false
+        break
       default:
         if (arg.startsWith('-')) {
           console.error(`Unknown option: ${arg}`)
@@ -105,7 +116,7 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard spec <dir> <task-id>')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init, mcp, fallback }
+    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init, mcp, fallback, retro }
   }
 
   if (command === 'brand') {
@@ -113,11 +124,26 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard brand [dir]')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp, fallback }
+    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp, fallback, retro }
   }
 
-  const dir = positional[0] ? path.resolve(positional[0]) : process.cwd()
-  return { command, dir, port, host, open, init, mcp, fallback }
+  const rest = command === 'close' ? positional.slice() : []
+  let sprintId: number | undefined
+  if (command === 'close' && rest.length > 2) {
+    console.error('Usage: agentboard close [dir] [sprint-id]')
+    process.exit(1)
+  }
+  if (command === 'close') {
+    // Accept `agentboard close <sprint-id>` (bare number) as well as `close <dir> [id]`.
+    if (rest.length > 0 && /^\d+$/.test(rest[rest.length - 1]!)) {
+      sprintId = Number(rest.pop())
+    }
+    if (rest.length > 0) {
+      return { command, dir: path.resolve(rest[0]!), sprintId, port, host, open, init, mcp, fallback, retro }
+    }
+  }
+  const dir = positional.length > 0 && command !== 'close' ? path.resolve(positional[0]) : process.cwd()
+  return { command, dir, taskId: undefined, sprintId, port, host, open, init, mcp, fallback, retro }
 }
 
 function resolveWebDist(): string | null {
@@ -230,6 +256,23 @@ export async function cmdBrand(dir: string): Promise<void> {
   process.stdout.write(buildBrandSection(brand) + '\n')
 }
 
+export async function cmdClose(dir: string, sprintId: number | undefined, opts: { retro: boolean }): Promise<void> {
+  const store = ProjectStore.open(dir)
+  const targetId = sprintId ?? store.state.activeSprint?.id
+  if (!targetId) {
+    console.error('No active sprint and no sprint id provided.')
+    process.exit(1)
+  }
+  const sprint = store.setSprintStatus(targetId, 'closed', { retro: opts.retro })
+  console.log(`✔ Sprint ${sprint.id} closed (${sprint.endedAt})`)
+  if (opts.retro) {
+    console.log(`✔ Retro appended to ${path.join(dir, '.agentboard', 'learnings.md')}`)
+    console.log('\n' + store.buildSprintRetro(targetId))
+  } else {
+    console.log('Retro skipped (--no-retro).')
+  }
+}
+
 export async function cmdLint(dir: string): Promise<number> {
   const { issues, ok } = lintProject(dir)
   if (ok) {
@@ -261,6 +304,8 @@ async function main(): Promise<void> {
   } else if (args.command === 'lint') {
     const code = await cmdLint(args.dir)
     process.exit(code)
+  } else if (args.command === 'close') {
+    await cmdClose(args.dir, args.sprintId, { retro: args.retro })
   } else {
     await cmdServe(args)
   }

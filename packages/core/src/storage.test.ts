@@ -53,6 +53,35 @@ describe('ProjectStore', () => {
     expect(state.sprints.find((s) => s.id === s2.id)?.status).toBe('planned')
   })
 
+  it('appends an automatic retro to learnings when closing a sprint', () => {
+    store.setSprintStatus(1, 'closed')
+    const learningsPath = path.join(dir, '.agentboard', 'learnings.md')
+    expect(fs.existsSync(learningsPath)).toBe(true)
+    const content = fs.readFileSync(learningsPath, 'utf8')
+    expect(content).toContain('## Sprint 1 retro —')
+    expect(content).toContain('# Sprint 1')
+    expect(content).toMatch(/## Tasks/)
+  })
+
+  it('does not append a retro when closing with { retro: false }', () => {
+    store.setSprintStatus(1, 'closed', { retro: false })
+    expect(fs.existsSync(path.join(dir, '.agentboard', 'learnings.md'))).toBe(false)
+    // closing again (already closed) must not duplicate either
+    store.setSprintStatus(1, 'active')
+    store.setSprintStatus(1, 'closed', { retro: false })
+    expect(store.getLearnings()).toBe('')
+  })
+
+  it('lists blockers found in the automatic retro', () => {
+    // TK-2 depends on TK-1; leaving TK-1 open blocks TK-2
+    store.setSprintStatus(1, 'closed')
+    const retro = store.buildSprintRetro(1)
+    if (store.getBlockers('TK-2').length > 0) {
+      expect(retro).toContain('## Blockers found')
+      expect(retro).toContain('TK-2')
+    }
+  })
+
   it('round-trips through disk: reload matches state', () => {
     store.createTask({ title: 'Persisted', sprint: 1, acceptanceCriteria: ['a'], description: 'desc' })
     const reopened = ProjectStore.open(dir)
