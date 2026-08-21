@@ -29,10 +29,12 @@ export default function App() {
   const [creating, setCreating] = useState(false)
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
   const [warningsDismissed, setWarningsDismissed] = useState(false)
+  const [commitCounts, setCommitCounts] = useState<Record<string, number>>({})
 
   const reload = useCallback(async () => {
     try {
-      setProjectState(await api.project())
+      const [state] = await Promise.all([api.project(), api.gitCommitCounts().then(setCommitCounts).catch(() => {})])
+      setProjectState(state)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -311,6 +313,7 @@ export default function App() {
             statuses={statuses}
             tasks={tasks}
             allTasks={project.tasks}
+            commitCounts={commitCounts}
             sortBy={sortBy}
             sortDir={sortDir}
             onSortBy={setSortBy}

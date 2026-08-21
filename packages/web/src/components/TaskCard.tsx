@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Dot } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Dot, GitCommitHorizontal } from 'lucide-react'
 import type { Task } from '../types'
 import { cx, criterionChecked, getBlockerTasks, priorityDot, priorityLabel, statusAccent } from '../ui'
 
@@ -6,11 +6,12 @@ interface Props {
   task: Task
   allTasks: Task[]
   statuses: string[]
+  commitCount?: number
   onOpen: (task: Task) => void
   onMove: (task: Task, next: string) => void
 }
 
-export function TaskCard({ task, allTasks, statuses, onOpen, onMove }: Props) {
+export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove }: Props) {
   const idx = statuses.indexOf(task.status)
   const prev = idx > 0 ? statuses[idx - 1] : null
   const next = idx >= 0 && idx < statuses.length - 1 ? statuses[idx + 1] : null
@@ -69,6 +70,15 @@ export function TaskCard({ task, allTasks, statuses, onOpen, onMove }: Props) {
           >
             <Dot className="h-3 w-3" />
             {isBlocked ? `Blocked by ${blockers.length}` : 'Ready'}
+          </span>
+        )}
+        {commitCount != null && commitCount > 0 && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-300"
+            title={`${commitCount} linked commit${commitCount === 1 ? '' : 's'}`}
+          >
+            <GitCommitHorizontal className="h-3 w-3" />
+            {commitCount}
           </span>
         )}
         <span className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">

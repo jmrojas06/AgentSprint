@@ -1,6 +1,7 @@
 export type {
   Brand,
   BrandAsset,
+  GitCommit,
   ProjectConfig,
   ProjectState,
   Sprint,

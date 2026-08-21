@@ -2,6 +2,7 @@ import type {
   BoardState,
   Brand,
   Burndown,
+  GitCommit,
   ProjectConfig,
   ProjectState,
   ProjectInfo,
@@ -50,6 +51,11 @@ export const api = {
     request<Task>(`/api/tasks/${id}/checklist`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
   getTaskSpec: (id: string) => request<{ id: string; spec: string }>(`/api/tasks/${id}/spec`),
+  getTaskCommits: (id: string, pattern?: string) =>
+    request<{ id: string; gitAvailable: boolean; commits: GitCommit[]; branches: string[] }>(
+      `/api/tasks/${id}/commits${pattern ? `?pattern=${encodeURIComponent(pattern)}` : ''}`,
+    ),
+  gitCommitCounts: () => request<Record<string, number>>('/api/git/commit-counts'),
 
   createSprint: (goal: string) =>
     request<Sprint>('/api/sprints', { method: 'POST', body: JSON.stringify({ goal }) }),

@@ -8,6 +8,7 @@ interface Props {
   statuses: string[]
   tasks: Task[]
   allTasks: Task[]
+  commitCounts?: Record<string, number>
   sortBy: SortBy
   sortDir: SortDir
   onSortBy: (val: SortBy) => void
@@ -16,7 +17,7 @@ interface Props {
   onMove: (task: Task, next: string) => void
 }
 
-export function Board({ statuses, tasks, allTasks, sortBy, sortDir, onSortBy, onSortDir, onOpen, onMove }: Props) {
+export function Board({ statuses, tasks, allTasks, commitCounts, sortBy, sortDir, onSortBy, onSortDir, onOpen, onMove }: Props) {
   const [dragOver, setDragOver] = useState<string | null>(null)
 
   return (
@@ -93,7 +94,14 @@ export function Board({ statuses, tasks, allTasks, sortBy, sortDir, onSortBy, on
                   onDragEnd={() => setDragOver(null)}
                   className={cx('cursor-grab active:cursor-grabbing', task.status === 'Done' && 'opacity-70')}
                 >
-                  <TaskCard task={task} allTasks={allTasks} statuses={statuses} onOpen={onOpen} onMove={onMove} />
+                  <TaskCard
+                    task={task}
+                    allTasks={allTasks}
+                    statuses={statuses}
+                    commitCount={commitCounts?.[task.id]}
+                    onOpen={onOpen}
+                    onMove={onMove}
+                  />
                 </div>
               ))}
               {column.length === 0 && (

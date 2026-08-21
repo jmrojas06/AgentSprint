@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@agentsprint/core'
-import { buildSprintReport, buildTaskSpec, computeSprintStats } from '@agentsprint/core'
+import { buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, taskCommitCounts } from '@agentsprint/core'
 import type { ProjectHandle, ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
@@ -63,6 +63,15 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
     const spec = buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: h.store.getLearnings() })
     return reply.send({ id, spec })
+  })
+
+  app.get('/api/tasks/:id/commits', async (req, reply) => {
+    const id = (req.params as { id: string }).id
+    const h = projects.get(projectName(req))
+    if (!h.store.state.tasks.some((t) => t.id === id)) return sendError(reply, 404, `Task not found: ${id}`)
+    const pattern = (req.query as Record<string, string> | undefined)?.pattern
+    const refs = await findTaskRefs(h.store.rootDir, id, pattern ? { pattern } : {})
+    return reply.send({ id, ...refs })
   })
 
   app.put('/api/tasks/:id', async (req, reply) => {
@@ -153,6 +162,14 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
   app.get('/api/stats', async (req) => {
     const store = projects.get(projectName(req)).store
     return computeSprintStats(store.state.tasks, null)
+  })
+
+  // ── git links ────────────────────────────────────────────────────────
+
+  app.get('/api/git/commit-counts', async (req) => {
+    const h = projects.get(projectName(req))
+    const ids = h.store.state.tasks.map((t) => t.id)
+    return taskCommitCounts(h.store.rootDir, ids)
   })
 
   app.post('/api/sprints', async (req, reply) => {

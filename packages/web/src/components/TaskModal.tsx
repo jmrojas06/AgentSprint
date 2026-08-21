@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { CheckSquare, ClipboardCopy, Plus, Save, Square, Trash2, X } from 'lucide-react'
-import type { Sprint, Task, TaskPriority, TaskStatus } from '../types'
+import { useEffect, useState } from 'react'
+import { CheckSquare, ClipboardCopy, GitCommitHorizontal, GitBranch, Plus, Save, Square, Trash2, X } from 'lucide-react'
+import type { GitCommit, Sprint, Task, TaskPriority, TaskStatus } from '../types'
 import { TASK_PRIORITIES } from '../types'
 import { api } from '../api'
 import { cx, criterionChecked, criterionText, getBlockerTasks } from '../ui'
@@ -29,6 +29,32 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   const [criteria, setCriteria] = useState<string[]>(task.acceptanceCriteria)
   const [criteriaInput, setCriteriaInput] = useState('')
   const [copied, setCopied] = useState(false)
+  const [commits, setCommits] = useState<GitCommit[]>([])
+  const [branches, setBranches] = useState<string[]>([])
+  const [gitAvailable, setGitAvailable] = useState(true)
+  const [commitsLoading, setCommitsLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setCommitsLoading(true)
+    api
+      .getTaskCommits(task.id)
+      .then((refs) => {
+        if (cancelled) return
+        setCommits(refs.commits)
+        setBranches(refs.branches)
+        setGitAvailable(refs.gitAvailable)
+      })
+      .catch(() => {
+        if (!cancelled) setGitAvailable(false)
+      })
+      .finally(() => {
+        if (!cancelled) setCommitsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [task.id])
 
   const copySpec = async () => {
     try {
@@ -208,6 +234,35 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
                     </li>
                   )
                 })}
+              </ul>
+            </div>
+          )}
+
+          {(commits.length > 0 || branches.length > 0) && (
+            <div className="sm:col-span-2">
+              <label className={label}>Linked commits</label>
+              {branches.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1">
+                  {branches.map((b) => (
+                    <span key={b} className="inline-flex items-center gap-1 rounded bg-zinc-950/60 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+                      <GitBranch className="h-3 w-3" /> {b}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <ul className="space-y-1">
+                {commits.map((c) => (
+                  <li key={c.hash} className="flex items-center gap-2 rounded bg-zinc-950/60 px-2 py-1">
+                    <GitCommitHorizontal className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                    <span className="font-mono text-[10px] text-sky-300">{c.shortHash}</span>
+                    <span className="truncate text-xs text-zinc-300" title={c.message}>
+                      {c.message}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10px] text-zinc-500">
+                      {c.author} · {new Date(c.date).toLocaleDateString()}
+                    </span>
+                  </li>
+                ))}
               </ul>
             </div>
           )}

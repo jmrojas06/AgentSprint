@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ProjectStore } from '@agentsprint/core'
 import { buildApp } from './index.js'
@@ -132,6 +133,56 @@ describe('server API', () => {
   it('returns board-wide stats', async () => {
     const { json } = await api('get', '/api/stats')
     expect(json().total).toBe(3)
+  })
+
+  describe('git-linked commits', () => {
+    function git(...args: string[]): string {
+      return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+    }
+
+    beforeEach(() => {
+      git('init', '-b', 'main')
+      git('config', 'user.name', 'Test User')
+      git('config', 'user.email', 'test@example.com')
+      execFileSync('git', ['-C', dir, 'add', '-A'])
+      fs.writeFileSync(path.join(dir, '.txt'), 'x')
+      execFileSync('git', ['-C', dir, 'add', '-A'])
+      git('commit', '-m', 'feat: implement TK-1 sample task')
+    })
+
+    it('lists commits linked to a task id', async () => {
+      const { status, json } = await api('get', '/api/tasks/TK-1/commits')
+      expect(status).toBe(200)
+      expect(json().gitAvailable).toBe(true)
+      expect(json().commits).toHaveLength(1)
+      expect(json().commits[0]!.message).toContain('TK-1')
+      expect(json().commits[0]!.author).toBe('Test User')
+      expect(json().commits[0]!.shortHash).toBeTruthy()
+    })
+
+    it('404s for unknown tasks and reports no git when absent', async () => {
+      expect((await api('get', '/api/tasks/TK-99/commits')).status).toBe(404)
+      const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-server-nogit-'))
+      try {
+        ProjectStore.init(plain, { sample: true })
+        const built = await buildApp({ rootDir: plain })
+        try {
+          const res = await built.app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+          expect(res.statusCode).toBe(200)
+          expect(JSON.parse(res.body).gitAvailable).toBe(false)
+        } finally {
+          await built.close()
+        }
+      } finally {
+        fs.rmSync(plain, { recursive: true, force: true })
+      }
+    })
+
+    it('serves commit counts for the board', async () => {
+      const { status, json } = await api('get', '/api/git/commit-counts')
+      expect(status).toBe(200)
+      expect(json()['TK-1']).toBeGreaterThanOrEqual(1)
+    })
   })
 
   it('updates task checklist via PATCH /api/tasks/:id/checklist', async () => {
