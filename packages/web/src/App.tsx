@@ -9,7 +9,7 @@ import { SprintPanel } from './components/SprintPanel'
 import { TaskModal } from './components/TaskModal'
 import { NewTaskModal } from './components/NewTaskModal'
 import { BrandPanel } from './components/BrandPanel'
-import { cx, getBlockerTasks, type SortBy, type SortDir, sortTasks } from './ui'
+import { cx, computeVelocity, getBlockerTasks, type SortBy, type SortDir, sortTasks } from './ui'
 
 type SprintFilter = 'all' | number
 type SideTab = 'sprints' | 'brand'
@@ -96,6 +96,11 @@ export default function App() {
     }
     return map
   }, [project])
+
+  const velocity = useMemo(
+    () => (project ? computeVelocity(project.sprints, project.tasks) : null),
+    [project],
+  )
 
   if (error) {
     return (
@@ -349,6 +354,7 @@ export default function App() {
               activeSprintId={project.activeSprint?.id ?? null}
               tasksBySprint={tasksBySprint}
               doneBySprint={doneBySprint}
+              velocity={velocity}
               onActivate={async (id) => {
                 await api.updateSprint(id, { status: 'active' })
                 await reload()

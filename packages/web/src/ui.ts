@@ -1,4 +1,4 @@
-import type { Task, TaskPriority, TaskStatus } from './types'
+import type { Sprint, Task, TaskPriority, TaskStatus } from './types'
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ')
@@ -52,6 +52,22 @@ export function getBlockerTasks(task: Task, allTasks: Task[]): Task[] {
   return task.dependencies
     .map((depId) => allTasks.find((t) => t.id === depId))
     .filter((dep): dep is Task => dep !== undefined && dep.status !== 'Done')
+}
+
+/**
+ * Average points completed per sprint across the last `windowSize` (default 3)
+ * closed sprints. Returns null when there are no closed sprints.
+ */
+export function computeVelocity(sprints: Sprint[], tasks: Task[], windowSize = 3): number | null {
+  const closed = sprints
+    .filter((s) => s.status === 'closed')
+    .sort((a, b) => b.id - a.id)
+    .slice(0, windowSize)
+  if (closed.length === 0) return null
+  const points = closed.map(
+    (s) => tasks.filter((t) => t.sprint === s.id && t.status === 'Done').reduce((sum, t) => sum + t.estimate, 0),
+  )
+  return Math.round(points.reduce((a, b) => a + b, 0) / closed.length)
 }
 
 export type SortBy = 'priority' | 'estimate' | 'updatedAt'

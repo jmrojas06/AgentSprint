@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { CheckCircle2, Circle, FileDown, Play, Plus, Square } from 'lucide-react'
+import { CheckCircle2, Circle, FileDown, Gauge, Play, Plus, Square } from 'lucide-react'
 import type { Sprint } from '../types'
 import { api } from '../api'
-import { cx, fmtDate } from '../ui'
+import { computeVelocity, cx, fmtDate } from '../ui'
 import { BurndownChart } from './BurndownChart'
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
   activeSprintId: number | null
   tasksBySprint: Map<number, number>
   doneBySprint: Map<number, number>
+  velocity?: number | null
   onActivate: (id: number) => void
   onClose: (id: number) => void
   onCreate: (goal: string) => void
@@ -30,7 +31,7 @@ async function downloadReport(id: number): Promise<void> {
   }
 }
 
-export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySprint, onActivate, onClose, onCreate }: Props) {
+export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySprint, velocity, onActivate, onClose, onCreate }: Props) {
   const [goal, setGoal] = useState('')
 
   const submit = (e: React.FormEvent) => {
@@ -44,6 +45,14 @@ export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySpri
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
       <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-zinc-200">
         <Square className="h-3.5 w-3.5 text-zinc-400" /> Sprints
+        {velocity != null && (
+          <span
+            className="ml-auto flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300"
+            title="Average points completed over the last 3 closed sprints"
+          >
+            <Gauge className="h-3 w-3" /> velocity ~{velocity} pts/sprint
+          </span>
+        )}
       </h2>
 
       <form onSubmit={submit} className="mb-2 flex gap-1.5">
