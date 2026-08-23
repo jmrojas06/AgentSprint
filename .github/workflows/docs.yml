@@ -33,6 +33,9 @@ jobs:
           # Project pages live under /<repo>/ — keep in sync with the repo name
           DOCS_BASE: /AgentSprint/
       - uses: actions/configure-pages@v5
+        with:
+          # Auto-enable GitHub Pages for this repo on first deploy
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist

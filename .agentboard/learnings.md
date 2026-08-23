@@ -165,3 +165,47 @@ _none_
 ## Retro
 
 _Pendiente: qué fue bien, qué no, qué mejorar._
+- Sprint 7 (Notely) — TS limpio, backup/restore JSON, búsqueda con resaltado + relevancia, IA accionable (study/todos) y chat RAG-lite (/api/ask). CRÍTICO de deploy: el entrypoint ahora lee DATA_DIR (Dockerfile ENV DATA_DIR=/data) — antes la DB vivía en la capa del contenedor y NO en el volumen notely-stack_notely-data; se migró a mano (docker cp → cp al volumen) antes del primer recreate sin pérdida. Deploy automatizado en scripts/deploy.sh: build tag latest+timestamp, safety-backup tar.gz del volumen a /tmp/notely-backups, docker compose up -d --build notely, health check /api/health. Para desplegar: pnpm typecheck && pnpm test && ./scripts/deploy.sh
+
+## Sprint 7 retro — 2026-08-23
+
+# Sprint 7 — Sprint 7 — Deuda técnica (errores TS), backup/restore JSON, búsqueda con resaltado e IA accionable (todos desde notas + chat RAG-lite)
+
+- **Status**: closed
+- **Started**: 2026-08-23T18:21:04.530Z
+- **Ended**: 2026-08-23T18:50:36.307Z
+- **Progress**: 0/5 tasks done (0%)
+
+## Tasks
+
+### Backlog (0)
+
+_none_
+
+
+### To Do (0)
+
+_none_
+
+
+### In Progress (0)
+
+_none_
+
+
+### Review (5)
+
+- [high] **TK-37** — Limpiar errores TypeScript preexistentes del server (agent)
+- [high] **TK-38** — Backup/restore JSON completo de la app (agent)
+- [medium] **TK-39** — Búsqueda con resaltado de matches y orden por relevancia (agent)
+- [medium] **TK-40** — IA accionable: generar todos de la semana desde notas seleccionadas (agent)
+- [medium] **TK-41** — Chat RAG-lite: preguntar sobre tus notas (agent)
+
+### Done (0)
+
+_none_
+
+
+## Retro
+
+_Pendiente: qué fue bien, qué no, qué mejorar._
