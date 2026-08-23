@@ -17,9 +17,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Build first: cross-package types resolve to each package's dist/,
+      # which only exists after building (fresh checkout has no dist/).
+      - name: Build
+        run: pnpm build
       - name: Typecheck
         run: pnpm typecheck
       - name: Test
         run: pnpm test
-      - name: Build
-        run: pnpm build

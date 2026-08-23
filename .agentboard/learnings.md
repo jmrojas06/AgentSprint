@@ -118,3 +118,50 @@ _none_
 ## Retro
 
 _Pendiente: qué fue bien, qué no, qué mejorar._
+- Sprint 6 (Notely central de operaciones) — 8 tareas entregadas a Review: command palette Ctrl+K, dashboard/Home, autosave debounce 800ms con flush on unmount, drag&drop todos, carry-over semanal, tags, pinned notes y papelera soft-delete. Aprendizajes: (1) onSave debe recibir id explícito + key={note.id} en el editor para nunca escribir en la nota equivocada al hacer flush tras cambiar de nota; (2) toggles tipo pinned NO deben tocar updated_at o reshufflea la lista; (3) migraciones de schema siempre idempotentes (CREATE IF NOT EXISTS + PRAGMA table_info antes de ALTER); (4) purga perezosa al arrancar del server es suficiente para la papelera (30 días). 17/17 tests server. Errores TS preexistentes en HEAD pendientes: notebooks.ts:46, study.ts:17, RequestInfo en test antiguo.
+
+## Sprint 6 retro — 2026-08-23
+
+# Sprint 6 — Convertir Notely en central de operaciones: command palette + dashboard, autosave real, todos con drag&drop y carry-over, y organización con tags, pinned y papelera
+
+- **Status**: closed
+- **Started**: 2026-08-23T17:12:26.101Z
+- **Ended**: 2026-08-23T18:19:03.532Z
+- **Progress**: 0/8 tasks done (0%)
+
+## Tasks
+
+### Backlog (0)
+
+_none_
+
+
+### To Do (0)
+
+_none_
+
+
+### In Progress (0)
+
+_none_
+
+
+### Review (8)
+
+- [high] **TK-29** — Command palette global (Ctrl+K) para buscar notas y ejecutar acciones (agent)
+- [high] **TK-30** — Vista Dashboard/Home con resumen del día y de la semana (agent)
+- [high] **TK-31** — Autosave con debounce en NoteEditor (agent)
+- [medium] **TK-32** — Reorder de todos con drag & drop en WeekView (agent)
+- [medium] **TK-33** — Carry-over de todos pendientes entre semanas (agent)
+- [medium] **TK-34** — Tags en notas (multi-etiqueta además de cuaderno) (agent)
+- [low] **TK-35** — Pinned notes (fijar notas arriba del sidebar) (agent)
+- [medium] **TK-36** — Papelera: soft-delete de notas con restore (agent)
+
+### Done (0)
+
+_none_
+
+
+## Retro
+
+_Pendiente: qué fue bien, qué no, qué mejorar._
