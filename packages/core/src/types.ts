@@ -9,9 +9,19 @@ export const TASK_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 export const TaskPriority = z.enum(TASK_PRIORITIES)
 export type TaskPriority = z.infer<typeof TaskPriority>
 
+/** Team roles available for new assignment in the UI. */
 export const ASSIGNEES = ['scrum-master', 'dev', 'review', 'perfect'] as const
 export const Assignee = z.enum(ASSIGNEES)
 export type Assignee = z.infer<typeof Assignee>
+
+/**
+ * Legacy assignee values ('human' | 'agent') found in boards created before
+ * team roles existed. Kept valid so every existing task file still parses;
+ * the UI only offers the role values above.
+ */
+export const LEGACY_ASSIGNEES = ['human', 'agent'] as const
+const AssigneeAny = z.union([Assignee, z.enum(LEGACY_ASSIGNEES)])
+export type AssigneeAny = z.infer<typeof AssigneeAny>
 
 export const ACTIVITY_TYPES = ['created', 'status', 'assignee', 'checklist', 'note', 'update'] as const
 export const ActivityEventType = z.enum(ACTIVITY_TYPES)
@@ -36,7 +46,7 @@ export const Task = z.object({
   status: TaskStatus,
   sprint: z.number().int().positive().nullable(),
   priority: TaskPriority,
-  assignee: Assignee,
+  assignee: AssigneeAny,
   estimate: z.number().int().min(0).max(100).default(0),
   tags: z.array(z.string()).default([]),
   dependencies: z.array(taskId).default([]),
@@ -83,7 +93,7 @@ export interface TaskInput {
   status?: TaskStatus
   sprint?: number | null
   priority?: TaskPriority
-  assignee?: Assignee
+  assignee?: AssigneeAny
   estimate?: number
   tags?: string[]
   dependencies?: string[]

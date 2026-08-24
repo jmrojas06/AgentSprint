@@ -13,4 +13,3 @@ services:
       # project. Replace ./your-project with the path to your project.
       - ./your-project:/board
     command: serve /board --host 0.0.0.0 --no-open --mcp
-    command: serve /board --host 0.0.0.0 --no-open --mcp
