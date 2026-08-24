@@ -119,3 +119,7 @@ _none_
 
 _Pendiente: qué fue bien, qué mejorar._
 
+
+## Reglas de proceso
+
+- Un proyecto = un tablero: el board de AgentSprint (`.agentboard/`) solo contiene trabajo de AgentSprint (AS-* y TK-15..28). Las tareas/sprints de Notely (TK-29+) vivían aquí por error: el MCP `agentsprint` es global (correcto), pero el server tenía AgentSprint como proyecto ACTIVO y los agentes creaban tareas sin llamar antes a `project_use`. Migrado a `notely/.agentboard/` el 2026-08-24. Regla: al empezar cualquier sesión con tareas, SIEMPRE ejecutar `project_current`; si no coincide con el repo donde vive el código, `project_use <nombre>` antes de crear o editar nada.
