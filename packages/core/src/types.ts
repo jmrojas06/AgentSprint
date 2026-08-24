@@ -9,7 +9,7 @@ export const TASK_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 export const TaskPriority = z.enum(TASK_PRIORITIES)
 export type TaskPriority = z.infer<typeof TaskPriority>
 
-export const ASSIGNEES = ['human', 'agent'] as const
+export const ASSIGNEES = ['scrum-master', 'dev', 'review', 'perfect'] as const
 export const Assignee = z.enum(ASSIGNEES)
 export type Assignee = z.infer<typeof Assignee>
 

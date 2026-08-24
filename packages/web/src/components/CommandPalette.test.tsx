@@ -18,7 +18,7 @@ function makeTask(id: string, title: string): Task {
     status: 'To Do',
     sprint: null,
     priority: 'medium',
-    assignee: 'human',
+    assignee: 'scrum-master',
     estimate: 2,
     tags: [],
     dependencies: [],

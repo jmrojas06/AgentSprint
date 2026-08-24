@@ -209,3 +209,88 @@ _none_
 ## Retro
 
 _Pendiente: qué fue bien, qué no, qué mejorar._
+- Sprint 8 (Notely) — Workspaces completo (TK-42/43/44): aislamiento total por X-Workspace-Id/?workspaceId= con default 'Personal' id=1; delete de workspace MUEVE datos al default en vez de borrarlos. Aprendizajes clave: (1) SQLite NO permite ALTER TABLE ADD COLUMN con NOT NULL DEFAULT + REFERENCES — la FK va solo a nivel lógico; (2) los <a href> de descarga no mandan headers → pasar ?workspaceId= explícito; (3) git: el contenedor del board escribe .agentboard/metrics como root → mantenerlo en .gitignore y fuera del tracking; para mergear cuando un archivo root-owned bloquea el checkout, hacer el merge en un clon temporal (/tmp) y traer los refs con fetch + branch -f/reset --hard. Flujo git acordado: commits por tarea/sprint en develop, merge --no-ff a main solo cuando todo funciona y está desplegado. 20/20 tests, TS limpio web+server, deployado en :4311.
+
+## Sprint 8 retro — 2026-08-23
+
+# Sprint 8 — Sprint 8 — Workspaces: separar empresa/universidad/personal dentro de una sola instancia, con selector global y datos aislados por espacio
+
+- **Status**: closed
+- **Started**: 2026-08-23T19:04:36.066Z
+- **Ended**: 2026-08-23T20:04:53.246Z
+- **Progress**: 0/3 tasks done (0%)
+
+## Tasks
+
+### Backlog (0)
+
+_none_
+
+
+### To Do (0)
+
+_none_
+
+
+### In Progress (0)
+
+_none_
+
+
+### Review (3)
+
+- [high] **TK-42** — Modelo de datos + API multi-workspace (agent)
+- [high] **TK-43** — Selector de workspace en UI (header + palette) (agent)
+- [medium] **TK-44** — Workspaces en dashboard, semana, palette y backup (agent)
+
+### Done (0)
+
+_none_
+
+
+## Retro
+
+_Pendiente: qué fue bien, qué no, qué mejorar._
+- Sprint 9 (Notely) — adjuntos (POST /api/attachments image/* 10MB servidos en /attachments desde el volumen, paste/drop en editor), quick capture (/api/inbox: primera línea = título; modo captura en palette), import Markdown/Obsidian (/api/import/markdown con frontmatter title/tags y carpetas→notebooks, UI webkitdirectory) y daily notes (/api/daily/:date find-or-create con plantilla y tag #daily). Aprendizajes: (1) Fastify necesita addContentTypeParser para bodies image/* — sin eso responde 415 antes del handler; (2) fastify.inject compara binarios con served.rawPayload, no .body; (3) summary() debe incluir createdAt para filtros por fecha en cliente; (4) curl POST con -H content-type json y body vacío da FST_ERR_CTP_EMPTY_JSON_BODY. Git: al mergear con archivos root-owned bloqueantes, clonar a /tmp, mergear allí y sincronizar refs con fetch + branch -f + push. 26/26 tests, deployado y verificado en :4311 (daily idempotente e inbox probados en vivo).
+
+## Sprint 9 retro — 2026-08-24
+
+# Sprint 9 — Sprint 9 — Local-first power: adjuntos/imágenes en notas, quick capture con inbox, import de carpetas Markdown/Obsidian y daily notes
+
+- **Status**: closed
+- **Started**: 2026-08-23T23:54:43.204Z
+- **Ended**: 2026-08-24T00:37:09.955Z
+- **Progress**: 0/4 tasks done (0%)
+
+## Tasks
+
+### Backlog (0)
+
+_none_
+
+
+### To Do (0)
+
+_none_
+
+
+### In Progress (0)
+
+_none_
+
+
+### Review (4)
+
+- [high] **TK-45** — Adjuntos: imágenes pegadas/drag & drop en notas (human)
+- [medium] **TK-46** — Quick capture: POST /api/inbox + captura desde palette (agent)
+- [medium] **TK-47** — Import de carpetas Markdown/Obsidian (human)
+- [high] **TK-48** — Daily notes: nota del día con plantilla (agent)
+
+### Done (0)
+
+_none_
+
+
+## Retro
+
+_Pendiente: qué fue bien, qué no, qué mejorar._

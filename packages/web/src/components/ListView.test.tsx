@@ -10,7 +10,7 @@ function makeTask(overrides: Partial<Task> & { id: string; title: string }): Tas
     status: 'To Do',
     sprint: null,
     priority: 'medium',
-    assignee: 'human',
+    assignee: 'scrum-master',
     estimate: 2,
     tags: [],
     dependencies: [],
@@ -29,7 +29,7 @@ const TASKS: Task[] = [
   makeTask({
     id: 'TK-1',
     title: 'Command palette',
-    assignee: 'agent',
+    assignee: 'dev',
     acceptanceCriteria: ['[x] one', 'two', '[x] three'],
   }),
   makeTask({ id: 'TK-3', title: 'Dark theme toggle', status: 'Done' }),
@@ -68,7 +68,7 @@ describe('ListView', () => {
     const first = rows[0]!
     expect(within(first).getByText('TK-1')).toBeTruthy()
     expect(within(first).getByText('Command palette')).toBeTruthy()
-    expect(within(first).getByText('agent')).toBeTruthy()
+    expect(within(first).getByText('dev')).toBeTruthy()
     expect(within(first).getByText((_, el) => el?.textContent === '2/3' && el.tagName === 'TD')).toBeTruthy()
   })
 
@@ -124,7 +124,7 @@ describe('ListView', () => {
   })
 
   it('respects whatever filtered task list it receives', () => {
-    renderList({ tasks: TASKS.filter((t) => t.assignee === 'human') })
+    renderList({ tasks: TASKS.filter((t) => t.assignee === 'scrum-master') })
     expect(screen.getAllByTestId('list-row')).toHaveLength(2)
   })
 })

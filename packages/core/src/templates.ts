@@ -9,7 +9,7 @@ export type TemplateVars = z.infer<typeof TemplateVars>
 const TemplateMeta = z.object({
   title: z.string().optional(),
   priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-  assignee: z.enum(['human', 'agent']).optional(),
+  assignee: z.enum(['scrum-master', 'dev', 'review', 'perfect']).optional(),
   estimate: z.number().int().min(0).max(100).optional(),
   tags: z.array(z.string()).optional(),
 })
@@ -66,7 +66,7 @@ export const SAMPLE_TEMPLATES: Record<string, string> = {
   'feature.md': `---
 title: "{{title}}"
 priority: "medium"
-assignee: "human"
+assignee: "scrum-master"
 estimate: 2
 tags:
   - feature
@@ -85,7 +85,7 @@ tags:
   'bug-report.md': `---
 title: "Bug: {{summary}}"
 priority: "high"
-assignee: "agent"
+assignee: "scrum-master"
 estimate: 1
 tags:
   - bug
@@ -109,7 +109,7 @@ Actual: {{actual}}
   'chore.md': `---
 title: "{{title}}"
 priority: "low"
-assignee: "agent"
+assignee: "scrum-master"
 estimate: 1
 tags:
   - chore

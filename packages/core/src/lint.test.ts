@@ -37,7 +37,7 @@ describe('lintProject', () => {
     const tasksDir = path.join(dir, '.agentboard', 'tasks')
     fs.writeFileSync(
       path.join(tasksDir, 'TK-10.md'),
-      '---\nid: TK-1\ntitle: dup\nstatus: To Do\npriority: medium\nassignee: human\nsprint: 1\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
+      '---\nid: TK-1\ntitle: dup\nstatus: To Do\npriority: medium\nassignee: scrum-master\nsprint: 1\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
       'utf8',
     )
     const result = lintProject(dir)
@@ -49,7 +49,7 @@ describe('lintProject', () => {
     const tasksDir = path.join(dir, '.agentboard', 'tasks')
     fs.writeFileSync(
       path.join(tasksDir, 'TK-90.md'),
-      '---\nid: TK-90\ntitle: orphan sprint\nstatus: To Do\npriority: medium\nassignee: human\nsprint: 999\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
+      '---\nid: TK-90\ntitle: orphan sprint\nstatus: To Do\npriority: medium\nassignee: scrum-master\nsprint: 999\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
       'utf8',
     )
     const result = lintProject(dir)
@@ -61,7 +61,7 @@ describe('lintProject', () => {
     const tasksDir = path.join(dir, '.agentboard', 'tasks')
     fs.writeFileSync(
       path.join(tasksDir, 'TK-91.md'),
-      '---\nid: TK-91\ntitle: bad dep\nstatus: To Do\npriority: medium\nassignee: human\nsprint: 1\ndependencies:\n  - TK-999\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
+      '---\nid: TK-91\ntitle: bad dep\nstatus: To Do\npriority: medium\nassignee: scrum-master\nsprint: 1\ndependencies:\n  - TK-999\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
       'utf8',
     )
     const result = lintProject(dir)

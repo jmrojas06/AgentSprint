@@ -6,7 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
-import type { SprintStatus, TaskInput } from '@jmrojas06/agentsprint-core'
+import type { SprintStatus, Task, TaskInput } from '@jmrojas06/agentsprint-core'
 
 const STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 
@@ -152,7 +152,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       let tasks = store.state.tasks
       if (status) tasks = tasks.filter((t) => t.status === status)
       if (sprint) tasks = tasks.filter((t) => t.sprint === sprint)
-      if (assignee) tasks = tasks.filter((t) => t.assignee === assignee)
+      if (assignee) tasks = tasks.filter((t) => (t as any).assignee === assignee)
       if (q) {
         const needle = q.toLowerCase()
         tasks = tasks.filter((t) => `${t.id} ${t.title} ${t.description} ${t.tags.join(' ')}`.toLowerCase().includes(needle))
@@ -189,7 +189,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         status: z.enum(STATUSES).optional(),
         sprint: z.number().int().positive().optional(),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-        assignee: z.enum(['human', 'agent']).optional(),
+        assignee: z.enum(['scrum-master', 'dev', 'review', 'perfect']).optional(),
         estimate: z.number().int().min(0).max(100).optional(),
         tags: z.array(z.string()).optional(),
         acceptanceCriteria: z.array(z.string()).optional(),
@@ -232,7 +232,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         title: z.string().min(1).optional(),
         description: z.string().optional(),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-        assignee: z.enum(['human', 'agent']).optional(),
+        assignee: z.enum(['scrum-master', 'dev', 'review', 'perfect']).optional(),
         sprint: z.number().int().positive().nullable().optional(),
         estimate: z.number().int().min(0).max(100).optional(),
         tags: z.array(z.string()).optional(),
@@ -297,7 +297,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           store.unlockTask(id, { force: true })
           store.lockTask(id, agent ?? 'agent')
         }
-        const task = store.updateTask(id, { status: 'In Progress', assignee: 'agent' }, { actor: 'agent' })
+        const task = store.updateTask(id, { status: 'In Progress', assignee: 'scrum-master' }, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
         return textResponse({ error: (err as Error).message })

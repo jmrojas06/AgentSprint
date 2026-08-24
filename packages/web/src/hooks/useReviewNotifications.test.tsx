@@ -16,7 +16,7 @@ function makeTask(id: string): Task {
     status: 'Review',
     sprint: null,
     priority: 'medium',
-    assignee: 'agent',
+    assignee: 'scrum-master',
     estimate: 1,
     tags: [],
     dependencies: [],

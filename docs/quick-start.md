@@ -60,6 +60,17 @@ Finished tasks wait in **Review**. Open each one, verify the acceptance criteria
 
 When the sprint is done, close it from the Sprints panel and plan the next one from your backlog. The board's history stays in git forever.
 
+## Video demo
+
+Un vídeo de 45 segundos que muestra el flujo completo: desde `npx @jmrojas06/agentsprint-cli init` hasta que un agente reclama una tarea y la mueve a Review. Ver [docs/video-storyboard.md](video-storyboard.md) para el storyboard y [docs/video-script-es.md]() para el guion.
+
+Para generar el video:
+- Usa una grabadora de pantalla (terminal + navegador).
+- Sigue el storyboard de 6 escenas.
+- Edita con tu herramienta preferida (ffmpeg, iMovie, DaVinci Resolve, Clipchamp).
+- Exporta a 1920×1080, 30 fps, ~45 s.
+- El video final puede reemplazarse en `docs/public/demo-v2.mp4`.
+
 ## Everyday commands
 
 ```bash

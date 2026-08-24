@@ -39,7 +39,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [sprintFilter, setSprintFilter] = useState<SprintFilter>('all')
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('')
-  const [assigneeFilter, setAssigneeFilter] = useState<'agent' | 'human' | ''>('')
+  const [assigneeFilter, setAssigneeFilter] = useState<'scrum-master' | 'dev' | 'review' | 'perfect' | ''>('')
   const [tagFilter, setTagFilter] = useState('')
   const [sortBy, setSortBy] = useState<SortBy>('estimate')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -278,13 +278,15 @@ export default function App() {
 
             <select
               value={assigneeFilter}
-              onChange={(e) => setAssigneeFilter(e.target.value as 'agent' | 'human' | '')}
+              onChange={(e) => setAssigneeFilter(e.target.value as 'scrum-master' | 'dev' | 'review' | 'perfect' | '')}
               className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
               title="Filter by assignee"
             >
               <option value="">All assignees</option>
-              <option value="agent">Agent</option>
-              <option value="human">Human</option>
+              <option value="scrum-master">Scrum Master</option>
+              <option value="dev">Development</option>
+              <option value="review">Review</option>
+              <option value="perfect">Perfect Review</option>
             </select>
 
             <input

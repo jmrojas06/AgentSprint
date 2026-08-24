@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe('activity recording', () => {
   it('records a created event on createTask', () => {
-    const task = store.createTask({ title: 'Fresh task', assignee: 'agent' }, { actor: 'agent' })
+    const task = store.createTask({ title: 'Fresh task', assignee: 'scrum-master' }, { actor: 'agent' })
     expect(task.activity).toHaveLength(1)
     const event = task.activity[0]!
     expect(event.type).toBe('created')
@@ -38,13 +38,13 @@ describe('activity recording', () => {
     expect(statusEvents[1]!.actor).toBe('agent')
   })
 
-  it('records assignee changes', () => {
+it('records assignee changes', () => {
     const task = store.createTask({ title: 'Assignee probe' })
-    store.updateTask(task.id, { assignee: 'agent' }, { actor: 'agent' })
+    store.updateTask(task.id, { assignee: 'dev' }, { actor: 'agent' })
     const updated = store.state.tasks.find((t) => t.id === task.id)!
     const events = updated.activity.filter((e) => e.type === 'assignee')
     expect(events).toHaveLength(1)
-    expect(events[0]!.detail).toBe('human → agent')
+    expect(events[0]!.detail).toBe('scrum-master → dev')
     expect(events[0]!.actor).toBe('agent')
   })
 
@@ -86,7 +86,7 @@ describe('activity recording', () => {
   it('keeps a chronological timeline across mutation types', () => {
     const probe = store.createTask({ title: 'Timeline probe', acceptanceCriteria: ['First AC'] }, { actor: 'agent' })
     const id = probe.id
-    store.updateTask(id, { assignee: 'agent' })
+    store.updateTask(id, { assignee: 'dev' })
     store.setTaskChecklist(id, { index: 0, completed: true })
     store.appendTaskNote(id, 'halfway there')
     store.setTaskStatus(id, 'Review')

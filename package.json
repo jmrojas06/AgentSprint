@@ -17,7 +17,9 @@
     "agentsprint": "pnpm --filter @jmrojas06/agentsprint-cli start",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "demo:mp4": "ffmpeg -f lavfi -i color=c=black:d=45 -vf \"fps=30,scale=1920:1080\" -c:v libx264 -pix_fmt yuv420p docs/public/demo-v2.mp4",
+    "demo:gif": "ffmpeg -i docs/public/demo-v2.mp4 -t 8 -vf \"fps=15,scale=480:270\" -c:g 15 docs/public/demo-v2.gif"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

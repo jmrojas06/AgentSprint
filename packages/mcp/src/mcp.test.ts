@@ -55,7 +55,7 @@ describe('MCP tools', () => {
   })
 
   it('task_create creates a task', async () => {
-    const created = (await callTool('task_create', { title: 'MCP task', sprint: 1, assignee: 'agent' })) as { id: string; status: string }
+    const created = (await callTool('task_create', { title: 'MCP task', sprint: 1, assignee: 'scrum-master' })) as { id: string; status: string }
     expect(created.id).toBe('TK-4')
     expect(created.status).toBe('To Do')
   })
@@ -80,17 +80,17 @@ describe('MCP tools', () => {
       template: 'chore',
       vars: { title: 'Tidy deps' },
       priority: 'medium',
-      assignee: 'agent',
+      assignee: 'scrum-master',
     })) as { title: string; priority: string; assignee: string }
     expect(created.title).toBe('Tidy deps')
     expect(created.priority).toBe('medium')
-    expect(created.assignee).toBe('agent')
+    expect(created.assignee).toBe('scrum-master')
   })
 
   it('task_claim moves task to In Progress with agent assignee', async () => {
     const task = (await callTool('task_claim', { id: 'TK-1' })) as { status: string; assignee: string }
     expect(task.status).toBe('In Progress')
-    expect(task.assignee).toBe('agent')
+    expect(task.assignee).toBe('scrum-master')
   })
 
   it('task_claim blocks tasks with incomplete dependencies unless force is true', async () => {

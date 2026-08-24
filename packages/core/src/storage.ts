@@ -16,7 +16,7 @@ This project uses a git-native sprint board under \`.agentboard/\`.
 
 1. **Read \`.agentboard/sprints/\`** to learn the active sprint before doing any work.
 2. Tasks are single Markdown files in \`.agentboard/tasks/\`. Their status lives in the YAML frontmatter.
-3. Work on ONE task at a time. When you start one, set its \`status: In Progress\` and \`assignee: agent\`.
+3. Work on ONE task at a time. When you start one, set its \`status: In Progress\` and \`assignee: scrum-master\`.
 4. When the task satisfies every acceptance criterion, set \`status: Review\` — a human reviews and moves it to \`Done\`.
 5. Never skip or rewrite tasks. Update the file, don't create duplicates.
 6. Prefer editing files directly over \`agentboard\` CLI/MCP when possible; the board UI reflects file changes instantly.
@@ -456,7 +456,7 @@ export class ProjectStore extends EventEmitter {
       sprint: sprint?.id ?? null,
       status: input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do'),
       priority: input.priority ?? 'medium',
-      assignee: input.assignee ?? 'human',
+      assignee: input.assignee ?? 'scrum-master',
       createdAt,
       updatedAt: nowIso(),
       activity: [
@@ -716,7 +716,7 @@ deleteTask(id: string): void {
       status: 'To Do',
       sprint: sprint.id,
       priority: 'high',
-      assignee: 'agent',
+      assignee: 'scrum-master',
       estimate: 1,
       tags: ['getting-started'],
       dependencies: [],
@@ -730,7 +730,7 @@ deleteTask(id: string): void {
       status: 'In Progress',
       sprint: sprint.id,
       priority: 'medium',
-      assignee: 'human',
+      assignee: 'scrum-master',
       estimate: 2,
       tags: ['planning'],
       dependencies: ['TK-1'],
@@ -744,7 +744,7 @@ deleteTask(id: string): void {
       status: 'Backlog',
       sprint: null,
       priority: 'low',
-      assignee: 'agent',
+      assignee: 'scrum-master',
       estimate: 3,
       tags: ['starter'],
       dependencies: [],

@@ -11,7 +11,7 @@ interface Props {
     title: string
     sprint: number | null
     priority: TaskPriority
-    assignee: 'human' | 'agent'
+    assignee: 'scrum-master' | 'dev' | 'review' | 'perfect'
     template?: string
     vars?: Record<string, string>
   }) => void
@@ -29,7 +29,7 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   const [priority, setPriority] = useState<TaskPriority>('medium')
-  const [assignee, setAssignee] = useState<'human' | 'agent'>('human')
+  const [assignee, setAssignee] = useState<'scrum-master' | 'dev' | 'review' | 'perfect'>('scrum-master')
   const [sprint, setSprint] = useState<number | null>(null)
   const [templates, setTemplates] = useState<TaskTemplate[]>([])
   const [template, setTemplate] = useState<string>('')
@@ -127,9 +127,11 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
 
           <div>
             <label className={label}>Assignee</label>
-            <select value={assignee} onChange={(e) => setAssignee(e.target.value as 'human' | 'agent')} className={field}>
-              <option value="human">Human</option>
-              <option value="agent">AI agent</option>
+            <select value={assignee} onChange={(e) => setAssignee(e.target.value as 'scrum-master' | 'dev' | 'review' | 'perfect')} className={field}>
+              <option value="scrum-master">Scrum Master</option>
+              <option value="dev">Development</option>
+              <option value="review">Review</option>
+              <option value="perfect">Perfect Review</option>
             </select>
           </div>
 

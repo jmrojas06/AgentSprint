@@ -52,7 +52,7 @@ describe('server API', () => {
       title: 'From API',
       sprint: 1,
       priority: 'high',
-      assignee: 'agent',
+      assignee: 'scrum-master',
     })
     expect(status).toBe(201)
     const task = json()
@@ -308,7 +308,7 @@ describe('multi-project', () => {
       const created = await a.inject({
         method: 'POST',
         url: '/api/tasks?project=math',
-        payload: { title: 'Only in math', description: 'x', priority: 'medium', assignee: 'agent' },
+        payload: { title: 'Only in math', description: 'x', priority: 'medium', assignee: 'scrum-master' },
       })
       expect(created.statusCode).toBe(201)
       const otherProject = await a.inject({ method: 'GET', url: '/api/tasks?project=ai' })
@@ -458,7 +458,7 @@ describe('createIndex', () => {
         status: 'To Do',
         sprint: 1,
         priority: 'medium',
-        assignee: 'agent',
+assignee: 'scrum-master',
         estimate: 0,
         tags: [],
         dependencies: [],

@@ -8,7 +8,7 @@ function makeTask(overrides: Partial<Task> & { id: string }): Task {
     status: 'To Do',
     sprint: null,
     priority: 'medium',
-    assignee: 'human',
+    assignee: 'scrum-master',
     estimate: 0,
     tags: [],
     dependencies: [],
@@ -40,9 +40,9 @@ describe('viewFromQuery', () => {
 
 describe('sortTasks with list-view keys', () => {
   const tasks = [
-    makeTask({ id: 'TK-2', priority: 'high', sprint: 2, assignee: 'agent' }),
-    makeTask({ id: 'TK-10', priority: 'low', sprint: null, assignee: 'human' }),
-    makeTask({ id: 'TK-1', priority: 'critical', sprint: 1, assignee: 'human' }),
+    makeTask({ id: 'TK-2', priority: 'high', sprint: 2, assignee: 'dev' }),
+    makeTask({ id: 'TK-10', priority: 'low', sprint: null, assignee: 'scrum-master' }),
+    makeTask({ id: 'TK-1', priority: 'critical', sprint: 1, assignee: 'scrum-master' }),
   ]
 
   it('sorts by id naturally (string compare)', () => {
@@ -57,7 +57,7 @@ describe('sortTasks with list-view keys', () => {
 
   it('sorts by assignee', () => {
     const sorted = sortTasks(tasks, 'assignee', 'asc').map((t) => t.assignee)
-    expect(sorted).toEqual(['agent', 'human', 'human'])
+    expect(sorted).toEqual(['dev', 'scrum-master', 'scrum-master'])
   })
 
   it('puts unsprinted tasks last regardless of direction', () => {

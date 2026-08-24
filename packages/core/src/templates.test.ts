@@ -7,7 +7,7 @@ import { ProjectStore, parseTemplate, readTemplates, renderString, renderTemplat
 const RAW_TEMPLATE = `---
 title: "{{title}}"
 priority: "high"
-assignee: "agent"
+assignee: "scrum-master"
 estimate: 3
 tags:
   - bug
@@ -55,7 +55,7 @@ describe('parseTemplate', () => {
     expect(tpl.name).toBe('bug-report')
     expect(tpl.title).toBe('{{title}}')
     expect(tpl.priority).toBe('high')
-    expect(tpl.assignee).toBe('agent')
+    expect(tpl.assignee).toBe('scrum-master')
     expect(tpl.estimate).toBe(3)
     expect(tpl.tags).toEqual(['bug'])
     expect(tpl.description).toContain('{{repro_step}}')
@@ -101,7 +101,7 @@ describe('ProjectStore templates integration', () => {
     expect(task.id).toMatch(/^TK-\d+$/)
     expect(task.title).toBe('Bug: Board crashes')
     expect(task.priority).toBe('high')
-    expect(task.assignee).toBe('agent')
+    expect(task.assignee).toBe('scrum-master')
     expect(task.estimate).toBe(1)
     expect(task.tags).toEqual(['bug'])
     expect(task.acceptanceCriteria.some((c) => c.includes('{{'))).toBe(false)
