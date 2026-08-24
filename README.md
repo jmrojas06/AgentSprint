@@ -9,10 +9,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 <p align="center">
-  <video width="800" controls>
-    <source src="docs/public/demo-v2.mp4" type="video/mp4">
-    Tu navegador no soporta video HTML5.
-  </video>
+  <a href="docs/public/demo-v2.mp4">
+    <img src="docs/public/demo-v2.gif" alt="AgentSprint demo" width="800">
+  </a>
 </p>
 
 <details open="block">
@@ -30,8 +29,8 @@
   <br>
   *Video generado:* pipeline automático — los archivos `demo-v2.mp4` y `demo-v2.gif` se producen en el workflow de GitHub Actions.
 
-  - **MP4:** demo completa (45 s, 1920×1080, 30 fps).
-  - **GIF:** preview corto (8 s, 480×270, 15 fps).
+  - **MP4:** demo completa (45 s, 1920×1080, 30 fps) — [docs/public/demo-v2.mp4](docs/public/demo-v2.mp4)
+  - **GIF:** preview corto (8 s, 480×270, 15 fps) — [docs/public/demo-v2.gif](docs/public/demo-v2.gif)
 
   <br>
   *Los archivos se generan en el workflow de docs.yml y se publican en GitHub Pages.*
