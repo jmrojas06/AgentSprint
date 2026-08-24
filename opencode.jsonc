@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "agentsprint": {
+      "type": "remote",
+      "url": "http://127.0.0.1:4310/mcp",
+      "enabled": true
+    }
+  }
+}
