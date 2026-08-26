@@ -66,6 +66,11 @@ describe('parseArgs', () => {
     expect(args?.vars).toEqual({ summary: 'crash' })
   })
 
+  it('parses --var values that contain "="', () => {
+    const args = parseArgs(['task', 'new', 'Fix login', dir, '--var', 'query=a=b&c=d'])
+    expect(args?.vars).toEqual({ query: 'a=b&c=d' })
+  })
+
   it('parses task new without a title or template', () => {
     const args = parseArgs(['task', 'new'])
     expect(args?.command).toBe('task-new')
@@ -115,6 +120,20 @@ describe('cmdTaskNew', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(cmdTaskNew(dir, undefined, 'nope', {})).rejects.toThrow('exit')
     expect(err).toHaveBeenCalledWith(expect.stringContaining('Template not found: nope'))
+    exit.mockRestore()
+    err.mockRestore()
+  })
+
+  it('rejects path traversal template names with a clear error', async () => {
+    ProjectStore.init(dir, { sample: true })
+    fs.writeFileSync(path.join(dir, 'secret.md'), '---\ntitle: leaked\n---\n')
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exit')
+    }) as never)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(cmdTaskNew(dir, undefined, '../secret', {})).rejects.toThrow('exit')
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('Invalid template name'))
+    expect(ProjectStore.open(dir).state.tasks.some((t) => t.title === 'leaked')).toBe(false)
     exit.mockRestore()
     err.mockRestore()
   })

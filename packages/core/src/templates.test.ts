@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ProjectStore, parseTemplate, readTemplates, renderString, renderTemplate } from '../src/index.js'
+import { ProjectStore, isValidTemplateName, parseTemplate, readTemplates, renderString, renderTemplate } from '../src/index.js'
 
 const RAW_TEMPLATE = `---
 title: "{{title}}"
@@ -81,6 +81,30 @@ describe('renderTemplate', () => {
     expect(out.title).toBe('{{title}}')
     expect(out.acceptanceCriteria[0]).toContain('{{component}}')
   })
+
+  it('renders {{vars}} inside tags', () => {
+    const tpl = parseTemplate(RAW_TEMPLATE, 'bug-report')
+    const withVarTags = { ...tpl, tags: ['area:{{component}}', 'static'] }
+    const out = renderTemplate(withVarTags, { component: 'auth' })
+    expect(out.tags).toEqual(['area:auth', 'static'])
+  })
+})
+
+describe('isValidTemplateName', () => {
+  it('accepts plain filenames', () => {
+    expect(isValidTemplateName('bug-report')).toBe(true)
+    expect(isValidTemplateName('feature_v2.md'.replace('.md', ''))).toBe(true)
+    expect(isValidTemplateName('a.b-c_d')).toBe(true)
+  })
+
+  it('rejects path separators and traversal segments', () => {
+    expect(isValidTemplateName('../secret')).toBe(false)
+    expect(isValidTemplateName('..')).toBe(false)
+    expect(isValidTemplateName('a/b')).toBe(false)
+    expect(isValidTemplateName('a\\b')).toBe(false)
+    expect(isValidTemplateName('/etc/passwd')).toBe(false)
+    expect(isValidTemplateName('foo/../../bar')).toBe(false)
+  })
 })
 
 describe('ProjectStore templates integration', () => {
@@ -91,6 +115,48 @@ describe('ProjectStore templates integration', () => {
 
   it('getTemplate returns null for unknown templates', () => {
     expect(store.getTemplate('nope')).toBeNull()
+  })
+
+  it('rejects path traversal template names instead of reading outside the board', () => {
+    // a valid template placed OUTSIDE <boardDir>/templates/
+    fs.writeFileSync(path.join(dir, 'secret.md'), RAW_TEMPLATE)
+    expect(() => store.getTemplate('../secret')).toThrow(/Invalid template name/)
+    expect(() => store.getTemplate('..')).toThrow(/Invalid template name/)
+    expect(() => store.getTemplate('a/b')).toThrow(/Invalid template name/)
+    expect(() => store.createTaskFromTemplate('../../../secret')).toThrow(/Invalid template name/)
+    expect(() => store.createTaskFromTemplate('sub/dir/../../secret')).toThrow(/Invalid template name/)
+    // nothing was created and nothing leaked
+    expect(store.state.tasks.every((t) => !t.title.includes('{{title}}'))).toBe(true)
+  })
+
+  it('distinguishes ENOENT (null) from invalid frontmatter (throws)', () => {
+    expect(store.getTemplate('does-not-exist')).toBeNull()
+    fs.writeFileSync(path.join(dir, '.agentboard/templates/broken.md'), '---\nestimate: 9999\n---\n\nbody\n')
+    expect(() => store.getTemplate('broken')).toThrow(/invalid frontmatter/)
+  })
+
+  it('surfaces filesystem errors other than ENOENT instead of returning null', () => {
+    // a directory named like a template makes readFileSync fail with EISDIR
+    fs.mkdirSync(path.join(dir, '.agentboard/templates/weird.md'))
+    expect(() => store.getTemplate('weird')).toThrow()
+    try {
+      store.getTemplate('weird')
+    } catch (err) {
+      expect((err as NodeJS.ErrnoException).code).toBe('EISDIR')
+    }
+  })
+
+  it('ignores an empty title override so it does not clobber the rendered title', () => {
+    const task = store.createTaskFromTemplate('bug-report', {
+      vars: { summary: 'Board crashes' },
+      overrides: { title: '', sprint: null },
+    })
+    expect(task.title).toBe('Bug: Board crashes')
+    // an explicit non-empty override still wins
+    const renamed = store.createTaskFromTemplate('bug-report', {
+      overrides: { title: 'Renamed' },
+    })
+    expect(renamed.title).toBe('Renamed')
   })
 
   it('createTaskFromTemplate renders vars and applies defaults + overrides', () => {

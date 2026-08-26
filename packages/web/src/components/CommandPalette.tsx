@@ -43,12 +43,30 @@ export function CommandPalette({
   const listRef = useRef<HTMLUListElement>(null)
 
   useEffect(() => {
-    if (open) {
-      setQuery('')
-      setIndex(0)
-      requestAnimationFrame(() => inputRef.current?.focus())
+    if (!open) return
+    const prevFocus = document.activeElement as HTMLElement | null
+    setQuery('')
+    setIndex(0)
+    requestAnimationFrame(() => inputRef.current?.focus())
+    return () => {
+      prevFocus?.focus?.()
     }
   }, [open])
+
+  // The palette is the topmost overlay: swallow Escape in the capture phase so
+  // modals underneath (which listen for keydown on window) don't close in
+  // cascade and silently discard unsaved edits.
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [open, onClose])
 
   const items = useMemo<Item[]>(() => {
     if (!open) return []
@@ -69,6 +87,7 @@ export function CommandPalette({
         key: `sprint-${s.id}`,
         label: `Activate sprint ${s.id}`,
         hint: s.goal || undefined,
+        keywords: s.goal || undefined,
         group: 'Sprints',
         run: () => onActivateSprint(s.id),
       }))
@@ -104,12 +123,10 @@ export function CommandPalette({
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
+    // Escape is handled by the capture-phase window listener above
+    if (e.key === 'ArrowDown') {
       e.preventDefault()
-      onClose()
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setIndex((i) => Math.min(i + 1, items.length - 1))
+      setIndex((i) => Math.max(0, Math.min(i + 1, items.length - 1)))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setIndex((i) => Math.max(i - 1, 0))
@@ -119,7 +136,9 @@ export function CommandPalette({
     }
   }
 
-  let lastGroup = ''
+  const headerKeys = new Set<string>(
+    items.filter((item, i) => i === 0 || items[i - 1]!.group !== item.group).map((item) => item.key),
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[12vh]" onClick={onClose}>
@@ -139,7 +158,7 @@ export function CommandPalette({
               setIndex(0)
             }}
             placeholder="Search tasks, run a command…"
-            className="w-full bg-transparent py-1 text-sm text-zinc-100 outline-none placeholder:text-zinc-600"
+            className="w-full bg-transparent py-1 text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
           />
           <kbd className="rounded border border-zinc-700 px-1 font-mono text-[10px] text-zinc-500">esc</kbd>
         </div>
@@ -149,8 +168,7 @@ export function CommandPalette({
             <li className="px-3 py-6 text-center text-xs text-zinc-600">No matching commands or tasks</li>
           )}
           {items.map((item, i) => {
-            const header = item.group !== lastGroup ? item.group : null
-            lastGroup = item.group
+            const header = headerKeys.has(item.key) ? item.group : null
             return (
               <li key={item.key} role="option" aria-selected={i === index}>
                 {header && (

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ProjectStore, isSimilarTitle, importTasks, issuesToTaskInputs, normalizeTitle, parseTodoFile, todosToTaskInputs } from '../src/index.js'
+import { ProjectStore, GH_ISSUE_LIMIT, isSimilarTitle, importTasks, issuesToTaskInputs, normalizeTitle, parseTodoFile, todosToTaskInputs, validateMilestoneSprints } from '../src/index.js'
 import type { GithubIssue } from '../src/index.js'
 
 let dir: string
@@ -59,6 +59,43 @@ describe('parseTodoFile', () => {
     const items = parseTodoFile(fs.readFileSync(file, 'utf8'))
     expect(items).toHaveLength(2)
   })
+
+  it('skips a YAML frontmatter block, including its list entries', () => {
+    const fixture = [
+      '---',
+      'title: Sprint notes',
+      'tags:',
+      '  - wip',
+      '  - later',
+      '---',
+      '',
+      '# TODO',
+      '',
+      '- [ ] real task from body',
+    ].join('\n')
+    const items = parseTodoFile(fixture)
+    expect(items).toEqual([{ title: 'real task from body', done: false }])
+  })
+
+  it('parses a frontmatter fixture file written to disk', () => {
+    const file = path.join(dir, 'NOTES.md')
+    fs.writeFileSync(file, '---\ntags:\n  - wip\nowner: someone\n---\n\n- [ ] ship it\n', 'utf8')
+    const items = parseTodoFile(fs.readFileSync(file, 'utf8'))
+    expect(items.map((i) => i.title)).toEqual(['ship it'])
+  })
+
+  it('does not treat horizontal rules after content as frontmatter', () => {
+    const fixture = ['- first\n', '---\n', '- second\n'].join('')
+    const items = parseTodoFile(fixture)
+    expect(items.map((i) => i.title)).toEqual(['first', 'second'])
+  })
+
+  it('parses checkboxes without a space after the closing bracket', () => {
+    const items = parseTodoFile('- [x]ok no space\n- [X]UPPERCASE tight\n- [ ] spaced normally')
+    expect(items[0]).toEqual({ title: 'ok no space', done: true })
+    expect(items[1]).toEqual({ title: 'UPPERCASE tight', done: true })
+    expect(items[2]).toEqual({ title: 'spaced normally', done: false })
+  })
 })
 
 describe('duplicate detection', () => {
@@ -98,6 +135,23 @@ describe('issuesToTaskInputs', () => {
     expect(inputs[0]!.tags).toEqual(expect.arrayContaining(['imported:github', 'bug', 'high']))
     expect(inputs[1]!.sprint).toBeNull()
     expect(inputs[1]!.description).toContain('#2')
+  })
+})
+
+describe('validateMilestoneSprints', () => {
+  it('reports only mappings pointing at non-existent sprint ids', () => {
+    const sprints = [{ id: 1 }, { id: 3 }]
+    expect(validateMilestoneSprints({ v9: 99, 'v1.0': 1, v2: 3 }, sprints)).toEqual(['v9=99'])
+  })
+
+  it('passes with no mapping or empty board sprints', () => {
+    expect(validateMilestoneSprints(undefined, [])).toEqual([])
+    expect(validateMilestoneSprints({}, [])).toEqual([])
+    expect(validateMilestoneSprints({ v9: 99 }, [])).toEqual(['v9=99'])
+  })
+
+  it('exposes the gh issue limit used by fetchGithubIssues', () => {
+    expect(GH_ISSUE_LIMIT).toBeGreaterThan(0)
   })
 })
 

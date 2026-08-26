@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { CheckSquare, ClipboardCopy, GitCommitHorizontal, GitBranch, Lock, Plus, Save, Square, Trash2, X } from 'lucide-react'
 import type { GitCommit, Sprint, Task, TaskPriority, TaskStatus } from '../types'
-import { TASK_PRIORITIES } from '../types'
 import { api } from '../api'
 import { ActivityTimeline } from './ActivityTimeline'
-import { cx, criterionChecked, criterionText, getBlockerTasks, getTaskLock } from '../ui'
+import { cx, criterionChecked, criterionText, getTaskLock } from '../ui'
 
 interface Props {
   task: Task
@@ -24,7 +23,9 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   const [description, setDescription] = useState(task.description)
   const [status, setStatus] = useState<TaskStatus>(task.status as TaskStatus)
   const [priority, setPriority] = useState<TaskPriority>(task.priority)
-  const [assignee, setAssignee] = useState<'scrum-master' | 'dev' | 'review' | 'perfect'>(task.assignee as any)
+  const [assignee, setAssignee] = useState<'scrum-master' | 'dev' | 'review' | 'perfect'>(
+    task.assignee as 'scrum-master' | 'dev' | 'review' | 'perfect',
+  )
   const [sprint, setSprint] = useState<number | null>(task.sprint)
   const [estimate, setEstimate] = useState(task.estimate)
   const [tags, setTags] = useState(task.tags.join(', '))
@@ -33,8 +34,8 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   const [copied, setCopied] = useState(false)
   const [commits, setCommits] = useState<GitCommit[]>([])
   const [branches, setBranches] = useState<string[]>([])
-  const [gitAvailable, setGitAvailable] = useState(true)
-  const [commitsLoading, setCommitsLoading] = useState(false)
+  const [, setGitAvailable] = useState(true)
+  const [, setCommitsLoading] = useState(false)
   const [tab, setTab] = useState<'details' | 'activity'>('details')
 
   useEffect(() => {
@@ -150,7 +151,7 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Task title"
-            className="flex-1 bg-transparent text-base font-semibold text-zinc-100 outline-none placeholder:text-zinc-600"
+            className="flex-1 bg-transparent text-base font-semibold text-zinc-100 outline-none placeholder:text-zinc-500"
           />
           <button onClick={onClose} className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
             <X className="h-4 w-4" />

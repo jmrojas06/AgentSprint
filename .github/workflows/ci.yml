@@ -21,11 +21,8 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # TODO(ci): remove `continue-on-error` once feature/linter-monorepo
-      # (eslint + root `lint` script) is merged into develop.
       - name: Lint
         run: pnpm lint
-        continue-on-error: true
       # Build must run BEFORE typecheck/test: cross-package types resolve to
       # each package's dist/, which only exists after building (a fresh
       # checkout has no dist/).

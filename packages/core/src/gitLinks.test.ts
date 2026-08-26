@@ -40,6 +40,20 @@ describe('taskRefPattern', () => {
     expect(re.test('feat/TK-12 add stuff')).toBe(true)
     expect(re.test('fix: TK-12')).toBe(false)
   })
+
+  it('rejects syntactically invalid patterns with a clear error', () => {
+    expect(() => taskRefPattern('TK-1', '(')).toThrow(/Invalid pattern/)
+    expect(() => taskRefPattern('TK-1', '[A-Z')).toThrow(/Invalid pattern/)
+  })
+
+  it('rejects ReDoS-prone and oversized patterns instead of compiling them', () => {
+    expect(() => taskRefPattern('TK-1', '(a+)+$')).toThrow(/Invalid pattern/)
+    expect(() => taskRefPattern('TK-1', 'a**')).toThrow(/Invalid pattern/)
+    const long = 'x'.repeat(201)
+    expect(() => taskRefPattern('TK-1', long)).toThrow(/maximum length/)
+    // Boundary: exactly at the limit is accepted.
+    expect(() => taskRefPattern('TK-1', 'x'.repeat(200))).not.toThrow()
+  })
 })
 
 describe('findTaskCommits', () => {
@@ -76,6 +90,20 @@ describe('findTaskCommits', () => {
     const branchStyle = await findTaskCommits(dir, 'TK-5', { pattern: '^feat/%ID%' })
     expect(branchStyle).toHaveLength(1)
     expect(branchStyle[0]!.message).toBe('feat/TK-5 alpha')
+  })
+
+  it('finds commits that reference the id only in the body', async () => {
+    commit('initial setup')
+    fs.writeFileSync(path.join(dir, 'body-ref.txt'), 'x')
+    execFileSync('git', ['-C', dir, 'add', '-A'])
+    execFileSync('git', ['-C', dir, 'commit', '-m', 'refactor: no id in subject', '-m', 'Refs TK-7\n\nalso related to TK-8'])
+
+    const tk7 = await findTaskCommits(dir, 'TK-7')
+    expect(tk7).toHaveLength(1)
+    expect(tk7[0]!.message).toBe('refactor: no id in subject')
+
+    const tk8 = await findTaskCommits(dir, 'TK-8')
+    expect(tk8).toHaveLength(1)
   })
 
   it('returns empty list for a non-git directory', async () => {
@@ -122,6 +150,18 @@ describe('taskCommitCounts', () => {
     commit('mentions ZZ-99 which is not on the board')
     const counts = await taskCommitCounts(dir, ['TK-1'])
     expect(counts).toEqual({})
+  })
+
+  it('counts ids found on any line of a multi-line body', async () => {
+    commit('setup')
+    fs.writeFileSync(path.join(dir, 'multi.txt'), 'x')
+    execFileSync('git', ['-C', dir, 'add', '-A'])
+    execFileSync('git', ['-C', dir, 'commit', '-m', 'feat: TK-4 subject', '-m', 'body line with TK-5\n\nsecond paragraph mentions TK-6'])
+
+    const counts = await taskCommitCounts(dir, ['TK-4', 'TK-5', 'TK-6'])
+    expect(counts['TK-4']).toBe(1)
+    expect(counts['TK-5']).toBe(1)
+    expect(counts['TK-6']).toBe(1)
   })
 
   it('returns {} when there are no tasks or no repo', async () => {

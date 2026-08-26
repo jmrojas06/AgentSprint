@@ -5,7 +5,6 @@ import type {
   Burndown,
   GitCommit,
   ProjectConfig,
-  ProjectState,
   ProjectInfo,
   Sprint,
   SprintStatus,

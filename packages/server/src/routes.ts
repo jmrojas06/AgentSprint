@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
 import { buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, taskCommitCounts } from '@jmrojas06/agentsprint-core'
-import type { ProjectHandle, ProjectManager } from './projects.js'
+import type { ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
 function sendError(reply: FastifyReply, status: number, message: string): void {
@@ -83,8 +83,12 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     const h = projects.get(projectName(req))
     if (!h.store.state.tasks.some((t) => t.id === id)) return sendError(reply, 404, `Task not found: ${id}`)
     const pattern = (req.query as Record<string, string> | undefined)?.pattern
-    const refs = await findTaskRefs(h.store.rootDir, id, pattern ? { pattern } : {})
-    return reply.send({ id, ...refs })
+    try {
+      const refs = await findTaskRefs(h.store.rootDir, id, pattern ? { pattern } : {})
+      return reply.send({ id, ...refs })
+    } catch (err) {
+      return sendError(reply, 400, (err as Error).message)
+    }
   })
 
   app.put('/api/tasks/:id', async (req, reply) => {

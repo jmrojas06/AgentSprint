@@ -31,7 +31,6 @@ export function BurndownChart({ sprintId }: { sprintId: number }) {
   const x = (i: number) => pad + (i * (W - pad * 2)) / Math.max(n - 1, 1)
   const y = (v: number) => pad + (H - pad * 2) * (1 - v / total)
 
-  const idealAt = (i: number) => total * (1 - i / Math.max(n - 1, 1))
   const idealPts = n > 1 ? `${x(0)},${y(total)} ${x(n - 1)},${y(0)}` : ''
   const actualPts = data.points.map((p, i) => `${x(i)},${y(p.remaining)}`).join(' ')
 

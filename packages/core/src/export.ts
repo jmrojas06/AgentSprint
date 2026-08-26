@@ -1,4 +1,4 @@
-import { DEFAULT_STATUSES, type ProjectState, type Task } from './types.js'
+import { DEFAULT_STATUSES, type ProjectState } from './types.js'
 import { computeSprintStats } from './spec.js'
 
 function criterionChecked(criterion: string): boolean {

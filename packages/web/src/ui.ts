@@ -1,4 +1,4 @@
-import type { Sprint, Task, TaskPriority, TaskStatus } from './types'
+import type { Sprint, Task, TaskPriority } from './types'
 import { DEFAULT_STATUSES } from './types'
 
 export const TASK_LOCK_TTL_MINUTES = 30

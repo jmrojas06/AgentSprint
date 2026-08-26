@@ -46,7 +46,7 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
         <span
           className={cx(
             'ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium',
-            task.assignee === 'dev' ? 'bg-indigo-500/15 text-indigo-300' : task.assignee === 'review' ? 'bg-amber-500/15 text-amber-300' : task.assignee === 'perfect' ? 'bg-green-500/15 text-green-300' : 'bg-zinc-700/50 text-zinc-300',
+            task.assignee === 'dev' ? 'bg-indigo-500/15 text-indigo-300' : task.assignee === 'review' ? 'bg-amber-500/15 text-amber-300' : task.assignee === 'perfect' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700/50 text-zinc-300',
           )}
         >
           {task.assignee}
