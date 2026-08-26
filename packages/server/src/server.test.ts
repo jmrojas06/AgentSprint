@@ -688,6 +688,119 @@ describe('MCP over HTTP', () => {
   })
 })
 
+describe('auth token (optional bearer)', () => {
+  const secret = 's3cr3t-test-token'
+  let authDir: string
+  let authBuilder: Awaited<ReturnType<typeof buildApp>> | null = null
+
+  function authApi(app: import('fastify').FastifyInstance, method: 'get' | 'post' | 'put' | 'patch' | 'delete', url: string, body?: unknown, headers: Record<string, string> = {}) {
+    return app.inject({
+      method,
+      url,
+      ...(body !== undefined ? { payload: JSON.stringify(body), headers: { 'content-type': 'application/json', ...headers } } : { headers }),
+    })
+  }
+
+  afterEach(async () => {
+    if (authBuilder) {
+      await authBuilder.close()
+      authBuilder = null
+    }
+    if (authDir) {
+      fs.rmSync(authDir, { recursive: true, force: true })
+    }
+    delete process.env.AGENTBOARD_TOKEN
+  })
+
+  it('without token everything passes (compatibility)', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-compat-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir })
+    const a = authBuilder.app
+    const get = await a.inject({ method: 'GET', url: '/api/project' })
+    expect(get.statusCode).toBe(200)
+    const post = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'no auth needed' }), headers: { 'content-type': 'application/json' } })
+    expect(post.statusCode).toBe(201)
+  })
+
+  it('with token, GET is open, POST without bearer is 401, with bearer passes', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir, token: secret })
+    const a = authBuilder.app
+
+    const getOk = await a.inject({ method: 'GET', url: '/api/project' })
+    expect(getOk.statusCode).toBe(200)
+
+    const postNoAuth = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'needs token' }), headers: { 'content-type': 'application/json' } })
+    expect(postNoAuth.statusCode).toBe(401)
+    expect(JSON.parse(postNoAuth.body)).toEqual({ error: 'Unauthorized' })
+
+    const postBad = await authApi(a, 'post', '/api/tasks', { title: 'bad' }, { authorization: 'Bearer wrong' })
+    expect(postBad.statusCode).toBe(401)
+
+    const postGood = await authApi(a, 'post', '/api/tasks', { title: 'good' }, { authorization: `Bearer ${secret}` })
+    expect(postGood.statusCode).toBe(201)
+    expect(JSON.parse(postGood.body).title).toBe('good')
+
+    // token never appears in logs — capture console output
+    const logs: string[] = []
+    const origLog = console.log
+    const origWarn = console.warn
+    // @ts-ignore capture
+    console.log = (...args: unknown[]) => logs.push(String(args[0]))
+    console.warn = (...args: unknown[]) => logs.push(String(args[0]))
+    // trigger a 401 which could log
+    await authApi(a, 'post', '/api/tasks', { title: 'logcheck' }, {})
+    console.log = origLog
+    console.warn = origWarn
+    const blob = logs.join(' ')
+    expect(blob).not.toContain(secret)
+
+    // token not echoed in body either
+    expect(postNoAuth.body).not.toContain(secret)
+    expect(postBad.body).not.toContain(secret)
+  })
+
+  it('with --token-all (tokenAll=true) also protects GETs', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-all-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir, token: secret, tokenAll: true })
+    const a = authBuilder.app
+    const getNoAuth = await a.inject({ method: 'GET', url: '/api/project' })
+    expect(getNoAuth.statusCode).toBe(401)
+    const getWith = await a.inject({ method: 'GET', url: '/api/project', headers: { authorization: `Bearer ${secret}` } })
+    expect(getWith.statusCode).toBe(200)
+    const healthNoAuth = await a.inject({ method: 'GET', url: '/api/health' })
+    // health is also /api/* so protected when tokenAll; if you want health open, change this expectation.
+    expect(healthNoAuth.statusCode).toBe(401)
+  })
+
+  it('env AGENTBOARD_TOKEN enables auth without explicit option', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-env-'))
+    ProjectStore.init(authDir, { sample: true })
+    process.env.AGENTBOARD_TOKEN = secret
+    authBuilder = await buildApp({ rootDir: authDir })
+    const a = authBuilder.app
+    const postNoAuth = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'env' }), headers: { 'content-type': 'application/json' } })
+    expect(postNoAuth.statusCode).toBe(401)
+    const postWith = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'env-ok' }), headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` } })
+    expect(postWith.statusCode).toBe(201)
+  })
+
+  it('mcp route is also protected when token is set', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-mcp-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir, token: secret, mcp: true })
+    const a = authBuilder.app
+    const mcpNoAuth = await a.inject({ method: 'POST', url: '/mcp', payload: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0.0' } } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' } })
+    expect(mcpNoAuth.statusCode).toBe(401)
+    const mcpWith = await a.inject({ method: 'POST', url: '/mcp', payload: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0.0' } } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${secret}` } })
+    // mcp returns 200 even if token ok (session creation)
+    expect(mcpWith.statusCode).toBe(200)
+  })
+})
+
 describe('createIndex', () => {
   it('uses a real SQLite file (regression: tsup used to rewrite node:sqlite)', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'as-index-'))

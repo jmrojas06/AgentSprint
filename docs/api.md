@@ -2,11 +2,44 @@
 
 The server started by `agentboard serve` exposes a JSON REST API plus an SSE event stream. All endpoints are prefixed with `/api`. When running multiple projects, pass `?project=<name>` (see `GET /api/projects`).
 
+## Authentication (optional)
+
+By default the board is open (no auth) for local development. To protect mutating operations, start the server with a bearer token:
+
+```bash
+agentboard serve --token <secret>
+# or
+AGENTBOARD_TOKEN=<secret> agentboard serve
+```
+
+When a token is set, every `POST`/`PUT`/`PATCH`/`DELETE` under `/api/*` and `/mcp` requires:
+
+```
+Authorization: Bearer <secret>
+```
+
+Without the header, or with a wrong value, the server returns `401 { "error": "Unauthorized" }` and the secret is never logged.
+
+* `GET` routes stay open by default (read-only). To also protect reads, use:
+
+```bash
+agentboard serve --token <secret> --token-all
+# or AGENTBOARD_TOKEN=<secret> with --token-all
+```
+
+With `--token-all`, every `/api/*` and `/mcp` request (including `GET`) needs the header.
+
+Clients:
+
+* **Web UI** — on `401`, a token prompt appears; the token is stored in `localStorage` under `agentsprint-token` and sent on subsequent requests. Use the “Clear token” button to remove it.
+* **CLI / MCP** — on `401`, retry with `Authorization: Bearer <token>` or set `AGENTBOARD_TOKEN` / `--token` and restart the server. Example: `curl -H "Authorization: Bearer $AGENTBOARD_TOKEN" http://127.0.0.1:4310/api/tasks`.
+* **MCP over HTTP** (`/mcp`) follows the same bearer rule.
+
 ## System
 
 ### `GET /api/health`
 
-Liveness probe. Returns `{ "ok": true, "version": "0.1.0" }`.
+Liveness probe. Returns `{ "ok": true, "version": "0.1.0" }`. When `--token-all` is on, even `/health` requires the bearer token; otherwise it stays public.
 
 ## Projects & config
 

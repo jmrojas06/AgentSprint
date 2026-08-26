@@ -21,6 +21,10 @@ export interface ServerOptions {
   logger?: boolean
   /** When true (default), automatically tries the next port if the requested one is busy. */
   fallback?: boolean
+  /** Optional bearer token. If set (or AGENTBOARD_TOKEN env), mutating routes require Authorization: Bearer <token>. */
+  token?: string
+  /** When true, all routes (including GET) require the bearer token. Default false: only POST/PUT/PATCH/DELETE are protected. */
+  tokenAll?: boolean
 }
 
 export interface BuiltApp {
@@ -34,9 +38,33 @@ export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
   const projects = await ProjectManager.discover(opts.rootDir, { autoInit: opts.autoInit })
   const defaultProject = projects.get()
 
+  const token = (opts.token ?? process.env.AGENTBOARD_TOKEN ?? '').trim()
+  const tokenAll = opts.tokenAll ?? false
+
   const app = Fastify({ logger: opts.logger ?? false })
 
-  await app.register(cors, { origin: true })
+  // Optional bearer auth: when AGENTBOARD_TOKEN / --token is set, protect API+MCP routes.
+  // Default protects only mutating methods (POST/PUT/PATCH/DELETE); with tokenAll=true also GETs/HEAD.
+  // Never log the secret.
+  if (token) {
+    app.addHook('onRequest', async (req, reply) => {
+      const method = (req.method ?? '').toUpperCase()
+      if (method === 'OPTIONS') return
+      const url = req.raw.url ?? ''
+      const isApiOrMcp = url.startsWith('/api/') || url.startsWith('/mcp')
+      if (!isApiOrMcp) return
+      const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+      const needsAuth = tokenAll || isMutating
+      if (!needsAuth) return
+      const auth = req.headers.authorization
+      if (!auth || auth !== `Bearer ${token}`) {
+        reply.code(401).send({ error: 'Unauthorized' })
+        return
+      }
+    })
+  }
+
+  await app.register(cors, { origin: true, allowedHeaders: ['Content-Type', 'Authorization'] })
   await registerApi(app, projects)
   if (opts.mcp) {
     registerMcpRoute(app, { manager: projects })
