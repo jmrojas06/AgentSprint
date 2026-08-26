@@ -23,7 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -33,8 +32,6 @@ jobs:
         env:
           # Project pages live under /<repo>/ — keep in sync with the repo name
           DOCS_BASE: /AgentSprint/
-      - run: pnpm demo:mp4
-      - run: pnpm demo:gif
       - uses: actions/configure-pages@v5
         with:
           # Auto-enable GitHub Pages for this repo on first deploy

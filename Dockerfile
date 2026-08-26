@@ -20,6 +20,6 @@ COPY --from=build /app .
 ENV NODE_ENV=production
 EXPOSE 4310
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:4310/api/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:4310/api/health || exit 1
 ENTRYPOINT ["node", "/app/packages/cli/dist/index.js"]
 CMD ["serve", "/board", "--host", "0.0.0.0", "--no-open"]

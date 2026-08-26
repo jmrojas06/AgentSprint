@@ -183,7 +183,7 @@ export default function App() {
           <p className="font-semibold">Could not load the board</p>
           <p className="mt-1">{error}</p>
           <p className="mt-2 text-xs text-red-400/70">
-            Make sure a server is running: <code className="rounded bg-black/40 px-1">agentboard serve</code>
+            Make sure a server is running: <code className="rounded bg-zinc-800 px-1">agentboard serve</code>
           </p>
         </div>
       </div>
@@ -293,7 +293,7 @@ export default function App() {
               value={tagFilter}
               onChange={(e) => setTagFilter(e.target.value)}
               placeholder="Tag…"
-              className="w-20 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+              className="w-20 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
               title="Filter by tag"
             />
 
@@ -315,7 +315,7 @@ export default function App() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search tasks…  ⌘K"
-                className="w-44 rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-7 pr-2 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-indigo-500 sm:w-56"
+                className="w-44 rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-7 pr-2 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500 sm:w-56"
               />
             </div>
 

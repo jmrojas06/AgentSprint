@@ -5,7 +5,7 @@ import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } 
 import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, TASK_LOCK_TTL_MINUTES } from './types.js'
 import type { ActivityEvent as ActivityEventType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
 import { buildSprintReport } from './spec.js'
-import { SAMPLE_TEMPLATES, parseTemplate, readTemplates, renderTemplate } from './templates.js'
+import { SAMPLE_TEMPLATES, isValidTemplateName, parseTemplate, readTemplates, renderTemplate } from './templates.js'
 import type { TaskTemplate, TemplateVars } from './templates.js'
 
 const AGENTS_MD = `# AgentSprint instructions
@@ -331,12 +331,23 @@ export class ProjectStore extends EventEmitter {
 
   /** Get a single template by name (filename without `.md`). */
   getTemplate(name: string): TaskTemplate | null {
+    // Security: reject anything that could escape `<boardDir>/templates/`
+    // (path separators, `..`, absolute paths) before touching the filesystem.
+    if (!isValidTemplateName(name)) {
+      throw new Error(`Invalid template name: "${name}" (allowed: letters, digits, dot, underscore, dash; no ".." or path separators)`)
+    }
     const file = path.join(this.templatesDir(), `${name}.md`)
-    if (!fs.existsSync(file)) return null
+    let raw: string
     try {
-      return parseTemplate(fs.readFileSync(file, 'utf8'), name)
-    } catch {
-      return null
+      raw = fs.readFileSync(file, 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw err
+    }
+    try {
+      return parseTemplate(raw, name)
+    } catch (err) {
+      throw new Error(`Template "${name}" has invalid frontmatter: ${(err as Error).message}`)
     }
   }
 
@@ -351,6 +362,12 @@ export class ProjectStore extends EventEmitter {
     const template = this.getTemplate(name)
     if (!template) throw new Error(`Template not found: ${name} (looked in ${this.templatesDir()})`)
     const rendered = renderTemplate(template, opts.vars ?? {})
+    // An empty title override (e.g. the UI sending `title: ''` alongside a
+    // template) must not clobber the rendered template title.
+    const overrides: Partial<TaskInput> = { ...opts.overrides }
+    if (typeof overrides.title === 'string' && overrides.title.trim() === '') {
+      delete overrides.title
+    }
     return this.createTask(
       {
         title: rendered.title?.trim() || 'Untitled task',
@@ -360,7 +377,7 @@ export class ProjectStore extends EventEmitter {
         tags: rendered.tags,
         acceptanceCriteria: rendered.acceptanceCriteria,
         description: rendered.description,
-        ...opts.overrides,
+        ...overrides,
       },
       { actor: opts.actor },
     )
@@ -447,11 +464,16 @@ export class ProjectStore extends EventEmitter {
 
   // Extend createTask to validate cycles after insertion and record the `created` activity event
   createTask(input: TaskInput, opts: { actor?: string } = {}): TaskType {
+    // Validate the title before touching Zod so HTTP callers get a clean
+    // error message instead of a raw TypeError from `.trim()`.
+    const title = typeof input.title === 'string' ? input.title.trim() : ''
+    if (!title) throw new Error('Task title is required')
     const sprint = input.sprint == null ? null : this._requireSprint(input.sprint)
     const id = input.id ?? this._nextTaskId()
     const createdAt = input.createdAt ?? nowIso()
     const task = Task.parse({
       ...input,
+      title,
       id,
       sprint: sprint?.id ?? null,
       status: input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do'),
@@ -464,7 +486,7 @@ export class ProjectStore extends EventEmitter {
           at: createdAt,
           actor: opts.actor ?? 'user',
           type: 'created',
-          detail: `task created (${input.title.trim()})`,
+          detail: `task created (${title})`,
         },
       ],
     })
@@ -758,6 +780,19 @@ deleteTask(id: string): void {
 const isCheckedCriterion = (c?: string): boolean => !!c && /^\[[xX]\]\s*/.test(c)
 const criterionTextOf = (c?: string): string => (c ?? '').replace(/^\s*\[[xX]?\]\s*/, '').trim()
 
+/** Checked-count per criterion text, so diffs match by content instead of position. */
+function criteriaStats(criteria: string[]): Map<string, { total: number; checked: number }> {
+  const stats = new Map<string, { total: number; checked: number }>()
+  for (const c of criteria) {
+    const key = criterionTextOf(c)
+    const entry = stats.get(key) ?? { total: 0, checked: 0 }
+    entry.total += 1
+    if (isCheckedCriterion(c)) entry.checked += 1
+    stats.set(key, entry)
+  }
+  return stats
+}
+
 /**
  * Compute the activity events produced by an update, comparing the previous
  * and next task states: status changes, assignee changes, checklist toggles,
@@ -776,16 +811,21 @@ function diffActivityEvents(
   if (patch.assignee != null && patch.assignee !== current.assignee) {
     events.push({ at: ctx.at, actor: ctx.actor, type: 'assignee', detail: `${current.assignee} → ${next.assignee}` })
   }
-  const len = Math.max(current.acceptanceCriteria.length, next.acceptanceCriteria.length)
-  for (let i = 0; i < len; i++) {
-    const wasChecked = isCheckedCriterion(current.acceptanceCriteria[i])
-    const isChecked = isCheckedCriterion(next.acceptanceCriteria[i])
-    if (wasChecked !== isChecked) {
+  // Checklist diff by criterion TEXT (not index): removing or reordering
+  // criteria must not produce phantom checked/unchecked events. Criteria that
+  // only exist on one side are additions/removals, covered by the
+  // acceptanceCriteria update event below.
+  const before = criteriaStats(current.acceptanceCriteria)
+  const afterStats = criteriaStats(next.acceptanceCriteria)
+  for (const [text, afterEntry] of afterStats) {
+    const beforeEntry = before.get(text)
+    if (!beforeEntry) continue // added criterion → update event, not a toggle
+    if (beforeEntry.checked !== afterEntry.checked) {
       events.push({
         at: ctx.at,
         actor: ctx.actor,
         type: 'checklist',
-        detail: `${isChecked ? 'checked' : 'unchecked'} "${criterionTextOf(next.acceptanceCriteria[i])}"`,
+        detail: `${afterEntry.checked > beforeEntry.checked ? 'checked' : 'unchecked'} "${text}"`,
       })
     }
   }
@@ -793,11 +833,20 @@ function diffActivityEvents(
     events.push({ at: ctx.at, actor: ctx.actor, type: 'note', detail: ctx.noteEvent })
   }
   const tracked = ['title', 'description', 'priority', 'sprint', 'estimate', 'tags', 'dependencies'] as const
-  const changed = tracked.filter(
+  const changed: string[] = tracked.filter(
     (k) =>
       patch[k] !== undefined &&
       JSON.stringify(patch[k]) !== JSON.stringify((current as unknown as Record<string, unknown>)[k]),
   )
+  // acceptanceCriteria: record add/remove/reorder as an update, but stay quiet
+  // for pure check-state toggles (those already emit checklist events).
+  if (
+    patch.acceptanceCriteria !== undefined &&
+    patch.acceptanceCriteria.map(criterionTextOf).join('\u0000') !==
+      current.acceptanceCriteria.map(criterionTextOf).join('\u0000')
+  ) {
+    changed.push('acceptanceCriteria')
+  }
   if (changed.length > 0) {
     events.push({ at: ctx.at, actor: ctx.actor, type: 'update', detail: `updated ${changed.join(', ')}` })
   }

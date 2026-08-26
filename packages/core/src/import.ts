@@ -14,19 +14,37 @@ export interface ParsedTodoItem {
 /**
  * Parse a TODO.md / NOTES.md style file into task candidates.
  * Supports checkbox bullets (`- [ ]`, `- [x]`) and plain bullets (`-`, `*`, `+`).
- * Headings, code blocks and blank lines are ignored.
+ * A YAML frontmatter block at the top of the file (`--- ... ---`) is skipped so
+ * its list entries are never mistaken for tasks. Headings, code blocks and
+ * blank lines are ignored.
  */
 export function parseTodoFile(content: string): ParsedTodoItem[] {
+  const lines = content.split('\n')
+  // Skip a leading YAML frontmatter block before iterating body lines.
+  let start = 0
+  let i = 0
+  while (i < lines.length && lines[i]!.trim() === '') i++
+  if (lines[i]?.trim() === '---') {
+    let close = -1
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j]!.trim() === '---') {
+        close = j
+        break
+      }
+    }
+    if (close !== -1) start = close + 1
+  }
+
   const items: ParsedTodoItem[] = []
   let inCodeBlock = false
-  for (const rawLine of content.split('\n')) {
+  for (const rawLine of lines.slice(start)) {
     const line = rawLine.trimEnd()
     if (/^\s*```/.test(line)) {
       inCodeBlock = !inCodeBlock
       continue
     }
     if (inCodeBlock) continue
-    const checkbox = line.match(/^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/)
+    const checkbox = line.match(/^\s*[-*+]\s+\[([ xX])\]\s*(.+)$/)
     if (checkbox) {
       const title = checkbox[2]!.trim()
       if (title) items.push({ title, done: checkbox[1]!.toLowerCase() === 'x' })
@@ -95,6 +113,9 @@ export interface ImportMapping {
   extraTags?: string[]
 }
 
+/** Maximum number of issues requested from `gh issue list` in one import. */
+export const GH_ISSUE_LIMIT = 200
+
 /** Fetch open issues of `owner/repo` using the GitHub CLI (`gh`). Throws when gh is unavailable. */
 export async function fetchGithubIssues(ownerRepo: string): Promise<GithubIssue[]> {
   await assertGhAvailable()
@@ -108,7 +129,7 @@ export async function fetchGithubIssues(ownerRepo: string): Promise<GithubIssue[
       '--state',
       'open',
       '--limit',
-      '200',
+      String(GH_ISSUE_LIMIT),
       '--json',
       'number,title,labels,milestone',
     ],
@@ -160,6 +181,22 @@ export function issuesToTaskInputs(issues: GithubIssue[], mapping: ImportMapping
 export interface ImportResult {
   created: Array<{ id: string; title: string }>
   skippedDuplicates: Array<{ title: string; matchedWith: string }>
+}
+
+/**
+ * Return the `milestone→sprintId` entries whose sprint id does not exist in
+ * `sprints`. Run this before creating any task so an invalid mapping fails the
+ * import up front instead of midway through the batch.
+ */
+export function validateMilestoneSprints(
+  milestoneSprints: Record<string, number> | undefined,
+  sprints: Array<{ id: number }>,
+): string[] {
+  const invalid: string[] = []
+  for (const [title, id] of Object.entries(milestoneSprints ?? {})) {
+    if (!sprints.some((s) => s.id === id)) invalid.push(`${title}=${id}`)
+  }
+  return invalid
 }
 
 /**
