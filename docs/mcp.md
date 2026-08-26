@@ -4,6 +4,28 @@ AgentSprint ships a [Model Context Protocol](https://modelcontextprotocol.io)
 server so any MCP-compatible AI coding agent can read, claim and complete
 tasks from your board — without touching the UI.
 
+## Authentication (optional bearer token)
+
+When the Fastify server is started with `agentboard serve --token <secret>` (or `AGENTBOARD_TOKEN` env), every MCP HTTP call to `POST /mcp` (and `GET /mcp`, `DELETE /mcp`) requires `Authorization: Bearer <secret>`. Without it the server replies `401 { "error": "Unauthorized" }`. The secret is never logged.
+
+* Without a token, the board stays open (backwards compatible).
+* With `--token` alone, only mutating API/MCP routes are protected — MCP `initialize` still needs the header because it is a `POST`.
+* With `--token --token-all`, every read (`GET /mcp`) is also protected.
+
+Stdio MCP (`node packages/mcp/dist/index.js --root <dir>`) bypasses HTTP auth; use the token only for the Streamable HTTP endpoint (`/mcp`). On `401`, configure your client with:
+
+```json
+{ "headers": { "Authorization": "Bearer <secret>" } }
+```
+
+or set `AGENTBOARD_TOKEN` before starting the client. Example curl:
+
+```bash
+curl -i -H "Authorization: Bearer $AGENTBOARD_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}' \
+  http://127.0.0.1:4310/mcp
+```
+
 ## Tools
 
 | Tool | Description |

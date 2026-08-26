@@ -20,6 +20,8 @@ Options:
   --no-fallback     Disable auto port fallback if port is busy
   --init            Auto-create a board if missing (serve)
   --mcp             Also expose MCP tools at /mcp (Streamable HTTP)
+  --token <secret>  Require Authorization: Bearer <secret> for mutating API/MCP calls (or env AGENTBOARD_TOKEN)
+  --token-all       With --token, also protect GETs — all /api/* need auth
   --version         Print the version
 ```
 
@@ -34,6 +36,24 @@ Scaffolds `.agentboard/` with sample tasks, templates, a first sprint and an `AG
 Starts the Fastify server, serves the React SPA, watches board files for changes and exposes the REST + SSE API. With `--mcp`, MCP tools are also available at `/mcp` on the same port (see the [MCP guide](/mcp)).
 
 When port `4310` is busy, AgentSprint automatically tries the next free port (`4311`, …). Disable with `--no-fallback` to fail fast with `EADDRINUSE`.
+
+#### Authentication (optional `--token` / `AGENTBOARD_TOKEN`)
+
+By default no auth is required. To protect the board:
+
+```bash
+agentboard serve --token my-secret
+# or
+AGENTBOARD_TOKEN=my-secret agentboard serve
+```
+
+* Without a token, every client (web, CLI, MCP) can read and write.
+* With a token, `POST`/`PUT`/`PATCH`/`DELETE` to `/api/*` and `/mcp` need `Authorization: Bearer my-secret` or they receive `401 { "error": "Unauthorized" }`.
+* Add `--token-all` alongside `--token` to also require the header for `GET`s: `agentboard serve --token my-secret --token-all`.
+* The secret is never logged.
+* **Web** — on `401` the UI shows a token prompt, saves it to `localStorage` key `agentsprint-token`, and retries. Use “Clear token” to remove it.
+* **CLI / MCP HTTP** — on `401` set `AGENTBOARD_TOKEN` or pass `--token` and retry with `Authorization: Bearer <token>`. Example: `curl -H "Authorization: Bearer $AGENTBOARD_TOKEN" http://127.0.0.1:4310/api/tasks`.
+* **MCP stdio** — stdio transport bypasses HTTP auth; only the HTTP endpoint (`/mcp`) is protected.
 
 ### `spec <dir> <id>`
 
