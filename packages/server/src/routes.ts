@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
 import { buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, taskCommitCounts } from '@jmrojas06/agentsprint-core'
-import type { ProjectHandle, ProjectManager } from './projects.js'
+import type { ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
 function sendError(reply: FastifyReply, status: number, message: string): void {
