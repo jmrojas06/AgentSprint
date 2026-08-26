@@ -557,7 +557,7 @@ export class ProjectStore extends EventEmitter {
     return task
   }
 
-<  // Extend updateTask to validate cycles after mutation and record diff-based activity events.
+  // Extend updateTask to validate cycles after mutation and record diff-based activity events.
   // The whole read-modify-write cycle runs under the per-file lock (and re-reads
   // the task from disk) so concurrent processes updating the same task never
   // clobber each other's changes with a stale in-memory copy.

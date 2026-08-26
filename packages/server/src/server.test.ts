@@ -448,10 +448,9 @@ describe('server API', () => {
       expect(r2.headers['x-cache']).toBe('HIT')
       clearGitCache()
       const r3 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
-      expect(r3.headers['x-cache']).toBe('MISS')
-    })
-  })
-})
+       expect(r3.headers['x-cache']).toBe('MISS')
+     })
+   })
 
   describe('auto-assignee by status (endpoints)', () => {
     it('PATCH /api/tasks/:id/status maps assignee and emits assignee event', async () => {

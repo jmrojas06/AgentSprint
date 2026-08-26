@@ -25,6 +25,10 @@ const { boardState } = vi.hoisted(() => ({
 }))
 
 vi.mock('./api', async () => ({
+  getStoredToken: vi.fn().mockReturnValue(null),
+  setStoredToken: vi.fn(),
+  clearStoredToken: vi.fn(),
+  TOKEN_KEY: 'agentsprint-token',
   setProject: vi.fn(),
   api: {
     projects: vi.fn().mockResolvedValue([]),
