@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Sprint, Task } from '../types'
@@ -166,5 +167,85 @@ describe('CommandPalette', () => {
     fireEvent.click(screen.getByText('TK-3 — Dark theme toggle'))
     expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'TK-3' }))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('Escape closes only the palette, not overlays listening on window below it', () => {
+    function Harness() {
+      const [paletteOpen, setPaletteOpen] = useState(true)
+      const [modalOpen, setModalOpen] = useState(true)
+      // mimics TaskModal/NewTaskModal: window-level Escape listener
+      useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+          if (e.key === 'Escape') setModalOpen(false)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [])
+      return (
+        <>
+          {modalOpen && <div data-testid="underlying-modal">unsaved edits</div>}
+          <CommandPalette
+            open={paletteOpen}
+            tasks={TASKS}
+            sprints={SPRINTS}
+            activeSprintId={2}
+            onClose={() => setPaletteOpen(false)}
+            onCreateTask={vi.fn()}
+            onOpenTask={vi.fn()}
+            onActivateSprint={vi.fn()}
+            onClearFilters={vi.fn()}
+          />
+        </>
+      )
+    }
+    render(<Harness />)
+    fireEvent.keyDown(screen.getByPlaceholderText(/search tasks/i), { key: 'Escape' })
+    expect(screen.queryByTestId('command-palette')).toBeNull()
+    expect(screen.getByTestId('underlying-modal')).toBeTruthy()
+  })
+
+  it('ArrowDown with no results keeps a valid selection once results return', () => {
+    renderPalette()
+    const input = screen.getByPlaceholderText(/search tasks/i)
+    type('zzz-no-match')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    type('') // restore full list
+    expect(items()[0]!.getAttribute('data-active')).toBe('true')
+  })
+
+  it('matches sprint items by their goal via fuzzy search', () => {
+    renderPalette()
+    type('next work')
+    const labels = items().map((el) => el.textContent!)
+    expect(labels.some((l) => l.includes('Activate sprint 3'))).toBe(true)
+  })
+
+  it('restores focus to the previously focused element when closed', () => {
+    function Harness({ open }: { open: boolean }) {
+      return (
+        <>
+          <button data-testid="outside">outside</button>
+          <CommandPalette
+            open={open}
+            tasks={TASKS}
+            sprints={SPRINTS}
+            activeSprintId={2}
+            onClose={vi.fn()}
+            onCreateTask={vi.fn()}
+            onOpenTask={vi.fn()}
+            onActivateSprint={vi.fn()}
+            onClearFilters={vi.fn()}
+          />
+        </>
+      )
+    }
+    const { rerender } = render(<Harness open={false} />)
+    const outside = screen.getByTestId('outside')
+    ;(outside as HTMLButtonElement).focus()
+    expect(document.activeElement).toBe(outside)
+    rerender(<Harness open />)
+    rerender(<Harness open={false} />)
+    expect(document.activeElement).toBe(outside)
   })
 })

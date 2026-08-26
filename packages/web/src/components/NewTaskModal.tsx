@@ -30,6 +30,8 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
   }, [onClose])
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [assignee, setAssignee] = useState<'scrum-master' | 'dev' | 'review' | 'perfect'>('scrum-master')
+  const [priorityTouched, setPriorityTouched] = useState(false)
+  const [assigneeTouched, setAssigneeTouched] = useState(false)
   const [sprint, setSprint] = useState<number | null>(null)
   const [templates, setTemplates] = useState<TaskTemplate[]>([])
   const [template, setTemplate] = useState<string>('')
@@ -41,9 +43,10 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
   const selectTemplate = (name: string) => {
     setTemplate(name)
     const tpl = templates.find((t) => t.name === name)
+    // Only apply template defaults for fields the user has not chosen manually.
     if (tpl) {
-      if (tpl.priority) setPriority(tpl.priority)
-      if (tpl.assignee) setAssignee(tpl.assignee)
+      if (tpl.priority && !priorityTouched) setPriority(tpl.priority)
+      if (tpl.assignee && !assigneeTouched) setAssignee(tpl.assignee)
     }
   }
 
@@ -112,7 +115,10 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
                 <button
                   key={p}
                   type="button"
-                  onClick={() => setPriority(p)}
+                  onClick={() => {
+                  setPriority(p)
+                  setPriorityTouched(true)
+                }}
                   title={priorityLabel[p]}
                   className={
                     'h-7 flex-1 rounded-md border text-[10px] ' +
@@ -127,7 +133,14 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
 
           <div>
             <label className={label}>Assignee</label>
-            <select value={assignee} onChange={(e) => setAssignee(e.target.value as 'scrum-master' | 'dev' | 'review' | 'perfect')} className={field}>
+            <select
+              value={assignee}
+              onChange={(e) => {
+                setAssignee(e.target.value as 'scrum-master' | 'dev' | 'review' | 'perfect')
+                setAssigneeTouched(true)
+              }}
+              className={field}
+            >
               <option value="scrum-master">Scrum Master</option>
               <option value="dev">Development</option>
               <option value="review">Review</option>

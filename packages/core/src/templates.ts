@@ -23,6 +23,15 @@ export interface TaskTemplate extends TemplateMeta {
 
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g
 
+/**
+ * A template name must be a plain filename without extension: letters,
+ * digits, dot, underscore and dash only. Rejects path separators and `..`
+ * so a name can never escape `<boardDir>/templates/`.
+ */
+export function isValidTemplateName(name: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(name) && !name.includes('..')
+}
+
 /** Replace `{{var}}` placeholders with values from `vars`; unknown placeholders are left intact. */
 export function renderString(value: string, vars: TemplateVars): string {
   return value.replace(PLACEHOLDER, (_match, key: string) => vars[key] ?? `{{${key}}}`)
@@ -35,13 +44,14 @@ export function parseTemplate(raw: string, name: string): TaskTemplate {
   return { ...data, name, description, acceptanceCriteria }
 }
 
-/** Render every placeholder in a template (title, description, acceptance criteria). */
+/** Render every placeholder in a template (title, description, acceptance criteria, tags). */
 export function renderTemplate(template: TaskTemplate, vars: TemplateVars = {}): TaskTemplate {
   return {
     ...template,
     title: template.title ? renderString(template.title, vars) : undefined,
     description: renderString(template.description, vars),
     acceptanceCriteria: template.acceptanceCriteria.map((c) => renderString(c, vars)),
+    tags: template.tags?.map((t) => renderString(t, vars)),
   }
 }
 
@@ -52,10 +62,19 @@ export function readTemplates(boardDir: string): TaskTemplate[] {
   const out: TaskTemplate[] = []
   for (const file of fs.readdirSync(dir)) {
     if (!file.endsWith('.md')) continue
+    let raw: string
     try {
-      out.push(parseTemplate(fs.readFileSync(path.join(dir, file), 'utf8'), file.replace(/\.md$/, '')))
+      raw = fs.readFileSync(path.join(dir, file), 'utf8')
+    } catch (err) {
+      // A file that vanished between readdir and read is fine to skip;
+      // anything else (EACCES, EISDIR, ...) must surface, not be swallowed.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw err
+    }
+    try {
+      out.push(parseTemplate(raw, file.replace(/\.md$/, '')))
     } catch {
-      // unparseable templates are ignored
+      // unparseable frontmatter: skip the file but keep listing the rest
     }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name))

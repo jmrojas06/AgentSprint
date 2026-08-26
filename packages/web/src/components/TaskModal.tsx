@@ -151,7 +151,7 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Task title"
-            className="flex-1 bg-transparent text-base font-semibold text-zinc-100 outline-none placeholder:text-zinc-600"
+            className="flex-1 bg-transparent text-base font-semibold text-zinc-100 outline-none placeholder:text-zinc-500"
           />
           <button onClick={onClose} className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
             <X className="h-4 w-4" />

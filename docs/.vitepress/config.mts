@@ -10,7 +10,14 @@ export default defineConfig({
   title: 'AgentSprint',
   description:
     'Git-native sprint board for solo developers who code with AI agents.',
-  srcExclude: ['**/PROGRESS.md'],
+  srcExclude: [
+    '**/PROGRESS.md',
+    '**/demo-pipeline.md',
+    '**/video-notes.md',
+    '**/video-storyboard.md',
+    '**/video-script-es.md',
+    '**/sprint-planning.md',
+  ],
   head: [
     [
       'link',

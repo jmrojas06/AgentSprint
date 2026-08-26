@@ -42,18 +42,36 @@ export function serializeFrontmatter(data: Record<string, unknown>, body: string
  */
 const ACTIVITY_LINE = /^-\s*(\S+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.*)$/
 
-/** Parse the `## Activity` section of a task body into structured events. */
+/** Parse the `## Activity` section of a task body into structured events, sorted by timestamp. */
 export function parseActivity(body: string): ActivityEventType[] {
   const raw = section(body, 'Activity')
   if (!raw) return []
   const events: ActivityEventType[] = []
+  const malformed: string[] = []
   for (const line of raw.split('\n')) {
-    const m = ACTIVITY_LINE.exec(line.trim())
-    if (!m) continue
-    const parsed = ActivityEvent.safeParse({ at: m[1], actor: m[2], type: m[3], detail: m[4] })
-    if (parsed.success) events.push(parsed.data)
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const m = ACTIVITY_LINE.exec(trimmed)
+    const parsed = m ? ActivityEvent.safeParse({ at: m[1], actor: m[2], type: m[3], detail: m[4] }) : null
+    if (parsed?.success) {
+      events.push(parsed.data)
+    } else {
+      // Never drop malformed lines silently: warn so they are not lost
+      // unnoticed when the task is rewritten from structured data.
+      malformed.push(trimmed)
+    }
   }
-  return events
+  if (malformed.length > 0) {
+    console.warn(
+      `[agentboard] ${malformed.length} malformed activity line(s) in ## Activity will be lost on rewrite: ${malformed.join(' ; ')}`,
+    )
+  }
+  return sortActivity(events)
+}
+
+/** Sort events chronologically by their parsed `at` timestamp (stable for ties). */
+function sortActivity(events: ActivityEventType[]): ActivityEventType[] {
+  return [...events].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
 }
 
 /** Serialize activity events back into `## Activity` section lines. */
