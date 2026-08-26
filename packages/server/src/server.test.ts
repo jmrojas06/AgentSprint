@@ -2,11 +2,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildApp } from './index.js'
 import { createIndex } from './indexdb.js'
 import { recordBurndownSnapshot } from './metrics.js'
+import { clearGitCache, GIT_CACHE_TTL_MS } from './routes.js'
 import type { FastifyInstance } from 'fastify'
 
 let dir: string
@@ -261,6 +262,93 @@ describe('server API', () => {
     await built2.close()
 
     fs.rmSync(bad)
+  })
+
+  describe('git commit cache (TTL)', () => {
+    function git(...args: string[]): string {
+      return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+    }
+
+    beforeEach(() => {
+      clearGitCache()
+      // ensure repo exists for these tests (some outer afterEach clears dir)
+      try {
+        git('rev-parse', '--git-dir')
+      } catch {
+        git('init', '-b', 'main')
+        git('config', 'user.name', 'Test User')
+        git('config', 'user.email', 'test@example.com')
+        fs.writeFileSync(path.join(dir, '.txt'), 'x')
+        execFileSync('git', ['-C', dir, 'add', '-A'])
+        git('commit', '-m', 'feat: implement TK-1 sample task')
+      }
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      clearGitCache()
+    })
+
+    it('returns MISS then HIT within TTL for /api/git/commit-counts and MISS again after TTL', async () => {
+      vi.useFakeTimers()
+      clearGitCache()
+
+      const first = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(first.statusCode).toBe(200)
+      expect(first.headers['x-cache']).toBe('MISS')
+
+      const second = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(second.statusCode).toBe(200)
+      expect(second.headers['x-cache']).toBe('HIT')
+      expect(second.body).toBe(first.body)
+
+      vi.advanceTimersByTime(GIT_CACHE_TTL_MS + 100)
+
+      const third = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(third.statusCode).toBe(200)
+      expect(third.headers['x-cache']).toBe('MISS')
+    })
+
+    it('caches /api/tasks/:id/commits per pattern and uses distinct keys', async () => {
+      vi.useFakeTimers()
+      clearGitCache()
+
+      const a1 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a1.statusCode).toBe(200)
+      expect(a1.headers['x-cache']).toBe('MISS')
+
+      const a2 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a2.headers['x-cache']).toBe('HIT')
+      expect(a2.body).toBe(a1.body)
+
+      const b1 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits?pattern=%5Efeat%2F%25ID%25' })
+      expect(b1.statusCode).toBe(200)
+      expect(b1.headers['x-cache']).toBe('MISS')
+
+      const b2 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits?pattern=%5Efeat%2F%25ID%25' })
+      expect(b2.headers['x-cache']).toBe('HIT')
+      expect(b2.body).toBe(b1.body)
+
+      // default pattern still HIT (different key from custom)
+      const a3 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a3.headers['x-cache']).toBe('HIT')
+
+      vi.advanceTimersByTime(GIT_CACHE_TTL_MS + 100)
+
+      const a4 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a4.headers['x-cache']).toBe('MISS')
+    })
+
+    it('exports clearGitCache helper and respects manual invalidation', async () => {
+      clearGitCache()
+      const r1 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(r1.headers['x-cache']).toBe('MISS')
+      const r2 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(r2.headers['x-cache']).toBe('HIT')
+      clearGitCache()
+      const r3 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(r3.headers['x-cache']).toBe('MISS')
+    })
   })
 })
 

@@ -4,6 +4,37 @@ import { buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, tas
 import type { ProjectHandle, ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
+// ── git cache ────────────────────────────────────────────────────────────
+// In-memory per-process cache with TTL for git-heavy endpoints.
+// Invalidation: TTL-only (default 10s). No event-based invalidation on
+// POST/PUT/PATCH is needed because commits are created outside the board
+// via git; after TTL expiry the next request re-executes `git log`.
+// Observability: every response carries `X-Cache: HIT | MISS`.
+// `clearGitCache()` is exported for tests to reset state deterministically.
+// Key = repo path + suffix (counts vs refs) + optional pattern/task id.
+export const GIT_CACHE_TTL_MS = 10_000
+
+type CacheEntry<T> = { value: T; expiresAt: number }
+const gitCache = new Map<string, CacheEntry<unknown>>()
+
+export function clearGitCache(): void {
+  gitCache.clear()
+}
+
+function getCached<T>(key: string): T | undefined {
+  const entry = gitCache.get(key) as CacheEntry<T> | undefined
+  if (!entry) return undefined
+  if (entry.expiresAt <= Date.now()) {
+    gitCache.delete(key)
+    return undefined
+  }
+  return entry.value
+}
+
+function setCached<T>(key: string, value: T): void {
+  gitCache.set(key, { value, expiresAt: Date.now() + GIT_CACHE_TTL_MS })
+}
+
 function sendError(reply: FastifyReply, status: number, message: string): void {
   reply.code(status).send({ error: message })
 }
@@ -83,7 +114,15 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     const h = projects.get(projectName(req))
     if (!h.store.state.tasks.some((t) => t.id === id)) return sendError(reply, 404, `Task not found: ${id}`)
     const pattern = (req.query as Record<string, string> | undefined)?.pattern
+    const cacheKey = `${h.store.rootDir}::refs:${id}:${pattern ?? ''}`
+    const cached = getCached<import('@jmrojas06/agentsprint-core').TaskGitRefs>(cacheKey)
+    if (cached) {
+      reply.header('X-Cache', 'HIT')
+      return reply.send({ id, ...cached })
+    }
     const refs = await findTaskRefs(h.store.rootDir, id, pattern ? { pattern } : {})
+    setCached(cacheKey, refs)
+    reply.header('X-Cache', 'MISS')
     return reply.send({ id, ...refs })
   })
 
@@ -179,10 +218,19 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
 
   // ── git links ────────────────────────────────────────────────────────
 
-  app.get('/api/git/commit-counts', async (req) => {
+  app.get('/api/git/commit-counts', async (req, reply) => {
     const h = projects.get(projectName(req))
+    const cacheKey = `${h.store.rootDir}::commit-counts`
+    const cached = getCached<Record<string, number>>(cacheKey)
+    if (cached) {
+      reply.header('X-Cache', 'HIT')
+      return reply.send(cached)
+    }
     const ids = h.store.state.tasks.map((t) => t.id)
-    return taskCommitCounts(h.store.rootDir, ids)
+    const counts = await taskCommitCounts(h.store.rootDir, ids)
+    setCached(cacheKey, counts)
+    reply.header('X-Cache', 'MISS')
+    return reply.send(counts)
   })
 
   app.post('/api/sprints', async (req, reply) => {
