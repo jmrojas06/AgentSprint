@@ -7,7 +7,7 @@ packages/
 ├── core/    → domain model + git-native storage (.agentboard/*.md)
 ├── server/  → Fastify: REST + SSE + file watcher + SQLite index (depends on core, mcp)
 ├── web/     → React + Vite + Tailwind board UI                    (depends on core)
-├── cli/     → the `agentboard` CLI (init / serve / spec / brand)  (depends on core, server, web)
+├── cli/     → the `agentboard` CLI (init / serve / spec / brand / lint / close / task / import / export)  (depends on core, server, web)
 └── mcp/     → MCP server so agents read/claim/complete tasks      (depends on core)
 ```
 
