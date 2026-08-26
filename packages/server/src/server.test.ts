@@ -453,6 +453,58 @@ describe('server API', () => {
   })
 })
 
+  describe('auto-assignee by status (endpoints)', () => {
+    it('PATCH /api/tasks/:id/status maps assignee and emits assignee event', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Auto probe', status: 'To Do', sprint: 1 })
+      const id = created.json().id as string
+      expect(created.json().assignee).toBe('scrum-master')
+      const toInProgress = await api('patch', `/api/tasks/${id}/status`, { status: 'In Progress' })
+      expect(toInProgress.json().status).toBe('In Progress')
+      expect(toInProgress.json().assignee).toBe('dev')
+      const activity = await api('get', `/api/tasks/${id}/activity`)
+      const types = (activity.json().activity as Array<{ type: string; detail: string }>).map((e) => e.type)
+      expect(types).toContain('status')
+      expect(types).toContain('assignee')
+      const assigneeEv = (activity.json().activity as Array<{ type: string; detail: string }>).find((e) => e.type === 'assignee')!
+      expect(assigneeEv.detail).toBe('scrum-master → dev')
+
+      const toReview = await api('patch', `/api/tasks/${id}/status`, { status: 'Review' })
+      expect(toReview.json().assignee).toBe('review')
+      const toDone = await api('patch', `/api/tasks/${id}/status`, { status: 'Done' })
+      expect(toDone.json().assignee).toBe('perfect')
+    })
+
+    it('PUT /api/tasks/:id with status maps assignee', async () => {
+      const created = await api('post', '/api/tasks', { title: 'PUT auto', status: 'To Do' })
+      const id = created.json().id as string
+      const updated = await api('put', `/api/tasks/${id}`, { status: 'In Progress' })
+      expect(updated.json().assignee).toBe('dev')
+      const act = await api('get', `/api/tasks/${id}/activity`)
+      expect((act.json().activity as Array<{ type: string }>).some((e) => e.type === 'assignee')).toBe(true)
+    })
+
+    it('Backlog → To Do keeps scrum-master, To Do → Done via PUT maps to perfect with activity', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Chain probe', status: 'Backlog' })
+      const id = created.json().id as string
+      expect(created.json().assignee).toBe('scrum-master')
+      const toTodo = await api('patch', `/api/tasks/${id}/status`, { status: 'To Do' })
+      expect(toTodo.json().assignee).toBe('scrum-master')
+      const act1 = await api('get', `/api/tasks/${id}/activity`)
+      // No assignee event for same assignee
+      expect((act1.json().activity as Array<{ type: string }>).filter((e) => e.type === 'assignee')).toHaveLength(0)
+      const toInProg = await api('patch', `/api/tasks/${id}/status`, { status: 'In Progress' })
+      expect(toInProg.json().assignee).toBe('dev')
+    })
+
+    it('explicit assignee in PUT is preserved (task_claim priority)', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Explicit assignee', status: 'To Do' })
+      const id = created.json().id as string
+      const updated = await api('put', `/api/tasks/${id}`, { status: 'In Progress', assignee: 'review' })
+      expect(updated.json().assignee).toBe('review')
+    })
+  })
+})
+
 describe('multi-project', () => {
   function parseMcpRes(body: string): unknown {
     if (body.startsWith('event:')) {
