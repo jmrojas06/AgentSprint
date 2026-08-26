@@ -17,6 +17,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
       # Build first: cross-package types resolve to each package's dist/,
       # which only exists after building (fresh checkout has no dist/).
       - name: Build

@@ -62,6 +62,29 @@ describe('server API', () => {
     expect(list.json().some((t: { title: string }) => t.title === 'From API')).toBe(true)
   })
 
+  it('creates a task from a template via POST /api/tasks', async () => {
+    const res = await api('post', '/api/tasks', {
+      template: 'bug-report',
+      vars: { summary: 'crash on save', repro_step: 'open the app', expected: 'it saves', actual: 'it crashes' },
+    })
+    expect(res.status).toBe(201)
+    expect(res.json().title).toBe('Bug: crash on save')
+    expect(res.json().tags).toContain('bug')
+  })
+
+  it('rejects path traversal template names over the API without reading outside templates/', async () => {
+    fs.writeFileSync(
+      path.join(dir, 'secret.md'),
+      '---\ntitle: "TOPSECRET"\n---\n\n## Description\n\nleaked content\n',
+      'utf8',
+    )
+    const res = await api('post', '/api/tasks', { template: '../secret', title: '' })
+    expect(res.status).toBe(400)
+    expect((res.json() as { error: string }).error).toMatch(/Invalid template name/)
+    const list = await api('get', '/api/tasks')
+    expect(list.json().some((t: { title: string }) => t.title.includes('TOPSECRET'))).toBe(false)
+  })
+
   it('updates status', async () => {
     const res = await api('patch', '/api/tasks/TK-1/status', { status: 'Review' })
     expect(res.status).toBe(200)
@@ -77,6 +100,16 @@ describe('server API', () => {
   it('rejects bad sprint on create', async () => {
     const { status } = await api('post', '/api/tasks', { title: 'Bad', sprint: 99 })
     expect(status).toBe(400)
+  })
+
+  it('rejects a task without title with a clean 400 error', async () => {
+    const missing = await api('post', '/api/tasks', {})
+    expect(missing.status).toBe(400)
+    expect((missing.json() as { error: string }).error).toBe('Task title is required')
+
+    const blank = await api('post', '/api/tasks', { title: '   ' })
+    expect(blank.status).toBe(400)
+    expect((blank.json() as { error: string }).error).toBe('Task title is required')
   })
 
   it('creates and activates a sprint', async () => {
@@ -178,6 +211,20 @@ describe('server API', () => {
       }
     })
 
+    it('rejects invalid or ReDoS-prone patterns with 400 instead of 500/hang', async () => {
+      const invalid = await api('get', '/api/tasks/TK-1/commits?pattern=(')
+      expect(invalid.status).toBe(400)
+      expect(invalid.json().error).toContain('Invalid pattern')
+
+      const redos = await api('get', '/api/tasks/TK-1/commits?pattern=' + encodeURIComponent('(a+)+$'))
+      expect(redos.status).toBe(400)
+      expect(redos.json().error).toContain('Invalid pattern')
+
+      const oversized = await api('get', '/api/tasks/TK-1/commits?pattern=' + encodeURIComponent('x'.repeat(201)))
+      expect(oversized.status).toBe(400)
+      expect(oversized.json().error).toContain('maximum length')
+    })
+
     it('serves commit counts for the board', async () => {
       const { status, json } = await api('get', '/api/git/commit-counts')
       expect(status).toBe(200)
@@ -248,6 +295,60 @@ describe('server API', () => {
 
     const missing = await api('get', '/api/tasks/NO-99/activity')
     expect(missing.status).toBe(404)
+  })
+
+  it('returns the activity timeline sorted by timestamp', async () => {
+    fs.writeFileSync(
+      path.join(dir, '.agentboard/tasks/TK-2.md'),
+      [
+        '---',
+        'id: TK-2',
+        'title: "Plan sprint goals"',
+        'status: In Progress',
+        'sprint: 1',
+        'priority: medium',
+        'assignee: scrum-master',
+        'estimate: 2',
+        'tags:',
+        '  - planning',
+        'dependencies:',
+        '  - TK-1',
+        'createdAt: 2026-01-01T00:00:00.000Z',
+        'updatedAt: 2026-01-01T00:00:00.000Z',
+        '---',
+        '',
+        '## Description',
+        '',
+        'Sprints are Markdown files.',
+        '',
+        '## Acceptance criteria',
+        '',
+        '- [ ] Sprint goal is defined',
+        '- [ ] Tasks are assigned to the sprint',
+        '',
+        '## Activity',
+        '',
+        '- 2026-01-02T10:00:00.000Z | agent | status | Backlog → In Progress',
+        '- 2026-01-01T09:00:00.000Z | user | note | written out of order',
+        '- 2026-01-03T12:00:00.000Z | agent | update | updated tags',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const rebuilt = await buildApp({ rootDir: dir })
+    try {
+      const res = await rebuilt.app.inject({ method: 'GET', url: '/api/tasks/TK-2/activity' })
+      expect(res.statusCode).toBe(200)
+      const { activity } = JSON.parse(res.body)
+      expect(activity.map((e: { at: string }) => e.at)).toEqual([
+        '2026-01-01T09:00:00.000Z',
+        '2026-01-02T10:00:00.000Z',
+        '2026-01-03T12:00:00.000Z',
+      ])
+    } finally {
+      await rebuilt.close()
+    }
   })
 
   it('surfaces parse warnings in /api/project', async () => {

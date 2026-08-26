@@ -9,31 +9,15 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 <p align="center">
-  <a href="docs/public/demo-v2.mp4">
-    <img src="docs/public/demo-v2.gif" alt="AgentSprint demo" width="800">
+  <a href="docs/public/demo.gif">
+    <img src="docs/public/demo.gif" alt="AgentSprint demo" width="800">
   </a>
 </p>
 
 <details open="block">
-  <summary>Ver demo en video (45 seg)</summary>
+  <summary>Demo del board en acción</summary>
 
-  **Español:** [docs/video-storyboard.md](docs/video-storyboard.md) — Storyboard y guion para video de 45 segundos.
-  **English:** [docs/video-storyboard.md](docs/video-storyboard.md) — Storyboard and 45-second demo script.
-
-  *Para generar el video:*
-  - Grabación automática: `npm run demo:mp4` genera `docs/public/demo-v2.mp4`.
-  - Preview GIF: `npm run demo:gif` genera `docs/public/demo-v2.gif` (8 s, 480×270).
-  - Herramienta: ffmpeg (instalado en CI via `apt-get install ffmpeg`).
-  - Overlays: usar el guion en `docs/video-script-es.md`.
-
-  <br>
-  *Video generado:* pipeline automático — los archivos `demo-v2.mp4` y `demo-v2.gif` se producen en el workflow de GitHub Actions.
-
-  - **MP4:** demo completa (45 s, 1920×1080, 30 fps) — [docs/public/demo-v2.mp4](docs/public/demo-v2.mp4)
-  - **GIF:** preview corto (8 s, 480×270, 15 fps) — [docs/public/demo-v2.gif](docs/public/demo-v2.gif)
-
-  <br>
-  *Los archivos se generan en el workflow de docs.yml y se publican en GitHub Pages.*
+  - **GIF:** [docs/public/demo.gif](docs/public/demo.gif) — el tablero en uso: tareas, sprints y un agente moviendo una tarea a Review.
 </details>
 
 Documentation · [Issues](https://github.com/jmrojas06/AgentSprint/issues) · [Changelog](CHANGELOG.md)

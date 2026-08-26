@@ -3,7 +3,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs } from '@jmrojas06/agentsprint-core'
+import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
 import { startServer } from '@jmrojas06/agentsprint-server'
 
 const VERSION = '0.1.0'
@@ -75,7 +75,7 @@ interface Args {
 
 export function parseArgs(argv: string[]): Args | null {
   const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'help'])
-  let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
+  const command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
     return null
@@ -110,12 +110,13 @@ export function parseArgs(argv: string[]): Args | null {
           process.exit(1)
         }
       } else if (arg === '--var') {
-        const kv = (argv[++i] ?? '').split('=')
-        if (kv.length !== 2 || !kv[0] || !kv[1]) {
+        const kv = argv[++i] ?? ''
+        const eq = kv.indexOf('=')
+        if (eq <= 0) {
           console.error('Usage: --var <name>=<value>')
           process.exit(1)
         }
-        vars[kv[0]!] = kv[1]!
+        vars[kv.slice(0, eq)] = kv.slice(eq + 1)
       } else if (arg.startsWith('-')) {
         console.error(`Unknown option: ${arg}`)
         process.exit(1)
@@ -397,10 +398,22 @@ export async function cmdImport(
   mapping: { labelTags?: Record<string, string[]>; milestoneSprints?: Record<string, number> },
 ): Promise<void> {
   const store = ProjectStore.open(dir)
+  // Validate the milestone→sprint mapping before creating anything so an
+  // invalid sprint id fails up front instead of midway through the batch.
+  const invalidSprints = validateMilestoneSprints(mapping.milestoneSprints, store.state.sprints)
+  if (invalidSprints.length > 0) {
+    const known = store.state.sprints.map((s) => s.id).join(', ')
+    console.error(`Unknown sprint id(s) in --milestone-sprint: ${invalidSprints.join(', ')}. Existing sprint ids: ${known || 'none'}.`)
+    process.exit(1)
+  }
   let inputs
   if (source === 'todo') {
     if (!fs.existsSync(target)) {
       console.error(`File not found: ${target}`)
+      process.exit(1)
+    }
+    if (fs.statSync(target).isDirectory()) {
+      console.error(`Import target is a directory, expected a markdown file: ${target}`)
       process.exit(1)
     }
     const items = parseTodoFile(fs.readFileSync(target, 'utf8'))
@@ -413,6 +426,9 @@ export async function cmdImport(
     }
     try {
       const issues = await fetchGithubIssues(target)
+      if (issues.length === GH_ISSUE_LIMIT) {
+        console.warn(`⚠ Fetched ${issues.length} issues, which matches the per-run limit — there may be more open issues. Run the import again to pick up the rest.`)
+      }
       inputs = issuesToTaskInputs(issues, { labelTags: mapping.labelTags, milestoneSprints: mapping.milestoneSprints })
       console.log(`Fetched ${issues.length} open issue(s) from ${target}`)
     } catch (err) {
@@ -420,7 +436,15 @@ export async function cmdImport(
       process.exit(1)
     }
   }
-  const { created, skippedDuplicates } = importTasks(store, inputs)
+  let created: Array<{ id: string; title: string }>
+  let skippedDuplicates: Array<{ title: string; matchedWith: string }>
+  try {
+    ({ created, skippedDuplicates } = importTasks(store, inputs))
+  } catch (err) {
+    console.error(`✖ Import failed partway through: ${(err as Error).message}`)
+    console.error('Some tasks may already have been created on the board.')
+    process.exit(1)
+  }
   for (const c of created) console.log(`✔ Created ${c.id}: ${c.title}`)
   for (const s of skippedDuplicates) console.log(`↷ Skipped (duplicate of "${s.matchedWith}"): ${s.title}`)
   console.log(`\nImport complete: ${created.length} created, ${skippedDuplicates.length} skipped as duplicates.`)
@@ -462,7 +486,14 @@ export async function cmdTaskNew(
   const store = ProjectStore.open(dir)
   let task
   if (template) {
-    if (!store.getTemplate(template)) {
+    let tpl
+    try {
+      tpl = store.getTemplate(template)
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exit(1)
+    }
+    if (!tpl) {
       const available = store.listTemplates().map((t) => t.name).join(', ')
       console.error(`Template not found: ${template}${available ? ` (available: ${available})` : ' (no templates in .agentboard/templates/)'}`)
       process.exit(1)

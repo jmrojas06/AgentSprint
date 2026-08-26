@@ -14,13 +14,18 @@
     "dev": "pnpm --parallel -r dev",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "lint": "eslint .",
     "agentsprint": "pnpm --filter @jmrojas06/agentsprint-cli start",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.68.0",
     "vitepress": "^1.6.3"
   }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Task } from '../types'
 
 const STORAGE_KEY = 'agentsprint.notifications'

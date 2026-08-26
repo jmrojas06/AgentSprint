@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '../src/index.js'
 
 let dir: string
@@ -94,6 +94,95 @@ it('records assignee changes', () => {
     expect(task.activity.map((e) => e.type)).toEqual(['created', 'assignee', 'checklist', 'note', 'status'])
     const times = task.activity.map((e) => e.at)
     expect([...times].sort()).toEqual(times)
+  })
+
+  it('does not record phantom checklist events when criteria are removed or reordered', () => {
+    const probe = store.createTask({ title: 'Diff probe', acceptanceCriteria: ['A', 'B', 'C'] })
+    const id = probe.id
+
+    // mark B by content
+    store.setTaskChecklist(id, { text: 'B', completed: true }, { actor: 'agent' })
+    let task = store.state.tasks.find((t) => t.id === id)!
+    expect(task.activity.filter((e) => e.type === 'checklist')).toHaveLength(1)
+    expect(task.activity.filter((e) => e.type === 'checklist')[0]!.detail).toContain('"B"')
+
+    // remove A while B stays checked → removal must be recorded as an update
+    // event and must NOT emit a phantom "unchecked C" (old index-based diff)
+    store.updateTask(id, { acceptanceCriteria: ['[x] B', 'C'] })
+    task = store.state.tasks.find((t) => t.id === id)!
+    const checklist = task.activity.filter((e) => e.type === 'checklist')
+    expect(checklist).toHaveLength(1) // only the real toggle of B
+    expect(JSON.stringify(checklist)).not.toContain('unchecked')
+    const updates = task.activity.filter((e) => e.type === 'update')
+    expect(updates).toHaveLength(1)
+    expect(updates[0]!.detail).toBe('updated acceptanceCriteria')
+
+    // pure reorder without toggles → no checklist noise, one update event
+    store.updateTask(id, { acceptanceCriteria: ['C', '[x] B'] })
+    task = store.state.tasks.find((t) => t.id === id)!
+    expect(task.activity.filter((e) => e.type === 'checklist')).toHaveLength(1)
+    expect(task.activity.filter((e) => e.type === 'update')).toHaveLength(2)
+
+    // removing a checked criterion also records the removal
+    store.updateTask(id, { acceptanceCriteria: ['C'] }, { actor: 'agent' })
+    task = store.state.tasks.find((t) => t.id === id)!
+    expect(task.activity.filter((e) => e.type === 'checklist')).toHaveLength(1)
+    expect(task.activity.filter((e) => e.type === 'update')).toHaveLength(3)
+  })
+
+  it('rejects creating a task without a title with a clean error', () => {
+    expect(() => store.createTask({} as never)).toThrow('Task title is required')
+    expect(() => store.createTask({ title: '   ' })).toThrow('Task title is required')
+    // the failed attempts must not consume task ids
+    const probe = store.createTask({ title: 'After failure' })
+    expect(probe.id).toBe('TK-4')
+  })
+
+  it('sorts activity events by timestamp when reading from disk', () => {
+    const file = path.join(dir, '.agentboard/tasks/TK-3.md')
+    const raw = fs.readFileSync(file, 'utf8').replace(
+      '## Activity',
+      [
+        '## Activity',
+        '',
+        '- 2099-01-02T10:00:00.000Z | agent | status | Backlog → In Progress',
+        '- 2099-01-01T09:00:00.000Z | user | note | out of order on purpose',
+        '- 2099-01-03T12:00:00.000Z | agent | update | updated tags',
+      ].join('\n'),
+    )
+    fs.writeFileSync(file, raw, 'utf8')
+
+    const reopened = ProjectStore.open(dir)
+    const task = reopened.state.tasks.find((t) => t.id === 'TK-3')!
+    const times = task.activity.map((e) => e.at)
+    expect(times.indexOf('2099-01-01T09:00:00.000Z')).toBeLessThan(times.indexOf('2099-01-02T10:00:00.000Z'))
+    expect(times.indexOf('2099-01-02T10:00:00.000Z')).toBeLessThan(times.indexOf('2099-01-03T12:00:00.000Z'))
+    // the sample `created` event (today, before our inserts) sorts first
+    expect(task.activity[0]!.type).toBe('created')
+    expect(task.activity.slice(1).map((e) => e.detail)).toEqual([
+      'out of order on purpose',
+      'Backlog → In Progress',
+      'updated tags',
+    ])
+  })
+
+  it('warns instead of silently dropping malformed activity lines', () => {
+    const file = path.join(dir, '.agentboard/tasks/TK-3.md')
+    const raw = fs.readFileSync(file, 'utf8').replace(
+      '## Activity',
+      ['## Activity', '', '- this line is not a valid activity entry'].join('\n'),
+    )
+    fs.writeFileSync(file, raw, 'utf8')
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      ProjectStore.open(dir)
+      const warned = warn.mock.calls.map((c) => c.join(' ')).join('\n')
+      expect(warned).toContain('malformed activity line')
+      expect(warned).toContain('- this line is not a valid activity entry')
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('persists activity to disk as parseable lines and reloads it', () => {
