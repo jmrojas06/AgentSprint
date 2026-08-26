@@ -60,7 +60,7 @@ export function SprintPanel({ sprints, activeSprintId, tasksBySprint, doneBySpri
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
           placeholder="New sprint goal…"
-          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+          className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
         />
         <button
           type="submit"
