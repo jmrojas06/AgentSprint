@@ -265,7 +265,7 @@ describe('auto-assignee by status', () => {
     expect(updated.activity.some((e) => e.type === 'status' && e.detail.includes('To Do → In Progress'))).toBe(true)
     // Backlog→To Do with same assignee must not add extra assignee event
     const t2 = store.createTask({ title: 'Noop assignee', status: 'Backlog' })
-    const beforeLen = t2.activity.length
+    const _beforeLen = t2.activity.length
     store.setTaskStatus(t2.id, 'To Do')
     const after = store.state.tasks.find((x) => x.id === t2.id)!
     // status event yes, assignee no

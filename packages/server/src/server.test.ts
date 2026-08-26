@@ -746,7 +746,7 @@ describe('auth token (optional bearer)', () => {
     const logs: string[] = []
     const origLog = console.log
     const origWarn = console.warn
-    // @ts-ignore capture
+    // @ts-expect-error capture
     console.log = (...args: unknown[]) => logs.push(String(args[0]))
     console.warn = (...args: unknown[]) => logs.push(String(args[0]))
     // trigger a 401 which could log
