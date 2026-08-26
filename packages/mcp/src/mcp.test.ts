@@ -90,7 +90,7 @@ describe('MCP tools', () => {
   it('task_claim moves task to In Progress with agent assignee', async () => {
     const task = (await callTool('task_claim', { id: 'TK-1' })) as { status: string; assignee: string }
     expect(task.status).toBe('In Progress')
-    expect(task.assignee).toBe('scrum-master')
+    expect(task.assignee).toBe('dev')
   })
 
   it('task_claim blocks tasks with incomplete dependencies unless force is true', async () => {

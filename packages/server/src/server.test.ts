@@ -2,11 +2,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildApp } from './index.js'
 import { createIndex } from './indexdb.js'
 import { recordBurndownSnapshot } from './metrics.js'
+import { clearGitCache, GIT_CACHE_TTL_MS } from './routes.js'
 import type { FastifyInstance } from 'fastify'
 
 let dir: string
@@ -363,6 +364,144 @@ describe('server API', () => {
 
     fs.rmSync(bad)
   })
+
+  describe('git commit cache (TTL)', () => {
+    function git(...args: string[]): string {
+      return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+    }
+
+    beforeEach(() => {
+      clearGitCache()
+      // ensure repo exists for these tests (some outer afterEach clears dir)
+      try {
+        git('rev-parse', '--git-dir')
+      } catch {
+        git('init', '-b', 'main')
+        git('config', 'user.name', 'Test User')
+        git('config', 'user.email', 'test@example.com')
+        fs.writeFileSync(path.join(dir, '.txt'), 'x')
+        execFileSync('git', ['-C', dir, 'add', '-A'])
+        git('commit', '-m', 'feat: implement TK-1 sample task')
+      }
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      clearGitCache()
+    })
+
+    it('returns MISS then HIT within TTL for /api/git/commit-counts and MISS again after TTL', async () => {
+      vi.useFakeTimers()
+      clearGitCache()
+
+      const first = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(first.statusCode).toBe(200)
+      expect(first.headers['x-cache']).toBe('MISS')
+
+      const second = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(second.statusCode).toBe(200)
+      expect(second.headers['x-cache']).toBe('HIT')
+      expect(second.body).toBe(first.body)
+
+      vi.advanceTimersByTime(GIT_CACHE_TTL_MS + 100)
+
+      const third = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(third.statusCode).toBe(200)
+      expect(third.headers['x-cache']).toBe('MISS')
+    })
+
+    it('caches /api/tasks/:id/commits per pattern and uses distinct keys', async () => {
+      vi.useFakeTimers()
+      clearGitCache()
+
+      const a1 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a1.statusCode).toBe(200)
+      expect(a1.headers['x-cache']).toBe('MISS')
+
+      const a2 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a2.headers['x-cache']).toBe('HIT')
+      expect(a2.body).toBe(a1.body)
+
+      const b1 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits?pattern=%5Efeat%2F%25ID%25' })
+      expect(b1.statusCode).toBe(200)
+      expect(b1.headers['x-cache']).toBe('MISS')
+
+      const b2 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits?pattern=%5Efeat%2F%25ID%25' })
+      expect(b2.headers['x-cache']).toBe('HIT')
+      expect(b2.body).toBe(b1.body)
+
+      // default pattern still HIT (different key from custom)
+      const a3 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a3.headers['x-cache']).toBe('HIT')
+
+      vi.advanceTimersByTime(GIT_CACHE_TTL_MS + 100)
+
+      const a4 = await app.inject({ method: 'GET', url: '/api/tasks/TK-1/commits' })
+      expect(a4.headers['x-cache']).toBe('MISS')
+    })
+
+    it('exports clearGitCache helper and respects manual invalidation', async () => {
+      clearGitCache()
+      const r1 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(r1.headers['x-cache']).toBe('MISS')
+      const r2 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+      expect(r2.headers['x-cache']).toBe('HIT')
+      clearGitCache()
+      const r3 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+       expect(r3.headers['x-cache']).toBe('MISS')
+     })
+   })
+
+  describe('auto-assignee by status (endpoints)', () => {
+    it('PATCH /api/tasks/:id/status maps assignee and emits assignee event', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Auto probe', status: 'To Do', sprint: 1 })
+      const id = created.json().id as string
+      expect(created.json().assignee).toBe('scrum-master')
+      const toInProgress = await api('patch', `/api/tasks/${id}/status`, { status: 'In Progress' })
+      expect(toInProgress.json().status).toBe('In Progress')
+      expect(toInProgress.json().assignee).toBe('dev')
+      const activity = await api('get', `/api/tasks/${id}/activity`)
+      const types = (activity.json().activity as Array<{ type: string; detail: string }>).map((e) => e.type)
+      expect(types).toContain('status')
+      expect(types).toContain('assignee')
+      const assigneeEv = (activity.json().activity as Array<{ type: string; detail: string }>).find((e) => e.type === 'assignee')!
+      expect(assigneeEv.detail).toBe('scrum-master → dev')
+
+      const toReview = await api('patch', `/api/tasks/${id}/status`, { status: 'Review' })
+      expect(toReview.json().assignee).toBe('review')
+      const toDone = await api('patch', `/api/tasks/${id}/status`, { status: 'Done' })
+      expect(toDone.json().assignee).toBe('perfect')
+    })
+
+    it('PUT /api/tasks/:id with status maps assignee', async () => {
+      const created = await api('post', '/api/tasks', { title: 'PUT auto', status: 'To Do' })
+      const id = created.json().id as string
+      const updated = await api('put', `/api/tasks/${id}`, { status: 'In Progress' })
+      expect(updated.json().assignee).toBe('dev')
+      const act = await api('get', `/api/tasks/${id}/activity`)
+      expect((act.json().activity as Array<{ type: string }>).some((e) => e.type === 'assignee')).toBe(true)
+    })
+
+    it('Backlog → To Do keeps scrum-master, To Do → Done via PUT maps to perfect with activity', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Chain probe', status: 'Backlog' })
+      const id = created.json().id as string
+      expect(created.json().assignee).toBe('scrum-master')
+      const toTodo = await api('patch', `/api/tasks/${id}/status`, { status: 'To Do' })
+      expect(toTodo.json().assignee).toBe('scrum-master')
+      const act1 = await api('get', `/api/tasks/${id}/activity`)
+      // No assignee event for same assignee
+      expect((act1.json().activity as Array<{ type: string }>).filter((e) => e.type === 'assignee')).toHaveLength(0)
+      const toInProg = await api('patch', `/api/tasks/${id}/status`, { status: 'In Progress' })
+      expect(toInProg.json().assignee).toBe('dev')
+    })
+
+    it('explicit assignee in PUT is preserved (task_claim priority)', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Explicit assignee', status: 'To Do' })
+      const id = created.json().id as string
+      const updated = await api('put', `/api/tasks/${id}`, { status: 'In Progress', assignee: 'review' })
+      expect(updated.json().assignee).toBe('review')
+    })
+  })
 })
 
 describe('multi-project', () => {
@@ -545,6 +684,122 @@ describe('MCP over HTTP', () => {
     } finally {
       fs.rmSync(dir2, { recursive: true, force: true })
     }
+  })
+})
+
+describe('auth token (optional bearer)', () => {
+  const secret = 's3cr3t-test-token'
+  let authDir: string
+  let authBuilder: Awaited<ReturnType<typeof buildApp>> | null = null
+
+  function authApi(app: import('fastify').FastifyInstance, method: 'get' | 'post' | 'put' | 'patch' | 'delete', url: string, body?: unknown, headers: Record<string, string> = {}) {
+    return app.inject({
+      method,
+      url,
+      ...(body !== undefined ? { payload: JSON.stringify(body), headers: { 'content-type': 'application/json', ...headers } } : { headers }),
+    })
+  }
+
+  afterEach(async () => {
+    if (authBuilder) {
+      await authBuilder.close()
+      authBuilder = null
+    }
+    if (authDir) {
+      fs.rmSync(authDir, { recursive: true, force: true })
+    }
+    delete process.env.AGENTBOARD_TOKEN
+  })
+
+  it('without token everything passes (compatibility)', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-compat-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir })
+    const a = authBuilder.app
+    const get = await a.inject({ method: 'GET', url: '/api/project' })
+    expect(get.statusCode).toBe(200)
+    const post = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'no auth needed' }), headers: { 'content-type': 'application/json' } })
+    expect(post.statusCode).toBe(201)
+  })
+
+  it('with token, GET is open, POST without bearer is 401, with bearer passes', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir, token: secret })
+    const a = authBuilder.app
+
+    const getOk = await a.inject({ method: 'GET', url: '/api/project' })
+    expect(getOk.statusCode).toBe(200)
+
+    const postNoAuth = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'needs token' }), headers: { 'content-type': 'application/json' } })
+    expect(postNoAuth.statusCode).toBe(401)
+    expect(JSON.parse(postNoAuth.body)).toEqual({ error: 'Unauthorized' })
+
+    const postBad = await authApi(a, 'post', '/api/tasks', { title: 'bad' }, { authorization: 'Bearer wrong' })
+    expect(postBad.statusCode).toBe(401)
+
+    const postGood = await authApi(a, 'post', '/api/tasks', { title: 'good' }, { authorization: `Bearer ${secret}` })
+    expect(postGood.statusCode).toBe(201)
+    expect(JSON.parse(postGood.body).title).toBe('good')
+
+    // token never appears in logs — capture console output
+    const logs: string[] = []
+    const origLog = console.log
+    const origWarn = console.warn
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore capture
+    console.log = (...args: unknown[]) => logs.push(String(args[0]))
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore capture
+    console.warn = (...args: unknown[]) => logs.push(String(args[0]))
+    // trigger a 401 which could log
+    await authApi(a, 'post', '/api/tasks', { title: 'logcheck' }, {})
+    console.log = origLog
+    console.warn = origWarn
+    const blob = logs.join(' ')
+    expect(blob).not.toContain(secret)
+
+    // token not echoed in body either
+    expect(postNoAuth.body).not.toContain(secret)
+    expect(postBad.body).not.toContain(secret)
+  })
+
+  it('with --token-all (tokenAll=true) also protects GETs', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-all-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir, token: secret, tokenAll: true })
+    const a = authBuilder.app
+    const getNoAuth = await a.inject({ method: 'GET', url: '/api/project' })
+    expect(getNoAuth.statusCode).toBe(401)
+    const getWith = await a.inject({ method: 'GET', url: '/api/project', headers: { authorization: `Bearer ${secret}` } })
+    expect(getWith.statusCode).toBe(200)
+    const healthNoAuth = await a.inject({ method: 'GET', url: '/api/health' })
+    // health is also /api/* so protected when tokenAll; if you want health open, change this expectation.
+    expect(healthNoAuth.statusCode).toBe(401)
+  })
+
+  it('env AGENTBOARD_TOKEN enables auth without explicit option', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-env-'))
+    ProjectStore.init(authDir, { sample: true })
+    process.env.AGENTBOARD_TOKEN = secret
+    authBuilder = await buildApp({ rootDir: authDir })
+    const a = authBuilder.app
+    const postNoAuth = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'env' }), headers: { 'content-type': 'application/json' } })
+    expect(postNoAuth.statusCode).toBe(401)
+    const postWith = await a.inject({ method: 'POST', url: '/api/tasks', payload: JSON.stringify({ title: 'env-ok' }), headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` } })
+    expect(postWith.statusCode).toBe(201)
+  })
+
+  it('mcp route is also protected when token is set', async () => {
+    authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-auth-mcp-'))
+    ProjectStore.init(authDir, { sample: true })
+    authBuilder = await buildApp({ rootDir: authDir, token: secret, mcp: true })
+    const a = authBuilder.app
+    const mcpNoAuth = await a.inject({ method: 'POST', url: '/mcp', payload: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0.0' } } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' } })
+    expect(mcpNoAuth.statusCode).toBe(401)
+    const mcpWith = await a.inject({ method: 'POST', url: '/mcp', payload: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0.0' } } }), headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${secret}` } })
+    // mcp returns 200 even if token ok (session creation)
+    expect(mcpWith.statusCode).toBe(200)
   })
 })
 

@@ -1,9 +1,20 @@
 import { EventEmitter } from 'node:events'
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { withFileLock } from './filelock.js'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
 import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, TASK_LOCK_TTL_MINUTES } from './types.js'
-import type { ActivityEvent as ActivityEventType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
+import type { ActivityEvent as ActivityEventType, Assignee as AssigneeType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
+
+/** Canonical assignee per status — used by setTaskStatus/updateTask auto-assignment. */
+export const STATUS_ASSIGNEE_MAP: Record<TaskStatus, AssigneeType> = {
+  Backlog: 'scrum-master',
+  'To Do': 'scrum-master',
+  'In Progress': 'dev',
+  Review: 'review',
+  Done: 'perfect',
+}
 import { buildSprintReport } from './spec.js'
 import { SAMPLE_TEMPLATES, isValidTemplateName, parseTemplate, readTemplates, renderTemplate } from './templates.js'
 import type { TaskTemplate, TemplateVars } from './templates.js'
@@ -196,6 +207,28 @@ export class ProjectStore extends EventEmitter {
     }
   }
 
+  /**
+   * Latest view of a task: re-parsed from disk when possible so mutations
+   * started by another process (after this store was loaded) are picked up
+   * instead of overwritten. Falls back to the in-memory copy.
+   */
+  private _freshTask(id: string): TaskType {
+    const known = this.tasks.get(id)
+    if (!known) throw new Error(`Task not found: ${id}`)
+    try {
+      if (fs.existsSync(this.taskPath(id))) {
+        const fresh = this._parseTaskFile(this.taskPath(id))
+        if (fresh) {
+          this.tasks.set(id, fresh)
+          return fresh
+        }
+      }
+    } catch {
+      /* fall back to the in-memory copy */
+    }
+    return known
+  }
+
   private _readBrand(): BrandType {
     try {
       if (!fs.existsSync(this.brandPath())) return emptyBrand()
@@ -260,17 +293,27 @@ export class ProjectStore extends EventEmitter {
 
   /** Overwrite the entire learnings file. */
   setLearnings(content: string): string {
+    withFileLock(this.learningsPath(), () => this._writeLearnings(content))
+    return content
+  }
+
+  /** Write learnings content. Caller must hold the file lock. */
+  private _writeLearnings(content: string): void {
     this._atomicWrite(this.learningsPath(), content)
     this.emit('change')
-    return content
   }
 
   /** Append a new learning entry (e.g. a retro bullet or rule learned). */
   appendLearning(entry: string): string {
-    const existing = this.getLearnings()
-    const trimmed = entry.trim()
-    const next = existing ? `${existing}\n- ${trimmed}` : `- ${trimmed}`
-    return this.setLearnings(next)
+    // Read-modify-write under the file lock so concurrent processes never
+    // lose each other's entries.
+    return withFileLock(this.learningsPath(), () => {
+      const existing = this.getLearnings()
+      const trimmed = entry.trim()
+      const next = existing ? `${existing}\n- ${trimmed}` : `- ${trimmed}`
+      this._writeLearnings(next)
+      return next
+    })
   }
 
   /**
@@ -278,10 +321,14 @@ export class ProjectStore extends EventEmitter {
    * learnings file, preceded by a `## header` line.
    */
   appendLearningsSection(header: string, body: string): string {
-    const existing = this.getLearnings()
-    const section = `## ${header.trim()}\n\n${body.trim()}`
-    const next = existing ? `${existing}\n\n${section}` : section
-    return this.setLearnings(next)
+    // Read-modify-write under the file lock (see appendLearning).
+    return withFileLock(this.learningsPath(), () => {
+      const existing = this.getLearnings()
+      const section = `## ${header.trim()}\n\n${body.trim()}`
+      const next = existing ? `${existing}\n\n${section}` : section
+      this._writeLearnings(next)
+      return next
+    })
   }
 
   /**
@@ -390,17 +437,20 @@ export class ProjectStore extends EventEmitter {
   }
 
   appendTaskNote(id: string, note: string, author?: string): TaskType {
-    const task = this.tasks.get(id)
-    if (!task) throw new Error(`Task not found: ${id}`)
-    const timestamp = nowIso()
-    const prefix = author ? `[${timestamp}] (${author})` : `[${timestamp}]`
-    const entry = `- ${prefix} ${note.trim()}`
-    const updatedNotes = task.notes && task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
-    return this.updateTask(
-      id,
-      { notes: updatedNotes },
-      { actor: author ?? 'user', noteEvent: note.trim() },
-    )
+    // The note is merged with the on-disk notes inside the file lock so
+    // concurrent processes appending notes never lose each other's entries.
+    return withFileLock(this.taskPath(id), () => {
+      const task = this._freshTask(id)
+      const timestamp = nowIso()
+      const prefix = author ? `[${timestamp}] (${author})` : `[${timestamp}]`
+      const entry = `- ${prefix} ${note.trim()}`
+      const updatedNotes = task.notes && task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
+      return this._updateTaskUnlocked(
+        id,
+        { notes: updatedNotes },
+        { actor: author ?? 'user', noteEvent: note.trim() },
+      )
+    })
   }
 
   /**
@@ -471,14 +521,16 @@ export class ProjectStore extends EventEmitter {
     const sprint = input.sprint == null ? null : this._requireSprint(input.sprint)
     const id = input.id ?? this._nextTaskId()
     const createdAt = input.createdAt ?? nowIso()
+    const effectiveStatus = (input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do')) as TaskStatus
+    const effectiveAssignee = (input.assignee ?? STATUS_ASSIGNEE_MAP[effectiveStatus] ?? 'scrum-master') as TaskInput['assignee']
     const task = Task.parse({
       ...input,
       title,
       id,
       sprint: sprint?.id ?? null,
-      status: input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do'),
+      status: effectiveStatus,
       priority: input.priority ?? 'medium',
-      assignee: input.assignee ?? 'scrum-master',
+      assignee: effectiveAssignee,
       createdAt,
       updatedAt: nowIso(),
       activity: [
@@ -505,10 +557,25 @@ export class ProjectStore extends EventEmitter {
     return task
   }
 
-  // Extend updateTask to validate cycles after mutation and record diff-based activity events
+  // Extend updateTask to validate cycles after mutation and record diff-based activity events.
+  // The whole read-modify-write cycle runs under the per-file lock (and re-reads
+  // the task from disk) so concurrent processes updating the same task never
+  // clobber each other's changes with a stale in-memory copy.
+  // Auto-assign assignee according to STATUS_ASSIGNEE_MAP when status changes,
+  // unless patch already contains an explicit assignee (preserves task_claim priority).
   updateTask(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string } = {}): TaskType {
-    const current = this.tasks.get(id)
+    return withFileLock(this.taskPath(id), () => this._updateTaskUnlocked(id, patch, opts))
+  }
+
+  /** Update a task without acquiring the file lock. Caller must hold it. */
+  private _updateTaskUnlocked(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string } = {}): TaskType {
+    const current = this._freshTask(id)
     if (!current) throw new Error(`Task not found: ${id}`)
+    // Auto-map assignee before persist — distinguish generic status change from explicit assignee (task_claim)
+    if (patch.status !== undefined && patch.status !== current.status && patch.assignee === undefined) {
+      const mapped = STATUS_ASSIGNEE_MAP[patch.status as TaskStatus]
+      if (mapped) patch = { ...patch, assignee: mapped }
+    }
     const now = nowIso()
     const actor = opts.actor ?? 'user'
     const next = Task.parse({
@@ -696,10 +763,24 @@ deleteTask(id: string): void {
     this._atomicWrite(this.sprintPath(sprint.id), serializeFrontmatter({ ...sprint }, ''))
   }
 
+  /**
+   * Write `content` to `file` atomically: the payload goes to a unique
+   * temporary file (pid + random suffix so concurrent processes never share
+   * one) which is then renamed over the target. The temp file is removed on
+   * failure, even if the write or rename throws.
+   */
   private _atomicWrite(file: string, content: string): void {
-    const tmp = `${file}.tmp`
-    fs.writeFileSync(tmp, content, 'utf8')
-    fs.renameSync(tmp, file)
+    const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
+    try {
+      fs.writeFileSync(tmp, content, 'utf8')
+      fs.renameSync(tmp, file)
+    } finally {
+      try {
+        fs.unlinkSync(tmp)
+      } catch {
+        /* already renamed */
+      }
+    }
   }
 
   private _requireSprint(id: number): SprintType {

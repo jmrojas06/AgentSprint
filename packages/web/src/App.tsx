@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Bell, BellOff, GitBranch, LayoutGrid, List, Palette, Plus, Search, Square, X } from 'lucide-react'
 import type { BoardState, Task, TaskPriority } from './types'
 import { TASK_PRIORITIES } from './types'
-import { api, setProject } from './api'
+import { api, clearStoredToken, getStoredToken, setProject, setStoredToken } from './api'
 import { useProjectEvents } from './hooks/useProjectEvents'
 import { useReviewNotifications } from './hooks/useReviewNotifications'
 import { Board } from './components/Board'
@@ -50,6 +50,9 @@ export default function App() {
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
   const [warningsDismissed, setWarningsDismissed] = useState(false)
   const [commitCounts, setCommitCounts] = useState<Record<string, number>>({})
+  const [needsAuth, setNeedsAuth] = useState(false)
+  const [tokenDraft, setTokenDraft] = useState(() => getStoredToken() ?? '')
+  const [hasStoredToken, setHasStoredToken] = useState(() => Boolean(getStoredToken()))
   const {
     supported: notificationsSupported,
     enabled: notificationsEnabled,
@@ -78,10 +81,32 @@ export default function App() {
       const [state] = await Promise.all([api.project(), api.gitCommitCounts().then(setCommitCounts).catch(() => {})])
       setProjectState(state)
       setError(null)
+      setNeedsAuth(false)
     } catch (e) {
-      setError((e as Error).message)
+      const msg = (e as Error).message
+      if (msg.includes('Unauthorized') || msg.includes('401')) {
+        setNeedsAuth(true)
+      }
+      setError(msg)
     }
   }, [])
+
+  const saveToken = useCallback(async () => {
+    const t = tokenDraft.trim()
+    if (!t) return
+    setStoredToken(t)
+    setHasStoredToken(true)
+    setNeedsAuth(false)
+    await reload()
+  }, [tokenDraft, reload])
+
+  const clearToken = useCallback(async () => {
+    clearStoredToken()
+    setHasStoredToken(false)
+    setTokenDraft('')
+    setNeedsAuth(false)
+    await reload()
+  }, [reload])
 
   useEffect(() => {
     void (async () => {
@@ -177,11 +202,48 @@ export default function App() {
   )
 
   if (error) {
+    const isAuthError = error.includes('Unauthorized') || error.includes('401')
     return (
       <div className="flex h-full items-center justify-center p-6">
         <div className="max-w-md rounded-lg border border-red-900/60 bg-red-950/30 p-4 text-sm text-red-300">
           <p className="font-semibold">Could not load the board</p>
           <p className="mt-1">{error}</p>
+          {isAuthError && (
+            <div className="mt-3 rounded border border-zinc-700 bg-zinc-900 p-3 text-xs text-zinc-200">
+              <p className="font-medium text-zinc-100">Token required</p>
+              <p className="mt-1 text-zinc-400">This board is protected. Enter the bearer token to continue.</p>
+              <div className="mt-2 flex gap-2">
+                <input
+                  type="password"
+                  value={tokenDraft}
+                  onChange={(e) => setTokenDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void saveToken()}
+                  placeholder="Bearer token"
+                  className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  data-testid="token-input"
+                />
+                <button
+                  onClick={() => void saveToken()}
+                  className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-500"
+                  data-testid="token-save"
+                >
+                  Save
+                </button>
+              </div>
+              {hasStoredToken && (
+                <button
+                  onClick={() => void clearToken()}
+                  className="mt-2 text-[11px] text-zinc-400 underline hover:text-zinc-200"
+                  data-testid="token-clear"
+                >
+                  Clear saved token
+                </button>
+              )}
+              <p className="mt-2 text-[11px] text-zinc-500">
+                Saved in localStorage key <code className="rounded bg-black/40 px-1">agentsprint-token</code>. Server: <code className="rounded bg-black/40 px-1">--token &lt;secret&gt;</code> or <code className="rounded bg-black/40 px-1">AGENTBOARD_TOKEN</code>.
+              </p>
+            </div>
+          )}
           <p className="mt-2 text-xs text-red-400/70">
             Make sure a server is running: <code className="rounded bg-zinc-800 px-1">agentboard serve</code>
           </p>
@@ -384,6 +446,16 @@ export default function App() {
               </button>
             )}
 
+            {hasStoredToken && (
+              <button
+                onClick={() => void clearToken()}
+                title="Clear saved bearer token (agentsprint-token)"
+                data-testid="header-token-clear"
+                className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
+              >
+                Clear token
+              </button>
+            )}
             <ThemeToggle />
           </div>
         </div>
@@ -425,6 +497,38 @@ export default function App() {
             >
               <X className="h-3.5 w-3.5" />
             </button>
+          </div>
+        )}
+
+        {needsAuth && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-600/50 bg-indigo-950/30 px-3 py-2 text-xs text-indigo-200">
+            <span className="font-medium">Token required</span>
+            <input
+              type="password"
+              value={tokenDraft}
+              onChange={(e) => setTokenDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void saveToken()}
+              placeholder="Bearer token"
+              className="min-w-[180px] flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+              data-testid="banner-token-input"
+            />
+            <button
+              onClick={() => void saveToken()}
+              className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-500"
+              data-testid="banner-token-save"
+            >
+              Save token
+            </button>
+            {hasStoredToken && (
+              <button
+                onClick={() => void clearToken()}
+                className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200"
+                data-testid="banner-token-clear"
+              >
+                Clear saved token
+              </button>
+            )}
+            <span className="text-[11px] text-zinc-400">Saved as <code className="rounded bg-black/40 px-1">agentsprint-token</code></span>
           </div>
         )}
       </header>
