@@ -117,7 +117,7 @@ export async function findTaskRefs(rootDir: string, id: string, opts: GitLinkOpt
 export async function taskCommitCounts(
   rootDir: string,
   taskIds: readonly string[],
-  opts: GitLinkOptions = {},
+  _opts: GitLinkOptions = {},
 ): Promise<Record<string, number>> {
   const counts: Record<string, number> = {}
   if (taskIds.length === 0 || !fs.existsSync(path.join(rootDir, '.git'))) return counts
