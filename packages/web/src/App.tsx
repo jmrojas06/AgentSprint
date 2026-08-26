@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bell, BellOff, GitBranch, LayoutGrid, List, Palette, Plus, Search, SortAsc, SortDesc, Square, X } from 'lucide-react'
-import type { BoardState, ProjectState, Task, TaskPriority } from './types'
+import { AlertTriangle, Bell, BellOff, GitBranch, LayoutGrid, List, Palette, Plus, Search, Square, X } from 'lucide-react'
+import type { BoardState, Task, TaskPriority } from './types'
 import { TASK_PRIORITIES } from './types'
 import { api, setProject } from './api'
 import { useProjectEvents } from './hooks/useProjectEvents'
@@ -13,7 +13,7 @@ import { NewTaskModal } from './components/NewTaskModal'
 import { BrandPanel } from './components/BrandPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { ThemeToggle } from './components/ThemeToggle'
-import { cx, computeVelocity, getBlockerTasks, sortTasks, viewFromQuery, type SortBy, type SortDir, type ViewMode } from './ui'
+import { cx, computeVelocity, getBlockerTasks, viewFromQuery, type SortBy, type SortDir, type ViewMode } from './ui'
 
 type SprintFilter = 'all' | number
 type SideTab = 'sprints' | 'brand'

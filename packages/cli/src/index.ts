@@ -75,7 +75,7 @@ interface Args {
 
 export function parseArgs(argv: string[]): Args | null {
   const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'help'])
-  let command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
+  const command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
     return null

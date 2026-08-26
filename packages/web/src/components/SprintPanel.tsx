@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { CheckCircle2, Circle, FileDown, Gauge, Play, Plus, Square } from 'lucide-react'
 import type { Sprint } from '../types'
 import { api } from '../api'
-import { computeVelocity, cx, fmtDate } from '../ui'
+import { cx, fmtDate } from '../ui'
 import { BurndownChart } from './BurndownChart'
 
 interface Props {
