@@ -6,7 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
-import type { SprintStatus, Task, TaskInput } from '@jmrojas06/agentsprint-core'
+import type { SprintStatus, TaskInput } from '@jmrojas06/agentsprint-core'
 
 const STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 
@@ -152,7 +152,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       let tasks = store.state.tasks
       if (status) tasks = tasks.filter((t) => t.status === status)
       if (sprint) tasks = tasks.filter((t) => t.sprint === sprint)
-      if (assignee) tasks = tasks.filter((t) => (t as any).assignee === assignee)
+      if (assignee) tasks = tasks.filter((t) => t.assignee === assignee)
       if (q) {
         const needle = q.toLowerCase()
         tasks = tasks.filter((t) => `${t.id} ${t.title} ${t.description} ${t.tags.join(' ')}`.toLowerCase().includes(needle))
