@@ -2,28 +2,33 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [develop, main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        # version omitted (using package.json)
+      # pnpm comes from corepack, pinned via "packageManager" in package.json
+      - name: Enable corepack
+        run: corepack enable
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm lint
-      # Build first: cross-package types resolve to each package's dist/,
-      # which only exists after building (fresh checkout has no dist/).
+      # Build must run BEFORE typecheck/test: cross-package types resolve to
+      # each package's dist/, which only exists after building (a fresh
+      # checkout has no dist/).
       - name: Build
-        run: pnpm build
+        run: pnpm -r build
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm -r typecheck
       - name: Test
-        run: pnpm test
+        run: pnpm -r test
