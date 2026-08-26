@@ -3,7 +3,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
 import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, TASK_LOCK_TTL_MINUTES } from './types.js'
-import type { ActivityEvent as ActivityEventType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
+import type { ActivityEvent as ActivityEventType, Assignee as AssigneeType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
+
+/** Canonical assignee per status — used by setTaskStatus/updateTask auto-assignment. */
+export const STATUS_ASSIGNEE_MAP: Record<TaskStatus, AssigneeType> = {
+  Backlog: 'scrum-master',
+  'To Do': 'scrum-master',
+  'In Progress': 'dev',
+  Review: 'review',
+  Done: 'perfect',
+}
 import { buildSprintReport } from './spec.js'
 import { SAMPLE_TEMPLATES, parseTemplate, readTemplates, renderTemplate } from './templates.js'
 import type { TaskTemplate, TemplateVars } from './templates.js'
@@ -450,13 +459,15 @@ export class ProjectStore extends EventEmitter {
     const sprint = input.sprint == null ? null : this._requireSprint(input.sprint)
     const id = input.id ?? this._nextTaskId()
     const createdAt = input.createdAt ?? nowIso()
+    const effectiveStatus = (input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do')) as TaskStatus
+    const effectiveAssignee = (input.assignee ?? STATUS_ASSIGNEE_MAP[effectiveStatus] ?? 'scrum-master') as TaskInput['assignee']
     const task = Task.parse({
       ...input,
       id,
       sprint: sprint?.id ?? null,
-      status: input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do'),
+      status: effectiveStatus,
       priority: input.priority ?? 'medium',
-      assignee: input.assignee ?? 'scrum-master',
+      assignee: effectiveAssignee,
       createdAt,
       updatedAt: nowIso(),
       activity: [
@@ -484,9 +495,16 @@ export class ProjectStore extends EventEmitter {
   }
 
   // Extend updateTask to validate cycles after mutation and record diff-based activity events
+  // Auto-assign assignee according to STATUS_ASSIGNEE_MAP when status changes,
+  // unless patch already contains an explicit assignee (preserves task_claim priority).
   updateTask(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string } = {}): TaskType {
     const current = this.tasks.get(id)
     if (!current) throw new Error(`Task not found: ${id}`)
+    // Auto-map assignee before persist — distinguish generic status change from explicit assignee (task_claim)
+    if (patch.status !== undefined && patch.status !== current.status && patch.assignee === undefined) {
+      const mapped = STATUS_ASSIGNEE_MAP[patch.status as TaskStatus]
+      if (mapped) patch = { ...patch, assignee: mapped }
+    }
     const now = nowIso()
     const actor = opts.actor ?? 'user'
     const next = Task.parse({

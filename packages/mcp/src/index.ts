@@ -297,7 +297,8 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           store.unlockTask(id, { force: true })
           store.lockTask(id, agent ?? 'agent')
         }
-        const task = store.updateTask(id, { status: 'In Progress', assignee: 'scrum-master' }, { actor: 'agent' })
+        // Explicit assignee preserves claim priority — In Progress maps to dev
+        const task = store.updateTask(id, { status: 'In Progress', assignee: 'dev' }, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
         return textResponse({ error: (err as Error).message })
