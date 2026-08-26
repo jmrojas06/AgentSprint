@@ -746,8 +746,11 @@ describe('auth token (optional bearer)', () => {
     const logs: string[] = []
     const origLog = console.log
     const origWarn = console.warn
-    // @ts-expect-error capture
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore capture
     console.log = (...args: unknown[]) => logs.push(String(args[0]))
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore capture
     console.warn = (...args: unknown[]) => logs.push(String(args[0]))
     // trigger a 401 which could log
     await authApi(a, 'post', '/api/tasks', { title: 'logcheck' }, {})
