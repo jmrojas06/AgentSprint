@@ -119,7 +119,9 @@ export function CommandPalette({
     }
   }
 
-  let lastGroup = ''
+  const headerKeys = new Set<string>(
+    items.filter((item, i) => i === 0 || items[i - 1]!.group !== item.group).map((item) => item.key),
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[12vh]" onClick={onClose}>
@@ -149,8 +151,7 @@ export function CommandPalette({
             <li className="px-3 py-6 text-center text-xs text-zinc-600">No matching commands or tasks</li>
           )}
           {items.map((item, i) => {
-            const header = item.group !== lastGroup ? item.group : null
-            lastGroup = item.group
+            const header = headerKeys.has(item.key) ? item.group : null
             return (
               <li key={item.key} role="option" aria-selected={i === index}>
                 {header && (

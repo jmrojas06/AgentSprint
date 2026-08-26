@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Palette, Plus, Save, Trash2, X } from 'lucide-react'
+import { Check, Palette, Plus, Save, X } from 'lucide-react'
 import type { Brand, BrandAsset } from '../types'
 
 interface Props {
@@ -8,7 +8,7 @@ interface Props {
 }
 
 const COLOR_KEYS = ['primary', 'secondary', 'accent', 'background', 'text'] as const
-const FONT_KEYS = ['heading', 'body'] as const
+type FontKey = 'heading' | 'body'
 
 const field =
   'w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500'
@@ -36,7 +36,7 @@ export function BrandPanel({ brand, onSave }: Props) {
   const setColor = (key: (typeof COLOR_KEYS)[number], value: string) =>
     setDraft((d) => ({ ...d, colors: { ...d.colors, [key]: value } }))
 
-  const setFont = (key: (typeof FONT_KEYS)[number], value: string) =>
+  const setFont = (key: FontKey, value: string) =>
     setDraft((d) => ({ ...d, fonts: { ...d.fonts, [key]: value } }))
 
   const addAsset = () => {
