@@ -39,6 +39,9 @@ Options (serve):
    --no-fallback     Do not auto-find a free port if the requested one is busy
    --init            Auto-create a board if missing
    --mcp             Also expose the MCP server at /mcp (streamable HTTP)
+   --token <secret>  Require Authorization: Bearer <secret> for mutating API/MCP calls
+                     (or set env AGENTBOARD_TOKEN). Without it, board is open.
+   --token-all       When used with --token, also protect GET requests (read-only) — all /api/* need auth
 
 Options (close):
    --no-retro        Skip the automatic retro appended to learnings.md
@@ -71,6 +74,8 @@ interface Args {
   mcp: boolean
   fallback: boolean
   retro: boolean
+  token?: string
+  tokenAll?: boolean
 }
 
 export function parseArgs(argv: string[]): Args | null {
@@ -89,6 +94,8 @@ export function parseArgs(argv: string[]): Args | null {
   let mcp = false
   let fallback = true
   let retro = true
+  let token: string | undefined = process.env.AGENTBOARD_TOKEN?.trim() || undefined
+  let tokenAll = false
   const labelTags: Record<string, string[]> = {}
   const milestoneSprints: Record<string, number> = {}
 
@@ -129,7 +136,7 @@ export function parseArgs(argv: string[]): Args | null {
       if (fs.existsSync(p) && fs.statSync(p).isDirectory()) dir = path.resolve(p)
       else title = title ?? p
     }
-    return { command: 'task-new', dir, title, template, vars, taskId: undefined, sprintId: undefined, port, host, open, init, mcp, fallback, retro }
+    return { command: 'task-new', dir, title, template, vars, taskId: undefined, sprintId: undefined, port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   if (command === 'export') {
@@ -157,7 +164,7 @@ export function parseArgs(argv: string[]): Args | null {
       }
     }
     const exportDir = positional.length > 0 ? path.resolve(positional[0]!) : process.cwd()
-    return { command: 'export', exportFormat: 'md', dir: exportDir, taskId: undefined, sprintId: exportSprintId, port, host, open, init, mcp, fallback, retro }
+    return { command: 'export', exportFormat: 'md', dir: exportDir, taskId: undefined, sprintId: exportSprintId, port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -192,6 +199,17 @@ export function parseArgs(argv: string[]): Args | null {
       case '--no-retro':
         retro = false
         break
+      case '--token': {
+        token = argv[++i]
+        if (!token) {
+          console.error('Usage: --token <secret>')
+          process.exit(1)
+        }
+        break
+      }
+      case '--token-all':
+        tokenAll = true
+        break
       case '--label-tag': {
         const kv = (argv[++i] ?? '').split('=')
         if (kv.length !== 2 || !kv[0] || !kv[1]) {
@@ -225,7 +243,7 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard spec <dir> <task-id>')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init, mcp, fallback, retro }
+    return { command, dir: path.resolve(positional[0]!), taskId: positional[1], port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   if (command === 'brand') {
@@ -233,7 +251,7 @@ export function parseArgs(argv: string[]): Args | null {
       console.error('Usage: agentboard brand [dir]')
       process.exit(1)
     }
-    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp, fallback, retro }
+    return { command, dir: path.resolve(positional[0] ?? process.cwd()), port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   const rest = command === 'close' || command === 'import' ? positional.slice() : []
@@ -248,7 +266,7 @@ export function parseArgs(argv: string[]): Args | null {
       sprintId = Number(rest.pop())
     }
     if (rest.length > 0) {
-      return { command, dir: path.resolve(rest[0]!), sprintId, port, host, open, init, mcp, fallback, retro }
+      return { command, dir: path.resolve(rest[0]!), sprintId, port, host, open, init, mcp, fallback, retro, token, tokenAll }
     }
   }
 
@@ -284,11 +302,13 @@ export function parseArgs(argv: string[]): Args | null {
       mcp,
       fallback,
       retro,
+      token,
+      tokenAll,
     }
   }
 
   const dir = positional.length > 0 && !['close', 'import'].includes(command) ? path.resolve(positional[0]!) : process.cwd()
-  return { command, dir, taskId: undefined, sprintId, port, host, open, init, mcp, fallback, retro }
+  return { command, dir, taskId: undefined, sprintId, port, host, open, init, mcp, fallback, retro, token, tokenAll }
 }
 
 function resolveWebDist(): string | null {
@@ -329,6 +349,11 @@ async function cmdServe(args: Args): Promise<void> {
   }
 
   const webDist = resolveWebDist()
+  // Never log the secret itself
+  const hasToken = Boolean(args.token?.trim() || process.env.AGENTBOARD_TOKEN?.trim())
+  if (hasToken) {
+    console.log(`  Auth:    token protection ${args.tokenAll ? '(all routes)' : '(mutating routes)'} — clients must send Authorization: Bearer <token>`)
+  }
   const { url, close } = await startServer({
     rootDir: args.dir,
     port: args.port,
@@ -336,6 +361,8 @@ async function cmdServe(args: Args): Promise<void> {
     webDist,
     mcp: args.mcp,
     fallback: args.fallback,
+    token: args.token,
+    tokenAll: args.tokenAll,
   })
 
   console.log(`\n  AgentSprint v${VERSION}`)
