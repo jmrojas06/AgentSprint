@@ -17,6 +17,31 @@ import type {
 
 let activeProject: string | undefined
 
+/** localStorage key for the optional bearer token (see docs/api.md#authentication). */
+export const TOKEN_KEY = 'agentsprint-token'
+
+export function getStoredToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+export function setStoredToken(token: string): void {
+  try {
+    localStorage.setItem(TOKEN_KEY, token)
+  } catch {
+    /* storage unavailable */
+  }
+}
+export function clearStoredToken(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 /** Set the project every subsequent request is scoped to. */
 export function setProject(name: string): void {
   activeProject = name
@@ -26,12 +51,21 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const withProject = activeProject
     ? url + (url.includes('?') ? '&' : '?') + `project=${encodeURIComponent(activeProject)}`
     : url
+  const token = getStoredToken()
+  const baseHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) baseHeaders['Authorization'] = `Bearer ${token}`
+  const mergedHeaders: Record<string, string> = { ...baseHeaders, ...(init?.headers as Record<string, string> | undefined) }
   const res = await fetch(withProject, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: mergedHeaders,
   })
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null
+    if (res.status === 401) {
+      // Clear hint for any HTTP client (web, CLI, MCP) that the server requires a token.
+      // Web UI shows a prompt; CLI/MCP should surface this hint to the user.
+      throw new Error(body?.error ?? 'Unauthorized — this board requires a token. Set it via localStorage key agentsprint-token (web) or start the server with --token / AGENTBOARD_TOKEN and retry with Authorization: Bearer <token>.')
+    }
     throw new Error(body?.error ?? `Request failed: ${res.status}`)
   }
   if (res.status === 204) return undefined as T
