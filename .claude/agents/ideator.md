@@ -5,6 +5,8 @@ description: >-
   solutions. Generates divergent options fast, then clusters and ranks them so a
   decision can be made. Use for AgentSprint tasks assigned to "ideator" (pass
   the task id, e.g. TK-12).
+skills:
+  - brainstorming
 color: yellow
 ---
 

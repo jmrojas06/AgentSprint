@@ -509,13 +509,14 @@ describe('server API', () => {
       expect(status).toBe(200)
       const agents = json() as Array<{ name: string; description: string; prompt: string }>
       expect(agents.map((a) => a.name)).toEqual([
-        'creative-director',
+        'code-reviewer', 'creative-director',
         'designer',
         'developer',
         'docs',
         'fixer',
         'ideator',
         'tester',
+        'ui-reviewer',
       ])
       expect(agents.find((a) => a.name === 'tester')?.prompt).toContain('## Mission')
     })
@@ -745,7 +746,7 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(35)
+      expect(tools.length).toBe(40)
       const names = tools.map((t) => t.name)
       expect(names).toContain('project_list')
       expect(names).toContain('export_board')
@@ -939,5 +940,45 @@ describe('static UI caching', () => {
       await built.close()
       fs.rmSync(web, { recursive: true, force: true })
     }
+  })
+})
+
+describe('session continuity API', () => {
+  it('GET /api/context returns the brief, a snapshot and the journal', async () => {
+    const posted = await api('post', '/api/journal', { author: 'ana', summary: 'Kickoff done', next: ['TK-1'] })
+    expect(posted.status).toBe(201)
+    const { status, json } = await api('get', '/api/context')
+    expect(status).toBe(200)
+    const body = json()
+    expect(body.markdown).toContain('# Where we are')
+    expect(body.markdown).toContain('Kickoff done')
+    expect(body.snapshot.inProgress.map((t: { id: string }) => t.id)).toEqual(['TK-2'])
+    expect(body.snapshot.lastHandoff.author).toBe('ana')
+    expect(body.journal[0].summary).toBe('Kickoff done')
+  })
+
+  it('POST /api/journal rejects an empty handoff', async () => {
+    const { status } = await api('post', '/api/journal', { summary: '' })
+    expect(status).toBe(400)
+  })
+
+  it('POST /api/tasks/:id/review applies verdicts', async () => {
+    await api('patch', '/api/tasks/TK-1/status', { status: 'Review' })
+    const bad = await api('post', '/api/tasks/TK-1/review', { verdict: 'maybe' })
+    expect(bad.status).toBe(400)
+    const ok = await api('post', '/api/tasks/TK-1/review', { reviewer: 'ana', verdict: 'changes', findings: ['missing tests'] })
+    expect(ok.status).toBe(200)
+    expect(ok.json().status).toBe('In Progress')
+    const again = await api('post', '/api/tasks/TK-1/review', { verdict: 'approve' })
+    expect(again.status).toBe(400)
+    const missing = await api('post', '/api/tasks/TK-99/review', { verdict: 'approve' })
+    expect(missing.status).toBe(404)
+  })
+
+  it('GET /api/skills lists skills and missing references', async () => {
+    const { status, json } = await api('get', '/api/skills')
+    expect(status).toBe(200)
+    expect(Array.isArray(json().skills)).toBe(true)
+    expect(Array.isArray(json().missing)).toBe(true)
   })
 })

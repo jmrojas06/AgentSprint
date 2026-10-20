@@ -22,6 +22,8 @@ const agent = (over: Partial<AgentProfile> = {}): AgentProfile => ({
   color: '#a855f7',
   tags: [],
   tools: [],
+  disallowedTools: [],
+  skills: [],
   model: 'inherit',
   prompt: 'You are the Designer.',
   ...over,
@@ -103,7 +105,7 @@ describe('store integration', () => {
   it('init generates one Claude Code subagent per default agent', () => {
     ProjectStore.init(dir, { sample: true })
     const files = fs.readdirSync(claudeAgentsDir(dir)).sort()
-    expect(files).toEqual(['creative-director.md', 'designer.md', 'developer.md', 'docs.md', 'fixer.md', 'ideator.md', 'tester.md'])
+    expect(files).toEqual(['code-reviewer.md', 'creative-director.md', 'designer.md', 'developer.md', 'docs.md', 'fixer.md', 'ideator.md', 'tester.md', 'ui-reviewer.md'])
   })
 
   it('saveAgent creates a profile, exposes it in state and syncs its subagent', () => {
@@ -160,7 +162,7 @@ describe('store integration', () => {
 
   it('installDefaultAgents adds only the missing defaults', () => {
     const store = ProjectStore.init(dir, { sample: false })
-    expect(store.installDefaultAgents()).toHaveLength(7)
+    expect(store.installDefaultAgents()).toHaveLength(9)
     store.deleteAgent('docs')
     expect(store.installDefaultAgents()).toEqual(['docs'])
     expect(store.installDefaultAgents()).toEqual([])

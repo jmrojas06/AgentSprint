@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdDispatch, cmdExport, cmdLint, cmdTaskNew, parseArgs } from './index.js'
+import { cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
 import { startServer } from '@jmrojas06/agentsprint-server'
 
 let dir: string
@@ -320,7 +320,7 @@ describe('agents, dispatch and connect', () => {
     log.mockRestore()
     expect(out).toContain('Added default agents: docs')
     expect(out).toMatch(/designer\s+Designer/)
-    expect(out).toContain('7 agent(s)')
+    expect(out).toContain('9 agent(s)')
   })
 
   it('dispatch prints the plan for the active sprint', async () => {
@@ -343,5 +343,69 @@ describe('agents, dispatch and connect', () => {
     const config = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'))
     expect(config.mcpServers.other).toEqual({ command: 'x' })
     expect(config.mcpServers.agentsprint).toEqual({ type: 'stdio', command: process.execPath, args: ['/opt/agentboard/index.js', 'mcp', path.resolve(dir)] })
+  })
+})
+
+describe('session continuity commands', () => {
+  it('parses context, handoff and skills', () => {
+    expect(parseArgs(['context', '/tmp/x', '--hook'])).toMatchObject({ command: 'context', dir: '/tmp/x', hook: true })
+    expect(parseArgs(['skills', '/tmp/x'])).toMatchObject({ command: 'skills', dir: '/tmp/x' })
+    expect(
+      parseArgs(['handoff', '/tmp/x', '--summary', 'API done', '--done', 'TK-1', '--next', 'TK-2', '--next', 'TK-3', '--blocker', 'CI', '--author', 'ana']),
+    ).toMatchObject({
+      command: 'handoff',
+      dir: '/tmp/x',
+      handoff: { summary: 'API done', done: ['TK-1'], next: ['TK-2', 'TK-3'], blockers: ['CI'], author: 'ana' },
+    })
+  })
+
+  it('handoff appends to the journal and context prints it', async () => {
+    ProjectStore.init(dir, { sample: true })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await cmdHandoff(dir, { summary: 'Planned the sprint', done: [], next: ['Start TK-1'], blockers: [], author: 'ana' })
+    log.mockRestore()
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    await cmdContext(dir)
+    const out = write.mock.calls.map((c) => String(c[0])).join('')
+    write.mockRestore()
+    expect(out).toContain('# Where we are')
+    expect(out).toContain('Planned the sprint')
+    expect(out).toContain('Start TK-1')
+  })
+
+  it('context --hook stays silent without a board, plain context throws', async () => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    await cmdContext(dir, { hook: true })
+    expect(write).not.toHaveBeenCalled()
+    write.mockRestore()
+    await expect(cmdContext(dir)).rejects.toThrow(/No AgentSprint board/)
+  })
+
+  it('skills lists installed skills without crashing on an empty roster', async () => {
+    ProjectStore.init(dir, { sample: false })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await cmdSkills(dir)
+    log.mockRestore()
+    warn.mockRestore()
+  })
+
+  it('installs one SessionStart hook, keeping other settings and hooks', () => {
+    const file = path.join(dir, '.claude', 'settings.local.json')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ permissions: { allow: ['Bash(ls)'] }, hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] } }),
+      'utf8',
+    )
+    installContextHook(dir, '/opt/agentboard/index.js')
+    installContextHook(dir, '/opt/agentboard/index.js')
+    const settings = JSON.parse(fs.readFileSync(file, 'utf8'))
+    expect(settings.permissions).toEqual({ allow: ['Bash(ls)'] })
+    const commands = settings.hooks.SessionStart.flatMap((g: { hooks: Array<{ command: string }> }) => g.hooks.map((h) => h.command))
+    expect(commands).toHaveLength(2)
+    expect(commands[0]).toBe('echo hi')
+    expect(commands[1]).toContain('/opt/agentboard/index.js')
+    expect(commands[1]).toMatch(/ context .* --hook$/)
   })
 })

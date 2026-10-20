@@ -53,6 +53,10 @@ export const AgentMeta = z.object({
   tags: z.array(z.string()).default([]),
   /** Tool allowlist for the generated subagent; empty inherits every tool (MCP included). */
   tools: z.array(z.string()).default([]),
+  /** Tools the generated subagent may never use (e.g. `Edit` for read-only reviewers). */
+  disallowedTools: z.array(z.string()).default([]),
+  /** Claude Code skills preloaded into the subagent's context at startup (by skill name). */
+  skills: z.array(z.string()).default([]),
   model: AgentModel.default('inherit'),
 })
 export type AgentMeta = z.infer<typeof AgentMeta>
@@ -64,7 +68,7 @@ export const AgentProfile = AgentMeta.extend({
 })
 export type AgentProfile = z.infer<typeof AgentProfile>
 
-export const ACTIVITY_TYPES = ['created', 'status', 'assignee', 'checklist', 'note', 'update'] as const
+export const ACTIVITY_TYPES = ['created', 'status', 'assignee', 'checklist', 'note', 'update', 'review'] as const
 export const ActivityEventType = z.enum(ACTIVITY_TYPES)
 export type ActivityEventType = z.infer<typeof ActivityEventType>
 

@@ -36,10 +36,15 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 
 ## Tools
 
-35 tools are exposed over both transports (stdio and Streamable HTTP):
+40 tools are exposed (the three `project_*` tools only over the multi-project HTTP transport). The server also sends **instructions** at initialize that tell the agent to start with `project_context` and end with `session_handoff`.
 
 | Tool | Description |
 | --- | --- |
+| `project_context` | **Start here.** Markdown brief: sprint progress, last handoff, in progress (with last note), waiting for review, next unblocked tasks, blocked, recently done, recent learnings |
+| `session_handoff` | Append a handoff to `.agentboard/journal.md`: summary, done, next, blockers |
+| `session_journal` | The most recent handoffs, newest first |
+| `task_review` | Review-gate verdict on a task in Review: `approve`, or `changes` with findings (moves it back to In Progress) |
+| `skill_list` | Installed Claude Code skills and the ones agents reference but are missing |
 | `board_summary` | Overview: active sprint, counts per status, completion % |
 | `task_list` | List tasks with filters (status, sprint, assignee, search) |
 | `task_get` | Get a single task by id |
@@ -59,9 +64,9 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `learnings_get` | Get the full contents of `.agentboard/learnings.md` — retro notes, rules and principles from past sprints |
 | `learnings_append` | Append a single learning/retro entry to `.agentboard/learnings.md` |
 | `agent_list` / `agent_get` | List the specialized agents / read one full prompt |
-| `agent_upsert` / `agent_delete` | Create, update or delete an agent (also regenerates its Claude Code subagent) |
+| `agent_upsert` / `agent_delete` | Create, update or delete an agent, including its `skills` and `disallowedTools` (also regenerates its Claude Code subagent) |
 | `agent_sync` | Regenerate `.claude/agents/` (`installDefaults` adds missing default agents) |
-| `sprint_dispatch` | Waves of parallel tasks with the subagent for each one (Markdown or JSON) |
+| `sprint_dispatch` | Waves of parallel tasks with the subagent and review gate for each one, plus a Review gate section (Markdown or JSON) |
 | `sprint_current` | Active sprint + its tasks + stats (read this first) |
 | `sprint_list` | List all sprints |
 | `sprint_create` | Create a new planned sprint |
@@ -87,6 +92,7 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 
 | Prompt | Description |
 | --- | --- |
+| `resume` | Pick up where the last session left off: the project brief plus instructions to continue and hand off |
 | `execute-task` | Pre-formatted handoff prompt to execute a task by ID (with brand injection) |
 | `sprint-plan` | Agent-assisted sprint planning: receives goal/capacity, returns a reviewable plan from backlog + velocity + learnings |
 | `sprint-retro` | Workflow prompt to analyze sprint velocity and capture learnings |
@@ -151,6 +157,7 @@ Add to `.cursor/mcp.json`:
 
 Your repo already ships an `AGENTS.md` that instructs agents to:
 
-1. Read `.agentboard/sprints/` to learn the active sprint.
+1. Start with `project_context` (or `agentboard context`) to learn where the project is.
 2. Work one task at a time; `task_claim` when starting.
-3. Set `Review` when acceptance criteria are met — a human decides "Done".
+3. Set `Review` when acceptance criteria are met; a reviewer subagent records a verdict with `task_review`, and a human decides "Done".
+4. End the session with `session_handoff`.

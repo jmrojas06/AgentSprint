@@ -1,7 +1,8 @@
 import { ChevronLeft, ChevronRight, Dot, GitCommitHorizontal, Lock } from 'lucide-react'
 import type { Task } from '../types'
 import { AssigneeChip } from '../agents'
-import { cx, criterionChecked, getBlockerTasks, getTaskLock, priorityDot, priorityLabel, statusAccent } from '../ui'
+import { cx, criterionChecked, getBlockerTasks, getTaskLock, priorityDot, priorityLabel, reviewState } from '../ui'
+import { ReviewBadge } from './Overview'
 
 interface Props {
   task: Task
@@ -18,22 +19,25 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
   const next = idx >= 0 && idx < statuses.length - 1 ? statuses[idx + 1] : null
   const total = task.acceptanceCriteria.length
   const completed = task.acceptanceCriteria.filter((c) => criterionChecked(c)).length
-  const blockers = task.dependencies.length > 0 ? getBlockerTasks(task, allTasks) : []
+  // Dependencies only matter before the work is handed over.
+  const pending = task.status !== 'Review' && task.status !== 'Done'
+  const blockers = pending && task.dependencies.length > 0 ? getBlockerTasks(task, allTasks) : []
   const isBlocked = task.dependencies.length > 0 && blockers.length > 0
   const lock = getTaskLock(task)
+  const review = reviewState(task)
 
   return (
     <button
       type="button"
       onClick={() => onOpen(task)}
       className={cx(
-        'group w-full rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-left',
-        'transition-all duration-150 hover:-translate-y-0.5 hover:border-zinc-600 hover:bg-zinc-800/80 hover:shadow-md hover:shadow-black/20',
+        'group w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-left',
+        'transition-colors duration-150 hover:border-zinc-700 hover:bg-zinc-800/60',
       )}
     >
       <div className="flex items-center gap-2">
         <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', priorityDot[task.priority])} title={`${priorityLabel[task.priority]} priority`} />
-        <span className="font-mono text-xs text-zinc-500">{task.id}</span>
+        <span className="font-mono text-[11px] text-zinc-500">{task.id}</span>
         {lock && (
           <span
             className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
@@ -47,25 +51,26 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
         <AssigneeChip assignee={task.assignee} className="ml-auto" />
       </div>
 
-      <h3 className="mt-2 text-sm font-medium leading-snug text-zinc-100">{task.title}</h3>
+      <h3 className="mt-1.5 line-clamp-3 text-[13px] font-medium leading-snug text-zinc-100">{task.title}</h3>
 
       {task.tags.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {task.tags.slice(0, 3).map((t) => (
-            <span key={t} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+            <span key={t} className="rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-zinc-400">
               {t}
             </span>
           ))}
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-2.5 flex min-h-5 items-center gap-2">
         {total > 0 && (
-          <span className="text-[11px] text-zinc-500">
-            {completed}/{total} AC
+          <span className="tabular text-[11px] text-zinc-500" title="Acceptance criteria done">
+            {completed}/{total}
           </span>
         )}
-        {task.dependencies.length > 0 && (
+        {review && <ReviewBadge verdict={review.verdict} by={review.by} />}
+        {pending && task.dependencies.length > 0 && (
           <span
             className={cx(
               'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
@@ -118,9 +123,6 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
         </span>
       </div>
 
-      {task.status !== 'Done' && (
-        <div className={cx('mt-2 h-0.5 w-full rounded', statusAccent[task.status] ?? 'bg-zinc-700')} />
-      )}
     </button>
   )
 }

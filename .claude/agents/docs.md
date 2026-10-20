@@ -5,6 +5,9 @@ description: >-
   documentation accurate, example-driven and in sync with the code that actually
   ships. Use for AgentSprint tasks assigned to "docs" (pass the task id, e.g.
   TK-12).
+skills:
+  - grill-with-docs
+  - verification-before-completion
 color: cyan
 ---
 

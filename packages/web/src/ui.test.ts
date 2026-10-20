@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Task } from './types'
-import { sortTasks, viewFromQuery } from './ui'
+import { lastNoteText, reviewState, sortTasks, viewFromQuery } from './ui'
 
 function makeTask(overrides: Partial<Task> & { id: string }): Task {
   return {
@@ -71,5 +71,26 @@ describe('sortTasks with list-view keys', () => {
       makeTask({ id: 'TK-2', acceptanceCriteria: ['[x] a'] }),
     ]
     expect(sortTasks(withAc, 'ac', 'desc')[0]!.id).toBe('TK-1')
+  })
+})
+
+describe('reviewState', () => {
+  const ev = (type: string, detail: string, at: string, actor = 'code-reviewer') => ({ type, detail, at, actor }) as never
+  it('returns null when never reviewed', () => {
+    expect(reviewState({ activity: [ev('status', 'To Do → Review', '1')] })).toBeNull()
+  })
+  it('reads the latest verdict', () => {
+    expect(reviewState({ activity: [ev('review', 'approved', '2')] })).toEqual({ verdict: 'approved', by: 'code-reviewer', at: '2' })
+    expect(reviewState({ activity: [ev('status', 'Review → In Progress', '3'), ev('review', 'changes requested (2 findings)', '3')] })?.verdict).toBe('changes')
+  })
+  it('drops a verdict once the task moved again', () => {
+    expect(reviewState({ activity: [ev('review', 'approved', '2'), ev('status', 'Review → Done', '4', 'user')] })).toBeNull()
+  })
+})
+
+describe('lastNoteText', () => {
+  it('strips the timestamp and author and skips sub-items', () => {
+    expect(lastNoteText({ notes: '- [2026] (dev) first\n- [2026] (code-reviewer) **Review: approved**\n  - finding' })).toBe('Review: approved')
+    expect(lastNoteText({ notes: '' })).toBeNull()
   })
 })

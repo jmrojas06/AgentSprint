@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, ClipboardCopy, Play, X } from 'lucide-react'
+import { Check, ClipboardCopy, Play, ShieldCheck, X } from 'lucide-react'
 import type { DispatchItem, DispatchPlan } from '../types'
 import { api } from '../api'
 import { AssigneeChip } from '../agents'
@@ -58,7 +58,9 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
   const plan = data?.plan
   const pending = plan ? plan.waves.reduce((n, w) => n + w.length, 0) : 0
 
-  const row = (it: DispatchItem, extra?: string) => (
+  const gated = plan ? plan.review.filter((it) => it.reviewer) : []
+
+  const row = (it: DispatchItem, extra?: string, showReviewer = true) => (
     <li key={it.id}>
       <button
         type="button"
@@ -74,6 +76,12 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
         ) : (
           <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400" title="No specialist matches: use the default agent">
             general-purpose
+          </span>
+        )}
+        {showReviewer && it.reviewer && (
+          <span className="hidden shrink-0 items-center gap-1 text-[10px] text-zinc-500 md:flex" title={`Then checked by ${it.reviewer}`}>
+            <ShieldCheck className="h-3 w-3" />
+            {it.reviewer}
           </span>
         )}
       </button>
@@ -120,7 +128,7 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
             </div>
           )}
 
-          {plan && pending === 0 && (
+          {plan && pending === 0 && gated.length === 0 && (
             <div className="rounded-md border border-dashed border-zinc-700 p-4 text-center">
               <p className="text-sm text-zinc-200">Nothing to dispatch</p>
               <p className="mt-1 text-xs text-zinc-500">
@@ -162,9 +170,29 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
             </section>
           )}
 
-          {plan && plan.review.length > 0 && (
+          {gated.length > 0 && (
+            <section aria-label="Review gate">
+              <h3 className="mb-1 flex items-baseline gap-2 text-xs font-semibold text-zinc-200">
+                Review gate
+                <span className="font-normal text-zinc-500">reviewer subagents check these before you do</span>
+              </h3>
+              <ul className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-1">
+                {gated.map((it) => (
+                  <li key={it.id}>
+                    <button type="button" onClick={() => onOpenTask(it.id)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-800/70">
+                      <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                      <span className="w-14 shrink-0 font-mono text-[11px] text-zinc-500" translate="no">{it.id}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-zinc-200">{it.title}</span>
+                      <AssigneeChip assignee={it.reviewer!} className="shrink-0" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {plan && plan.review.length > gated.length && (
             <p className="text-[11px] text-zinc-500">
-              {plan.review.length} task{plan.review.length === 1 ? '' : 's'} waiting for your review: {plan.review.map((t) => t.id).join(', ')}.
+              Waiting for your review without a gate: {plan.review.filter((t) => !t.reviewer).map((t) => t.id).join(', ')}.
             </p>
           )}
         </div>
@@ -176,7 +204,7 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
           <button
             type="button"
             onClick={() => void copy()}
-            disabled={!data || pending === 0}
+            disabled={!data || (pending === 0 && gated.length === 0)}
             className="flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
             data-testid="dispatch-copy"
           >

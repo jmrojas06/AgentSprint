@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Pencil,
   Plus,
+  ShieldCheck,
   StickyNote,
   User,
 } from 'lucide-react'
@@ -19,7 +20,8 @@ const EVENT_META: Record<string, { icon: typeof Plus; color: string; label: stri
   assignee: { icon: User, color: 'text-sky-400', label: 'Assignee' },
   checklist: { icon: CheckSquare, color: 'text-amber-400', label: 'Checklist' },
   note: { icon: StickyNote, color: 'text-zinc-400', label: 'Note' },
-  update: { icon: Pencil, color: 'text-violet-400', label: 'Updated' },
+  update: { icon: Pencil, color: 'text-zinc-400', label: 'Updated' },
+  review: { icon: ShieldCheck, color: 'text-emerald-400', label: 'Review' },
 }
 
 function formatWhen(at: string): string {

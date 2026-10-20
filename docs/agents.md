@@ -8,17 +8,19 @@ it — several at once when the tasks are independent.
 ## The default team
 
 `agentboard init` (or `agentboard agents sync` on an existing board) writes
-seven profiles to `.agentboard/agents/`:
+nine profiles to `.agentboard/agents/`:
 
-| Agent | Role |
-| --- | --- |
-| `developer` | Smallest correct change; reuses what exists; full suite green before Review |
-| `designer` | UI/UX from the brand kit: hierarchy, consistency, accessibility, every state |
-| `tester` | Tests derived from acceptance criteria; edge cases first; proves tests can fail |
-| `fixer` | Reproduce, find root cause, failing test first, smallest patch |
-| `docs` | README, guides, CHANGELOG — verified against the code that ships |
-| `creative-director` | Owns vision and tone; approves, revises or rejects with a direction |
-| `ideator` | Divergent options fast, then a ranked shortlist and a recommendation |
+| Agent | Role | Skills preloaded |
+| --- | --- | --- |
+| `developer` | Smallest correct change; reuses what exists; full suite green before Review | karpathy-guidelines, principios-codigo, test-driven-development, systematic-debugging, verification-before-completion |
+| `designer` | Builds the UI from the brand kit: direction, reference brands, audit, screenshots | design-taste-frontend, frontend-design, design-md-library, awesome-design-md, web-design-guidelines, playwright-cli |
+| `tester` | Tests derived from acceptance criteria; edge cases first; proves tests can fail | test-driven-development, tdd, playwright-cli, verification-before-completion |
+| `fixer` | Reproduce, find root cause, failing test first, smallest patch | systematic-debugging, diagnose, test-driven-development, verification-before-completion |
+| `docs` | README, guides, CHANGELOG, verified against the code that ships | grill-with-docs, verification-before-completion |
+| `creative-director` | Owns vision and tone; approves, revises or rejects with a direction | design-taste-frontend, design-md-library, brainstorming |
+| `ideator` | Divergent options fast, then a ranked shortlist and a recommendation | brainstorming |
+| `code-reviewer` | Review gate for code: diff vs. criteria, bugs, regressions; read-only | requesting-code-review, karpathy-guidelines, principios-codigo, verification-before-completion |
+| `ui-reviewer` | Review gate for UI: real screens at 375px and desktop, a11y, brand; read-only | web-design-guidelines, design-taste-frontend, playwright-cli |
 
 A profile is one Markdown file — the filename is the agent name, the body is
 its prompt:
@@ -29,6 +31,8 @@ description: "Payments specialist: Stripe Checkout, webhooks and billing portal.
 color: "#3b82f6"
 tags: [payments]
 tools: []        # optional Claude Code tool allowlist; empty = inherit all (MCP included)
+disallowedTools: []  # tools it may never use, e.g. [Edit, Write] for a reviewer
+skills: [stripe-best-practices]  # Claude Code skills preloaded into the subagent
 model: inherit   # inherit | sonnet | opus | haiku
 ---
 
@@ -40,6 +44,47 @@ You are the **Stripe Expert**.
 
 Create or edit agents from the **Agents** tab of the board, with the
 `agent_upsert` MCP tool, or by editing the file.
+
+## Skills
+
+`skills` lists Claude Code skills (by their `name:`) that are injected into
+the subagent's context when it starts, so the designer begins every task with
+its design skills loaded instead of having to discover them. A skill that is
+not installed is skipped by Claude Code with a debug warning, so profiles stay
+portable.
+
+- `agentboard skills` lists the skills installed in `<project>/.claude/skills/`
+  and `~/.claude/skills/`, which agents preload each one, and the skills an
+  agent references that are missing.
+- The **Agents** tab edits skills with suggestions from the installed ones and
+  marks missing skills in amber; `skill_list` (MCP) and `GET /api/skills`
+  return the same data.
+- Task specs list the agent's skills too, so agents other than Claude Code
+  know which ones to load.
+
+## The review gate
+
+`code-reviewer` and `ui-reviewer` are tagged `reviewer` and cannot edit files
+(`disallowedTools: Edit, Write, NotebookEdit`). Their generated subagent gets a
+review protocol instead of the build protocol: read the spec, inspect the diff
+or the running UI, then record a verdict with `task_review`:
+
+```json
+{ "id": "TK-12", "reviewer": "code-reviewer", "verdict": "changes",
+  "summary": "Empty input crashes the endpoint.",
+  "findings": ["src/api/tasks.ts:42 — POST with {} throws; validate and return 400", "No test for the 404 path"] }
+```
+
+- `approve` keeps the task in Review for the human, with an "Approved" badge
+  on the board.
+- `changes` needs at least one finding; it moves the task back to In Progress
+  and records the findings as a note, so the implementer sees them in its spec.
+
+`sprint_dispatch` assigns the gate per task: `ui-reviewer` when the task or its
+assignee is tagged design, ui, ux, frontend, web, css or a11y; `code-reviewer`
+otherwise; none for decision-only agents (ideator, creative director). Tasks
+already in Review appear in a **Review gate** section of the plan. Humans can
+record verdicts too, with `POST /api/tasks/:id/review`.
 
 ## Real subagents in `.claude/agents/`
 
@@ -103,5 +148,17 @@ agentboard connect .
 ```
 
 Registers the AgentSprint MCP server in `./.mcp.json` (keeping any other
-servers). Restart Claude Code in the folder and approve the `agentsprint`
-server.
+servers) and a `SessionStart` hook in `.claude/settings.local.json` that runs
+`agentboard context`, so every new, resumed, cleared or compacted session
+starts with the project brief. Restart Claude Code in the folder and approve
+the `agentsprint` server.
+
+## Never lose the thread
+
+- **Start:** the brief (`agentboard context`, `project_context`, the
+  `resume` prompt) shows the active sprint, work in progress with its last
+  note, what waits for review, the next unblocked tasks, blockers, the last
+  handoff and recent learnings.
+- **End:** `session_handoff` (or `agentboard handoff`, or the Overview's
+  *Write handoff*) appends what was done, what is next and what blocks to
+  `.agentboard/journal.md`, an append-only log that lives in git with the code.

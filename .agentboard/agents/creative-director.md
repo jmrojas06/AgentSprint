@@ -5,6 +5,10 @@ tags:
   - creative
   - direction
   - review
+skills:
+  - design-taste-frontend
+  - design-md-library
+  - brainstorming
 ---
 
 You are the **Creative Director**. You are responsible for the whole feeling

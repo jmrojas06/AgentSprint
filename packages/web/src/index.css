@@ -1,7 +1,10 @@
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @import "tailwindcss";
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", monospace;
 }
 
 html,
@@ -10,37 +13,59 @@ body,
   height: 100%;
 }
 
+/*
+ * Tokens. The UI is written with zinc-* / indigo-* utilities; the themes
+ * below redefine the variables those utilities read, so one class list works
+ * in both modes.
+ *
+ * Dark (default): a near-black ladder with a faint cool cast, hairline
+ * borders and a single indigo accent (the AgentSprint mark). Reference:
+ * Linear's surface ladder, adapted to a dense board.
+ */
 html {
   color-scheme: dark;
-}
-html.light {
-  color-scheme: light;
+  --color-zinc-950: #0b0c0e;
+  --color-zinc-900: #131418;
+  --color-zinc-800: #1f2126;
+  --color-zinc-700: #2d3037;
+  --color-zinc-600: #484c55;
+  --color-zinc-500: #6c717c;
+  --color-zinc-400: #9297a1;
+  --color-zinc-300: #c4c8cf;
+  --color-zinc-200: #dfe2e7;
+  --color-zinc-100: #eef0f3;
+  --color-zinc-50: #f7f8f9;
+
+  --color-indigo-300: #b4b7fb;
+  --color-indigo-400: #9195f8;
+  --color-indigo-500: #6d70f2;
+  --color-indigo-600: #5a5ee6;
+  --color-indigo-950: #17183a;
 }
 
 /*
- * Theming without touching component classes:
- * the UI was built dark-first with zinc-* utilities, so the light theme
- * mirrors the zinc scale (50 <-> 950) and warms up the accent shades.
- * `html.light` overrides the variables Tailwind utilities reference;
- * the default palette stays dark, matching the original design.
+ * Light: mirrors the ladder (50 <-> 950) with cool off-whites, and darkens
+ * the accent text shades so they keep AA contrast on light surfaces.
  */
 html.light {
-  --color-zinc-950: #fafafa;
-  --color-zinc-900: #f4f4f5;
-  --color-zinc-800: #e4e4e7;
-  --color-zinc-700: #d4d4d8;
-  --color-zinc-600: #a1a1aa;
-  --color-zinc-500: #71717a;
-  --color-zinc-400: #52525b;
-  --color-zinc-300: #3f3f46;
-  --color-zinc-200: #27272a;
-  --color-zinc-100: #18181b;
-  --color-zinc-50: #09090b;
+  color-scheme: light;
+  --color-zinc-950: #fbfbfc;
+  --color-zinc-900: #f3f4f6;
+  --color-zinc-800: #e5e7eb;
+  --color-zinc-700: #d3d6dc;
+  --color-zinc-600: #a3a8b2;
+  --color-zinc-500: #6b707b;
+  --color-zinc-400: #4f545e;
+  --color-zinc-300: #3a3e47;
+  --color-zinc-200: #262930;
+  --color-zinc-100: #17191e;
+  --color-zinc-50: #0b0c0e;
 
-  /* accents: darker text shades for contrast on light surfaces */
-  --color-indigo-400: #6366f1;
-  --color-indigo-300: #4338ca;
-  --color-indigo-200: #3730a3;
+  --color-indigo-500: #5a5ee6;
+  --color-indigo-600: #4f53d9;
+  --color-indigo-400: #4a4ed6;
+  --color-indigo-300: #3c3fb8;
+  --color-indigo-200: #30339a;
   --color-emerald-400: #059669;
   --color-emerald-300: #047857;
   --color-sky-400: #0284c7;
@@ -54,13 +79,29 @@ html.light {
   --color-red-300: #b91c1c;
 
   /* translucent "dark chip" backgrounds become soft tinted chips */
-  --color-indigo-950: #e0e7ff;
+  --color-indigo-950: #e8e9fe;
   --color-red-950: #fee2e2;
   --color-amber-950: #fef3c7;
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-100 antialiased transition-colors duration-200;
+  @apply bg-zinc-950 font-sans text-zinc-100 antialiased transition-colors duration-200;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Numbers that change (counts, progress, points) never jitter. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-indigo-500) 35%, transparent);
+}
+
+/* One visible focus treatment for every control, keyboard only. */
+:where(button, a, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--color-indigo-500);
+  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
@@ -69,7 +110,19 @@ body {
 }
 ::-webkit-scrollbar-thumb {
   @apply rounded-full bg-zinc-700;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -5,6 +5,10 @@ description: >-
   executions against the brand and the audience; says no to what does not fit
   and shapes what does. Use for AgentSprint tasks assigned to
   "creative-director" (pass the task id, e.g. TK-12).
+skills:
+  - design-taste-frontend
+  - design-md-library
+  - brainstorming
 color: pink
 ---
 

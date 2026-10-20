@@ -3,7 +3,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildDispatchPlan, planDispatch, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
+import { ProjectStore, buildDispatchPlan, planDispatch, discoverSkills, missingSkills, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
 import { isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
 import { main as runMcpStdio } from '@jmrojas06/agentsprint-mcp'
 
@@ -35,7 +35,13 @@ Commands:
     agents sync [dir] Add missing default agents and regenerate .claude/agents/
     dispatch [dir] [--sprint <id>]
                      Print the subagent dispatch plan (waves of parallel tasks)
-    connect [dir]     Register the AgentSprint MCP server in <dir>/.mcp.json (Claude Code)
+    context [dir]     Print where the project is: sprint, in progress, next, blockers,
+                     last session handoff and learnings (start every session with it)
+    handoff [dir] --summary <text> [--done <x>] [--next <x>] [--blocker <x>] [--author <name>]
+                     Append a session handoff to .agentboard/journal.md (flags repeatable)
+    skills [dir]      List installed Claude Code skills and which agents preload them
+    connect [dir]     Register the MCP server in <dir>/.mcp.json and a SessionStart hook in
+                     .claude/settings.local.json that feeds \`agentboard context\` to Claude Code
     mcp [dir]         Run the MCP server over stdio for the board in <dir>
     help              Show this help
 
@@ -92,10 +98,13 @@ interface Args {
   tokenAll?: boolean
   allowedHosts?: string[]
   allowedOrigins?: string[]
+  /** `context --hook`: stay silent (exit 0) when there is no board, for SessionStart hooks. */
+  hook?: boolean
+  handoff?: { summary: string; done: string[]; next: string[]; blockers: string[]; author: string }
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'agents', 'dispatch', 'connect', 'mcp', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'agents', 'dispatch', 'connect', 'mcp', 'context', 'handoff', 'skills', 'help'])
   const command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -167,6 +176,35 @@ export function parseArgs(argv: string[]): Args | null {
     }
     const agentsDir = argv[0] ? path.resolve(argv[0]) : process.cwd()
     return { command: sync ? 'agents-sync' : 'agents', dir: agentsDir, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+  }
+
+  if (command === 'handoff' || command === 'context') {
+    const handoff = { summary: '', done: [] as string[], next: [] as string[], blockers: [] as string[], author: 'human' }
+    let hook = false
+    const positional: string[] = []
+    const value = (flag: string, i: number): string => {
+      const v = argv[i]
+      if (v === undefined || v.startsWith('--')) {
+        console.error(`Usage: ${flag} <text>`)
+        process.exit(1)
+      }
+      return v
+    }
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!
+      if (command === 'context' && arg === '--hook') hook = true
+      else if (command === 'handoff' && arg === '--summary') handoff.summary = value(arg, ++i)
+      else if (command === 'handoff' && arg === '--done') handoff.done.push(value(arg, ++i))
+      else if (command === 'handoff' && arg === '--next') handoff.next.push(value(arg, ++i))
+      else if (command === 'handoff' && arg === '--blocker') handoff.blockers.push(value(arg, ++i))
+      else if (command === 'handoff' && arg === '--author') handoff.author = value(arg, ++i)
+      else if (arg.startsWith('-')) {
+        console.error(`Unknown option: ${arg}`)
+        process.exit(1)
+      } else positional.push(arg)
+    }
+    const targetDir = positional[0] ? path.resolve(positional[0]) : process.cwd()
+    return { command, dir: targetDir, hook, handoff, port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   if (command === 'dispatch') {
@@ -662,7 +700,7 @@ export async function cmdAgents(dir: string): Promise<void> {
   }
   const width = Math.max(...agents.map((a) => a.name.length))
   for (const a of agents) {
-    const extras = [a.model !== 'inherit' ? a.model : '', a.tools.length ? `${a.tools.length} tools` : ''].filter(Boolean).join(', ')
+    const extras = [a.model !== 'inherit' ? a.model : '', a.tools.length ? `${a.tools.length} tools` : '', a.skills.length ? `${a.skills.length} skills` : '', a.disallowedTools.length ? 'read-only' : ''].filter(Boolean).join(', ')
     console.log(`  ${a.name.padEnd(width)}  ${a.description.split(' — ')[0]}${extras ? `  (${extras})` : ''}`)
   }
   console.log(`\n${agents.length} agent(s) in ${path.join(store.boardDir, 'agents')}`)
@@ -691,6 +729,74 @@ export async function cmdDispatch(dir: string, sprintId?: number): Promise<void>
   process.stdout.write(buildDispatchPlan(planDispatch(store.state, { sprintId }), store.getConfig().name) + '\n')
 }
 
+export async function cmdContext(dir: string, opts: { hook?: boolean } = {}): Promise<void> {
+  let store: ProjectStore
+  try {
+    store = ProjectStore.open(dir)
+  } catch (err) {
+    // A SessionStart hook must never break a session in a folder without a board.
+    if (opts.hook) return
+    throw err
+  }
+  process.stdout.write(store.buildContext())
+}
+
+export async function cmdHandoff(dir: string, input: NonNullable<Args['handoff']>): Promise<void> {
+  const store = ProjectStore.open(dir)
+  const entry = store.appendJournal(input)
+  console.log(`✔ Handoff saved to ${path.join(store.boardDir, 'journal.md')} (${entry.at})`)
+}
+
+export async function cmdSkills(dir: string): Promise<void> {
+  const store = ProjectStore.open(dir)
+  const skills = discoverSkills(store.rootDir)
+  const agents = store.listAgents()
+  if (skills.length === 0) {
+    console.log('No Claude Code skills found in .claude/skills/ or ~/.claude/skills/.')
+  } else {
+    const width = Math.max(...skills.map((s) => s.name.length))
+    for (const skill of skills) {
+      const users = agents.filter((a) => a.skills.includes(skill.name)).map((a) => a.name)
+      console.log(`  ${skill.name.padEnd(width)}  ${skill.source.padEnd(7)}  ${users.length ? `→ ${users.join(', ')}` : '(unused)'}`)
+    }
+    console.log(`\n${skills.length} skill(s) installed.`)
+  }
+  const missing = missingSkills(agents, skills)
+  for (const m of missing) console.warn(`⚠ ${m.agent} preloads "${m.skill}", which is not installed (Claude Code skips it)`)
+}
+
+/** Marker that identifies the SessionStart hook written by `agentboard connect`. */
+const CONTEXT_HOOK_FLAG = 'context'
+
+/**
+ * Add (or refresh) a Claude Code SessionStart hook in
+ * `<dir>/.claude/settings.local.json` that prints `agentboard context`, so
+ * every new, resumed, cleared or compacted session starts with the board
+ * brief. Other settings and hooks are kept. Returns the settings file path.
+ */
+export function installContextHook(dir: string, entry: string): string {
+  const file = path.join(dir, '.claude', 'settings.local.json')
+  let settings: { hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ type: string; command: string }> }>> } & Record<string, unknown> = {}
+  if (fs.existsSync(file)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(file, 'utf8')) as typeof settings
+    } catch {
+      throw new Error(`${file} is not valid JSON — fix or remove it, then retry.`)
+    }
+  }
+  const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(entry)} ${CONTEXT_HOOK_FLAG} ${JSON.stringify(path.resolve(dir))} --hook`
+  const isOurs = (c: string): boolean => c.includes(` ${CONTEXT_HOOK_FLAG} `) && c.endsWith(' --hook')
+  const hooks = { ...(settings.hooks ?? {}) }
+  const groups = (hooks.SessionStart ?? [])
+    .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurs(h.command)) }))
+    .filter((g) => g.hooks.length > 0)
+  groups.push({ hooks: [{ type: 'command', command }] })
+  hooks.SessionStart = groups
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify({ ...settings, hooks }, null, 2) + '\n', 'utf8')
+  return file
+}
+
 /**
  * Register this CLI's stdio MCP server in `<dir>/.mcp.json` (the project-scope
  * file Claude Code reads), keeping every other server already configured.
@@ -712,8 +818,14 @@ export async function cmdConnect(dir: string, opts: { cliEntry?: string } = {}):
   servers.agentsprint = { type: 'stdio', command: process.execPath, args: [entry, 'mcp', path.resolve(dir)] }
   fs.writeFileSync(file, JSON.stringify({ ...config, mcpServers: servers }, null, 2) + '\n', 'utf8')
   console.log(`✔ AgentSprint MCP registered in ${file}`)
+  try {
+    const hookFile = installContextHook(dir, entry)
+    console.log(`✔ SessionStart hook in ${hookFile}: every session starts with \`agentboard context\``)
+  } catch (err) {
+    console.error(`⚠ Skipped the SessionStart hook: ${(err as Error).message}`)
+  }
   console.log('  Restart Claude Code in this folder and approve the "agentsprint" server.')
-  console.log('  Then try: /mcp__agentsprint__idea-to-mvp   or   /mcp__agentsprint__run-sprint')
+  console.log('  Then try: /mcp__agentsprint__resume   /mcp__agentsprint__idea-to-mvp   /mcp__agentsprint__run-sprint')
 }
 
 async function main(): Promise<void> {
@@ -750,6 +862,12 @@ async function main(): Promise<void> {
     await cmdAgentsSync(args.dir)
   } else if (args.command === 'dispatch') {
     await cmdDispatch(args.dir, args.sprintId)
+  } else if (args.command === 'context') {
+    await cmdContext(args.dir, { hook: args.hook })
+  } else if (args.command === 'handoff') {
+    await cmdHandoff(args.dir, args.handoff!)
+  } else if (args.command === 'skills') {
+    await cmdSkills(args.dir)
   } else if (args.command === 'connect') {
     await cmdConnect(args.dir)
   } else if (args.command === 'mcp') {

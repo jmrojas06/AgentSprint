@@ -54,20 +54,20 @@ export function Board({ statuses, tasks, allTasks, commitCounts, sortBy, sortDir
                onMove(task, status)
              }}
             className={cx(
-              'flex w-72 shrink-0 flex-col rounded-lg border transition-colors',
-              isOver ? 'border-indigo-500/70 bg-indigo-950/20' : 'border-zinc-800/80 bg-zinc-950/60',
+              'flex min-w-[15.5rem] flex-1 basis-0 flex-col rounded-xl border transition-colors',
+              isOver ? 'border-indigo-500/70 bg-indigo-950/20' : 'border-transparent bg-zinc-900/40',
             )}
           >
              <div className="flex items-center gap-1 px-3 py-2.5">
               <span className={cx('h-2 w-2 rounded-full', statusAccent[status] ?? 'bg-zinc-600')} />
-              <h2 className="text-sm font-semibold text-zinc-200">{status}</h2>
-              <span className="ml-auto rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
+              <h2 className="ml-1 text-[13px] font-medium text-zinc-200">{status}</h2>
+              <span className="tabular ml-1.5 mr-auto text-xs text-zinc-500">
                 {column.length}
               </span>
               <select
                 value={sortBy}
                 onChange={(e) => onSortBy(e.target.value as SortBy)}
-                className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-300 outline-none focus:border-indigo-500"
+                className="rounded border border-transparent bg-transparent px-1 py-0.5 text-[10px] text-zinc-500 outline-none hover:border-zinc-700 hover:text-zinc-300 focus:border-indigo-500"
                 title="Sort by"
               >
                 <option value="priority">Priority</option>
@@ -105,7 +105,7 @@ export function Board({ statuses, tasks, allTasks, commitCounts, sortBy, sortDir
                 </div>
               ))}
               {column.length === 0 && (
-                <div className="rounded-lg border border-dashed border-zinc-800 py-6 text-center text-xs text-zinc-600">
+                <div className="rounded-lg border border-dashed border-zinc-800 py-6 text-center text-xs text-zinc-500">
                   {isOver ? 'Drop here' : 'Empty'}
                 </div>
               )}

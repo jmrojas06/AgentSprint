@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { isReviewerAgent } from './agents.js'
 import { serializeFrontmatter } from './frontmatter.js'
 import type { AgentProfile } from './types.js'
 
@@ -56,8 +57,36 @@ export function nearestClaudeColor(hex: string): string | null {
   return best[0]
 }
 
+/** The protocol a review-gate subagent follows: it judges a task in Review, it does not build it. */
+function reviewerProtocolSection(agent: AgentProfile, projectName: string): string {
+  return `## AgentSprint review protocol
+
+You run as the \`${agent.name}\` review gate of the **${projectName}** board. The
+orchestrator hands you ONE task id (e.g. \`TK-12\`) that a specialist just
+moved to Review. You judge it; you never change the code.
+
+Use the AgentSprint MCP tools (server \`agentsprint\`):
+
+1. **Read the spec** — \`task_spec { id }\`: acceptance criteria, brand kit and
+   learnings. Read the implementer's notes with \`task_get { id }\`.
+2. **Inspect the work** — the diff, the running result and the test suite, as
+   your rules say.
+3. **Record the verdict** — \`task_review { id, reviewer: "${agent.name}",
+   verdict: "approve" | "changes", summary, findings: [...] }\`. \`approve\`
+   keeps the task in Review for the human; \`changes\` moves it back to In
+   Progress with your findings so the orchestrator re-launches the
+   implementer.
+
+Without the MCP tools, append your verdict under \`## Notes\` in
+\`.agentboard/tasks/<id>.md\` and, for \`changes\`, set \`status: In Progress\`.
+
+Your final message is the report the orchestrator reads: task id, verdict,
+findings and the commands you ran.`
+}
+
 /** The board protocol every generated subagent follows, whatever its role. */
 function protocolSection(agent: AgentProfile, projectName: string): string {
+  if (isReviewerAgent(agent)) return reviewerProtocolSection(agent, projectName)
   return `## AgentSprint protocol
 
 You run as the \`${agent.name}\` subagent of the **${projectName}** board. The
@@ -93,6 +122,8 @@ export function renderClaudeSubagent(agent: AgentProfile, projectName: string): 
     description: `${agent.description.trim()} Use for AgentSprint tasks assigned to "${agent.name}" (pass the task id, e.g. TK-12).`,
   }
   if (agent.tools.length > 0) data.tools = agent.tools.join(', ')
+  if (agent.disallowedTools.length > 0) data.disallowedTools = agent.disallowedTools.join(', ')
+  if (agent.skills.length > 0) data.skills = agent.skills
   if (agent.model !== 'inherit') data.model = agent.model
   const color = nearestClaudeColor(agent.color)
   if (color) data.color = color

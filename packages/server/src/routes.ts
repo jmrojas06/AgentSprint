@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
-import { buildDispatchPlan, buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, planDispatch, taskCommitCounts } from '@jmrojas06/agentsprint-core'
+import { buildDispatchPlan, buildSprintReport, buildTaskSpec, computeSprintStats, discoverSkills, findTaskRefs, missingSkills, planDispatch, snapshotProject, taskCommitCounts } from '@jmrojas06/agentsprint-core'
+import type { ReviewVerdict } from '@jmrojas06/agentsprint-core'
 import type { ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
@@ -138,6 +139,12 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     } catch (err) {
       return sendError(reply, 500, (err as Error).message)
     }
+  })
+
+  app.get('/api/skills', async (req) => {
+    const { store } = projects.get(projectName(req))
+    const skills = discoverSkills(store.rootDir)
+    return { skills, missing: missingSkills(store.listAgents(), skills) }
   })
 
   app.get('/api/dispatch', async (req, reply) => {
@@ -356,6 +363,46 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
       return reply.send(brand)
     } catch (err) {
       return sendError(reply, 400, (err as Error).message)
+    }
+  })
+
+  // ── session continuity ───────────────────────────────────────────────
+
+  app.get('/api/context', async (req) => {
+    const { store } = projects.get(projectName(req))
+    const state = store.state
+    const journal = store.getJournal()
+    return {
+      markdown: store.buildContext(),
+      snapshot: snapshotProject({ tasks: state.tasks, activeSprint: state.activeSprint, journal }),
+      journal: journal.slice(-10).reverse(),
+    }
+  })
+
+  app.post('/api/journal', async (req, reply) => {
+    const h = projects.get(projectName(req))
+    try {
+      const entry = h.store.appendJournal((req.body ?? {}) as Parameters<typeof h.store.appendJournal>[0])
+      h.broadcast.send('change', { project: h.info.name, at: new Date().toISOString() })
+      return reply.code(201).send(entry)
+    } catch (err) {
+      return sendError(reply, 400, (err as Error).message)
+    }
+  })
+
+  app.post('/api/tasks/:id/review', async (req, reply) => {
+    const id = (req.params as { id: string }).id
+    const body = (req.body ?? {}) as { reviewer?: string; verdict?: ReviewVerdict; summary?: string; findings?: string[] }
+    if (body.verdict !== 'approve' && body.verdict !== 'changes') return sendError(reply, 400, 'verdict must be "approve" or "changes"')
+    const h = projects.get(projectName(req))
+    try {
+      const task = h.store.reviewTask(id, { reviewer: body.reviewer?.trim() || 'user', verdict: body.verdict, summary: body.summary, findings: body.findings })
+      h.index.upsert(task)
+      h.broadcast.send('task', task)
+      return reply.send(task)
+    } catch (err) {
+      const message = (err as Error).message
+      return sendError(reply, /not found/i.test(message) ? 404 : 400, message)
     }
   })
 

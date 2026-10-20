@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { Bot, ChevronDown, ChevronRight, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
-import type { AgentModel, AgentProfile, Task } from '../types'
+import { useEffect, useState } from 'react'
+import { Bot, ChevronDown, ChevronRight, Eye, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
+import type { AgentModel, AgentProfile, SkillInfo, Task } from '../types'
 import { AGENT_MODELS } from '../types'
 import { api, type SubagentSync } from '../api'
 import { agentRole } from '../agents'
@@ -18,6 +18,7 @@ interface Draft {
   prompt: string
   color: string
   model: AgentModel
+  skills: string[]
 }
 
 const NAME_RE = /^[a-z][a-z0-9-]{0,63}$/
@@ -56,6 +57,26 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [installed, setInstalled] = useState<SkillInfo[] | null>(null)
+  const [skillDraft, setSkillDraft] = useState('')
+
+  // Installed skills feed the picker and flag skills that are missing on this machine.
+  useEffect(() => {
+    let cancelled = false
+    const request = api.skills?.()
+    if (!request) return
+    request
+      .then((r) => {
+        if (!cancelled) setInstalled(r.skills)
+      })
+      .catch(() => {
+        if (!cancelled) setInstalled([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const isInstalled = (skill: string) => installed === null || installed.some((s) => s.name === skill)
 
   const openTasks = (name: string) => tasks.filter((t) => t.assignee === name && t.status !== 'Done').length
 
@@ -80,13 +101,13 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
 
   const startNew = () => {
     setIsNew(true)
-    setDraft({ name: '', description: '', prompt: NEW_AGENT_PROMPT, color: '#6366f1', model: 'inherit' })
+    setDraft({ name: '', description: '', prompt: NEW_AGENT_PROMPT, color: '#6366f1', model: 'inherit', skills: [] })
     setNotice(null)
   }
 
   const startEdit = (agent: AgentProfile) => {
     setIsNew(false)
-    setDraft({ name: agent.name, description: agent.description, prompt: agent.prompt, color: agent.color || '#71717a', model: agent.model })
+    setDraft({ name: agent.name, description: agent.description, prompt: agent.prompt, color: agent.color || '#71717a', model: agent.model, skills: [...(agent.skills ?? [])] })
     setNotice(null)
   }
 
@@ -225,6 +246,45 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
             </div>
           </div>
           <div>
+            <span className={label} id="agent-skills-label">Skills preloaded</span>
+            <div className="flex flex-wrap gap-1" aria-labelledby="agent-skills-label">
+              {draft.skills.map((skill) => (
+                <span key={skill} className={cx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px]', isInstalled(skill) ? 'bg-indigo-500/15 text-indigo-300' : 'bg-amber-500/15 text-amber-300')} title={isInstalled(skill) ? 'Installed' : 'Not installed on this machine: Claude Code skips it'}>
+                  {skill}
+                  <button type="button" onClick={() => setDraft({ ...draft, skills: draft.skills.filter((x) => x !== skill) })} aria-label={`Remove ${skill}`} className="rounded-full hover:text-zinc-50">
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+              {draft.skills.length === 0 && <span className="text-[11px] text-zinc-500">None yet</span>}
+            </div>
+            <input
+              list="agent-skill-options"
+              value={skillDraft}
+              onChange={(e) => setSkillDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                const name = skillDraft.trim()
+                if (name && !draft.skills.includes(name)) setDraft({ ...draft, skills: [...draft.skills, name] })
+                setSkillDraft('')
+              }}
+              placeholder="Add a skill and press Enter"
+              aria-label="Add a skill"
+              className={cx(field, 'mt-1.5')}
+            />
+            <datalist id="agent-skill-options">
+              {(installed ?? [])
+                .filter((sk) => !draft.skills.includes(sk.name))
+                .map((sk) => (
+                  <option key={sk.name} value={sk.name}>
+                    {sk.description.slice(0, 80)}
+                  </option>
+                ))}
+            </datalist>
+            <p className="mt-1 text-[10px] leading-snug text-zinc-500">Injected into the subagent at startup. {installed ? `${installed.length} skills installed.` : ''}</p>
+          </div>
+          <div>
             <label className={label} htmlFor="agent-prompt">Prompt</label>
             <textarea
               id="agent-prompt"
@@ -255,7 +315,7 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
       {agents.length === 0 ? (
         <div className="rounded-md border border-dashed border-zinc-700 p-3 text-center">
           <p className="text-xs text-zinc-300">No agents yet</p>
-          <p className="mt-1 text-[11px] text-zinc-500">Add developer, designer, tester, fixer, docs, creative-director and ideator.</p>
+          <p className="mt-1 text-[11px] text-zinc-500">Add developer, designer, tester, fixer, docs, creative-director, ideator and the code and UI reviewers.</p>
           <button
             type="button"
             onClick={() => void sync(true)}
@@ -284,6 +344,17 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
                     <span className="block truncate font-mono text-xs text-zinc-100" translate="no">{agent.name}</span>
                     <span className="block truncate text-[11px] text-zinc-500">{agentRole(agent)}</span>
                   </span>
+                  {(agent.disallowedTools ?? []).includes('Edit') && (
+                    <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" title="Review gate: read-only, records verdicts with task_review">
+                      <Eye className="h-2.5 w-2.5" /> gate
+                    </span>
+                  )}
+                  {(agent.skills ?? []).length > 0 && (
+                    <span className="tabular flex shrink-0 items-center gap-0.5 text-[10px] text-zinc-500" title={`${agent.skills.length} skills preloaded`}>
+                      <Sparkles className="h-2.5 w-2.5" />
+                      {agent.skills.length}
+                    </span>
+                  )}
                   {count > 0 && (
                     <span className="shrink-0 rounded-full bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-zinc-300" title={`${count} open task(s) assigned`}>
                       {count}
@@ -293,6 +364,24 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
                 {expanded && (
                   <div className="space-y-2 px-2 pb-2 pt-1">
                     <p className="text-[11px] leading-snug text-zinc-400">{agent.description}</p>
+                    {(agent.skills ?? []).length > 0 && (
+                      <div>
+                        <p className="mb-1 flex items-center gap-1 text-[10.5px] font-medium text-zinc-400">
+                          <Sparkles className="h-3 w-3" /> Skills
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {agent.skills.map((skill) => (
+                            <span
+                              key={skill}
+                              className={cx('rounded-full px-2 py-0.5 text-[10.5px]', isInstalled(skill) ? 'bg-indigo-500/15 text-indigo-300' : 'bg-amber-500/15 text-amber-300')}
+                              title={isInstalled(skill) ? 'Installed' : 'Not installed on this machine: Claude Code skips it'}
+                            >
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-1 text-[10px]">
                       <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300">model: {agent.model === 'inherit' ? 'inherit' : agent.model}</span>
                       <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300">tools: {agent.tools.length ? agent.tools.join(', ') : 'all'}</span>

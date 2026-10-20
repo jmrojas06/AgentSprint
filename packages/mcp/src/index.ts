@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats } from '@jmrojas06/agentsprint-core'
-import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, isWorkflowAssignee, planDispatch } from '@jmrojas06/agentsprint-core'
+import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, discoverSkills, isWorkflowAssignee, missingSkills, planDispatch } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
 import type { SprintStatus, TaskInput } from '@jmrojas06/agentsprint-core'
 
@@ -23,6 +23,16 @@ export interface ProjectProvider {
   store(): ProjectStore
   rootDir(): string
 }
+
+/**
+ * Sent to the client at initialize; Claude Code and other MCP hosts show it to
+ * the model, so every session learns how to pick up the thread and leave it.
+ */
+export const SERVER_INSTRUCTIONS = `AgentSprint is this project's git-native sprint board and its memory between sessions.
+- At the start of a session, call project_context: it tells you where the project is (active sprint, work in progress, next tasks, blockers, the last session handoff, recent learnings). Continue from there.
+- Work one task at a time: task_claim, task_spec, then task_checklist / task_note as you go, and task_status Review when every criterion holds. Humans move tasks to Done.
+- Work in Review passes a review gate: launch the reviewer subagent that sprint_dispatch names; it records its verdict with task_review.
+- Before the session ends (or the context fills up), call session_handoff with a summary, what is done, what is next and any blockers.`
 
 export function textResponse(value: unknown): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
   return {
@@ -70,7 +80,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
   // Config is not re-synced, so no refresh() here (it is always called right after getStore()).
   const getProjectName = (): string => (provider ? provider.store() : baseStore).getConfig().name || ''
 
-  const server = new McpServer({ name: 'agentsprint', version: '0.1.0' })
+  const server = new McpServer({ name: 'agentsprint', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS })
 
   // ── projects (multi-project only) ────────────────────────────────────
 
@@ -118,6 +128,52 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       },
     )
   }
+
+  // ── session continuity ───────────────────────────────────────────────
+
+  server.registerTool(
+    'project_context',
+    {
+      title: 'Where are we? (start here)',
+      description:
+        'Call FIRST in every new session. Returns a Markdown brief of the project state: active sprint and progress, the last session handoff, tasks in progress (with their last note), waiting for review, next unblocked tasks by priority, blocked tasks, recently done work and recent learnings — everything needed to continue without re-reading the history.',
+      inputSchema: z.object({ limit: z.number().int().min(1).max(50).optional().describe('Max tasks per section (default 8).') }),
+    },
+    async ({ limit }) => textResponse(getStore().buildContext({ limit })),
+  )
+
+  server.registerTool(
+    'session_handoff',
+    {
+      title: 'Leave a session handoff',
+      description:
+        'Call before the session ends (or when the context is filling up). Appends a handoff to `.agentboard/journal.md`: what this session did, what should happen next and what is blocking. project_context shows the latest handoff to the next session, so be concrete — task ids, file paths, failing commands.',
+      inputSchema: z.object({
+        summary: z.string().min(1).describe('One or two sentences: what this session achieved.'),
+        done: z.array(z.string()).optional().describe('Finished items (task ids + what changed).'),
+        next: z.array(z.string()).optional().describe('Concrete next steps, in order.'),
+        blockers: z.array(z.string()).optional().describe('Anything blocking progress, with the error or decision needed.'),
+        author: z.string().optional().describe('Who is handing off (agent name). Default "agent".'),
+      }),
+    },
+    async (input) => {
+      try {
+        return textResponse(getStore().appendJournal(input))
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
+
+  server.registerTool(
+    'session_journal',
+    {
+      title: 'Read session journal',
+      description: 'Return the most recent session handoffs from `.agentboard/journal.md`, newest first.',
+      inputSchema: z.object({ limit: z.number().int().min(1).max(100).optional().describe('How many entries (default 5).') }),
+    },
+    async ({ limit }) => textResponse(getStore().getJournal().slice(-(limit ?? 5)).reverse()),
+  )
 
   // ── board ────────────────────────────────────────────────────────────
 
@@ -432,6 +488,29 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
   )
 
   server.registerTool(
+    'task_review',
+    {
+      title: 'Record a review verdict',
+      description:
+        'Review gate for a task in Review. `approve` keeps it in Review for the human (who moves it to Done); `changes` moves it back to In Progress with your findings so its implementer can fix them. Each finding should name file:line, the failing scenario and the fix.',
+      inputSchema: z.object({
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
+        reviewer: z.string().min(1).describe('Your agent name, e.g. "code-reviewer".'),
+        verdict: z.enum(['approve', 'changes']),
+        summary: z.string().optional().describe('One sentence verdict rationale.'),
+        findings: z.array(z.string()).optional().describe('Required for `changes`: one actionable finding per item.'),
+      }),
+    },
+    async ({ id, ...input }) => {
+      try {
+        return textResponse(getStore().reviewTask(id, input))
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
+
+  server.registerTool(
     'task_spec',
     {
       title: 'Get task spec',
@@ -638,6 +717,8 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
         tags: z.array(z.string()).optional(),
         tools: z.array(z.string()).optional().describe('Claude Code tool allowlist; omit/empty to inherit all tools (MCP included).'),
+        disallowedTools: z.array(z.string()).optional().describe('Tools the subagent may never use, e.g. ["Edit","Write"] for a read-only reviewer.'),
+        skills: z.array(z.string()).optional().describe('Claude Code skills preloaded into the subagent (names from skill_list).'),
         model: z.enum(AGENT_MODELS).optional(),
       }),
     },
@@ -650,6 +731,21 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       } catch (err) {
         return errorResponse((err as Error).message)
       }
+    },
+  )
+
+  server.registerTool(
+    'skill_list',
+    {
+      title: 'List installed skills',
+      description:
+        'List the Claude Code skills installed for this project (`.claude/skills/`) and this user (`~/.claude/skills/`) that an agent profile can preload via its `skills` field, plus any skill referenced by an agent that is not installed.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const store = getStore()
+      const skills = discoverSkills(store.rootDir)
+      return textResponse({ skills, missing: missingSkills(store.listAgents(), skills) })
     },
   )
 
@@ -954,6 +1050,25 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
   )
 
   // ── prompts ───────────────────────────────────────────────────────────
+
+  server.registerPrompt(
+    'resume',
+    {
+      title: 'Resume the project',
+      description: 'Pick up where the last session left off: loads the project brief (sprint, work in flight, next, blockers, last handoff) and continues the work.',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `Resume this project from where the last session left off. Here is the current state of the board:\n\n${getStore().buildContext()}\n\nTell me in three lines where we are and what you will do next, then do it: finish what is in progress first, then take the next unblocked task. Keep the board updated as you go, and before you stop call session_handoff.`,
+          },
+        },
+      ],
+    }),
+  )
 
   server.registerPrompt(
     'execute-task',
