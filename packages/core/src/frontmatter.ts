@@ -86,7 +86,13 @@ export function parseTaskBody(body: string): { description: string; acceptanceCr
   const description = section(body, 'Description')
   const notes = section(body, 'Notes')
   const activity = parseActivity(body)
-  const rawMatches = [...body.matchAll(/^[-*]\s*\[([ xX])\]\s*(.+)$/gm)]
+  // Only checkboxes under `## Acceptance criteria` are criteria; checkboxes in
+  // the description or notes are content. Bodies without that heading (old
+  // hand-written files, templates) fall back to scanning the whole body.
+  // `[ \t]` instead of `\s` so a match never spans lines: the empty `- [ ] `
+  // placeholder must not swallow the next heading as its text.
+  const source = hasSection(body, 'Acceptance criteria') ? section(body, 'Acceptance criteria') : body
+  const rawMatches = [...source.matchAll(/^[-*][ \t]*\[([ xX])\][ \t]*(\S.*)$/gm)]
   const criteria = rawMatches.map((m) => {
     const isChecked = m[1]?.toLowerCase() === 'x'
     const text = m[2]?.trim() ?? ''
@@ -126,6 +132,11 @@ export function buildTaskBody(description: string, acceptanceCriteria: string[],
     parts.push(serializeActivity(activity))
   }
   return parts.join('\n')
+}
+
+function hasSection(body: string, title: string): boolean {
+  const heading = `## ${title}`.toLowerCase()
+  return body.split('\n').some((l) => l.trim().toLowerCase() === heading)
 }
 
 function section(body: string, title: string): string {
