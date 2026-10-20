@@ -76,6 +76,8 @@ export class ProjectStore extends EventEmitter {
   private sprints = new Map<number, SprintType>()
   private taskMax = 0
   private warnings: string[] = []
+  /** Per task file: change stamp (inode + mtime + size) and the parsed id, or null when unparseable. */
+  private fileStamps = new Map<string, { stamp: string; id: string | null }>()
 
   private constructor(rootDir: string) {
     super()
@@ -157,35 +159,64 @@ export class ProjectStore extends EventEmitter {
 
   private _load(): void {
     this.tasks.clear()
-    this.sprints.clear()
+    this.fileStamps.clear()
     this.taskMax = 0
-    this.warnings = []
     this.brand = this._readBrand()
+    this._syncTasks()
+    this._syncSprints()
+    this.emit('change')
+  }
 
-    if (fs.existsSync(this.tasksDir())) {
-      for (const file of fs.readdirSync(this.tasksDir())) {
-        if (!file.endsWith('.md')) continue
-        const task = this._parseTaskFile(path.join(this.tasksDir(), file))
-        if (!task) {
-          const warning = `Task file not parseable (skipped): .agentboard/tasks/${file}. Check the YAML frontmatter — e.g. quote titles containing ": " like  title: "Web: foo".`
-          this.warnings.push(warning)
-          console.warn(`[agentboard] ${warning}`)
-          continue
-        }
-        this.tasks.set(task.id, task)
-        this._bumpTaskMax(task.id)
-      }
+  /**
+   * Bring the in-memory tasks in line with `.agentboard/tasks/`: only files
+   * whose stamp changed are re-parsed and vanished files are dropped, so it is
+   * cheap enough to run before every read. Returns true when anything changed.
+   */
+  private _syncTasks(): boolean {
+    const dir = this.tasksDir()
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.md')) : []
+    const present = new Set(files)
+    let changed = false
+    for (const [file, entry] of this.fileStamps) {
+      if (present.has(file)) continue
+      this.fileStamps.delete(file)
+      if (entry.id) this.tasks.delete(entry.id)
+      changed = true
     }
+    for (const file of files) {
+      const full = path.join(dir, file)
+      const stamp = fileStamp(full)
+      if (stamp == null) continue // vanished between readdir and stat
+      const prev = this.fileStamps.get(file)
+      if (prev?.stamp === stamp) continue
+      changed = true
+      if (prev?.id) this.tasks.delete(prev.id)
+      const task = this._parseTaskFile(full)
+      this.fileStamps.set(file, { stamp, id: task?.id ?? null })
+      if (!task) {
+        console.warn(`[agentboard] ${unparseableTaskWarning(file)}`)
+        continue
+      }
+      this.tasks.set(task.id, task)
+      this._bumpTaskMax(task.id)
+    }
+    this.warnings = [...this.fileStamps].filter(([, e]) => e.id == null).map(([file]) => unparseableTaskWarning(file))
+    return changed
+  }
 
+  /** Re-read every sprint file (there are few). Returns true when anything changed. */
+  private _syncSprints(): boolean {
+    const next = new Map<number, SprintType>()
     if (fs.existsSync(this.sprintsDir())) {
       for (const file of fs.readdirSync(this.sprintsDir())) {
         if (!file.endsWith('.md')) continue
         const sprint = this._parseSprintFile(path.join(this.sprintsDir(), file))
-        if (sprint) this.sprints.set(sprint.id, sprint)
+        if (sprint) next.set(sprint.id, sprint)
       }
     }
-
-    this.emit('change')
+    const changed = JSON.stringify([...next]) !== JSON.stringify([...this.sprints])
+    this.sprints = next
+    return changed
   }
 
   private _parseTaskFile(file: string): TaskType | null {
@@ -213,20 +244,30 @@ export class ProjectStore extends EventEmitter {
    * instead of overwritten. Falls back to the in-memory copy.
    */
   private _freshTask(id: string): TaskType {
+    const file = this.taskPath(id)
+    if (!fs.existsSync(file)) {
+      // Deleted by another process (or never persisted): the disk wins.
+      this.tasks.delete(id)
+      throw new Error(`Task not found: ${id}`)
+    }
+    const fresh = this._parseTaskFile(file)
+    if (fresh) {
+      this.tasks.set(id, fresh)
+      this._bumpTaskMax(id)
+      return fresh
+    }
     const known = this.tasks.get(id)
     if (!known) throw new Error(`Task not found: ${id}`)
-    try {
-      if (fs.existsSync(this.taskPath(id))) {
-        const fresh = this._parseTaskFile(this.taskPath(id))
-        if (fresh) {
-          this.tasks.set(id, fresh)
-          return fresh
-        }
-      }
-    } catch {
-      /* fall back to the in-memory copy */
-    }
     return known
+  }
+
+  /** Like `_freshTask`, but undefined instead of throwing for unknown ids. */
+  private _peekTask(id: string): TaskType | undefined {
+    try {
+      return this._freshTask(id)
+    } catch {
+      return undefined
+    }
   }
 
   private _readBrand(): BrandType {
@@ -247,6 +288,20 @@ export class ProjectStore extends EventEmitter {
   /** Re-scan the board from disk (used by the file watcher). */
   syncFromDisk(): void {
     this._load()
+  }
+
+  /**
+   * Cheap incremental re-sync with the files on disk, for processes without
+   * a file watcher (the stdio MCP server): picks up tasks, sprints and brand
+   * edits made by other processes or by hand. Emits `change` only when needed.
+   */
+  refresh(): void {
+    const tasksChanged = this._syncTasks()
+    const sprintsChanged = this._syncSprints()
+    const brand = this._readBrand()
+    const brandChanged = JSON.stringify({ ...brand, updatedAt: '' }) !== JSON.stringify({ ...this.brand, updatedAt: '' })
+    if (brandChanged) this.brand = brand
+    if (tasksChanged || sprintsChanged || brandChanged) this.emit('change')
   }
 
   get lastWarnings(): readonly string[] {
@@ -359,9 +414,21 @@ export class ProjectStore extends EventEmitter {
     if (Number.isFinite(n) && n > this.taskMax) this.taskMax = n
   }
 
+  /** Next free id. Caller must hold the id lock: it also scans the disk for ids taken by other processes. */
   private _nextTaskId(): string {
+    if (fs.existsSync(this.tasksDir())) {
+      for (const file of fs.readdirSync(this.tasksDir())) {
+        const m = /^[A-Z]{2}-(\d+)\.md$/.exec(file)
+        if (m) this._bumpTaskMax(`TK-${m[1]}`)
+      }
+    }
     this.taskMax += 1
     return `TK-${this.taskMax}`
+  }
+
+  /** Board-wide lock serializing id allocation + file creation across processes. */
+  private idLockPath(): string {
+    return path.join(this.boardDir, 'task-ids')
   }
 
   private _nextSprintId(): number {
@@ -458,22 +525,18 @@ export class ProjectStore extends EventEmitter {
    * A task is blocked when at least one of its `dependencies` is not in `Done` status.
    */
   isTaskBlocked(id: string): boolean {
-    const task = this.tasks.get(id)
-    if (!task) throw new Error(`Task not found: ${id}`)
-    return task.dependencies.some((depId) => {
-      const dep = this.tasks.get(depId)
-      return !dep || dep.status !== 'Done'
-    })
+    return this.getBlockers(id).length > 0
   }
 
   /**
    * Return the list of dependency IDs that are currently blocking the task.
+   * Reads the task and its dependencies from disk, so a dependency finished
+   * by another process unblocks it immediately.
    */
   getBlockers(id: string): string[] {
-    const task = this.tasks.get(id)
-    if (!task) throw new Error(`Task not found: ${id}`)
+    const task = this._freshTask(id)
     return task.dependencies.filter((depId) => {
-      const dep = this.tasks.get(depId)
+      const dep = this._peekTask(depId)
       return !dep || dep.status !== 'Done'
     })
   }
@@ -519,6 +582,15 @@ export class ProjectStore extends EventEmitter {
     const title = typeof input.title === 'string' ? input.title.trim() : ''
     if (!title) throw new Error('Task title is required')
     const sprint = input.sprint == null ? null : this._requireSprint(input.sprint)
+    // Allocate the id and write the file under a board-wide lock, so two
+    // processes creating tasks at once never pick (and overwrite) the same id.
+    return withFileLock(this.idLockPath(), () => this._createTaskUnlocked(input, title, sprint, opts))
+  }
+
+  private _createTaskUnlocked(input: TaskInput, title: string, sprint: SprintType | null, opts: { actor?: string }): TaskType {
+    if (input.id && fs.existsSync(this.taskPath(input.id))) {
+      throw new Error(`Task already exists: ${input.id}`)
+    }
     const id = input.id ?? this._nextTaskId()
     const createdAt = input.createdAt ?? nowIso()
     const effectiveStatus = (input.status ?? (DEFAULT_STATUSES[1] ?? 'To Do')) as TaskStatus
@@ -611,8 +683,20 @@ export class ProjectStore extends EventEmitter {
     { index, text, completed }: { index?: number; text?: string; completed?: boolean },
     opts: { actor?: string } = {},
   ): TaskType {
-    const task = this.tasks.get(id)
-    if (!task) throw new Error(`Task not found: ${id}`)
+    // Read-modify-write under the file lock against the on-disk criteria:
+    // toggling from a stale copy would write back an outdated list.
+    return withFileLock(this.taskPath(id), () => {
+      const task = this._freshTask(id)
+      const criteria = this._toggleCriterion(task, { index, text, completed })
+      return this._updateTaskUnlocked(id, { acceptanceCriteria: criteria }, opts)
+    })
+  }
+
+  private _toggleCriterion(
+    task: TaskType,
+    { index, text, completed }: { index?: number; text?: string; completed?: boolean },
+  ): string[] {
+    const id = task.id
     const criteria = [...task.acceptanceCriteria]
     let targetIdx = -1
     if (typeof index === 'number') {
@@ -626,47 +710,46 @@ export class ProjectStore extends EventEmitter {
     const raw = criteria[targetIdx]!.replace(/^\s*-?\s*\[[ xX]?\]\s*/, '').trim()
     const mark = completed ? '[x] ' : ''
     criteria[targetIdx] = `${mark}${raw}`
-    return this.updateTask(id, { acceptanceCriteria: criteria }, opts)
+    return criteria
   }
 
-/**
- * Delete a task permanently.
- */
-deleteTask(id: string): void {
-  if (!this.tasks.has(id)) throw new Error(`Task not found: ${id}`)
-  this.tasks.delete(id)
-  try {
-    fs.rmSync(this.taskPath(id))
-  } catch {
-    /* already gone */
+  /**
+   * Delete a task permanently.
+   */
+  deleteTask(id: string): void {
+    withFileLock(this.taskPath(id), () => {
+      this._freshTask(id) // throws when it no longer exists on disk
+      this.tasks.delete(id)
+      this.fileStamps.delete(`${id}.md`)
+      fs.rmSync(this.taskPath(id), { force: true })
+    })
+    this.emit('change')
   }
-  this.emit('change')
-}
 
   // ── exclusive locks (multi-agent coordination) ──────────────────────
 
   /** Active lock for a task, or null when unlocked or stale (past TTL). */
   getLock(id: string): TaskLockInfo | null {
-    const task = this.tasks.get(id)
-    if (!task) throw new Error(`Task not found: ${id}`)
-    return getTaskLock(task)
+    return getTaskLock(this._freshTask(id))
   }
 
   /**
    * Acquire or heartbeat the exclusive lock on a task for `agent`.
    * Fails when another agent holds an active lock. Re-claiming your own
-   * lock refreshes `lockedAt` (acts as a heartbeat).
+   * lock refreshes `lockedAt` (acts as a heartbeat). The check and the write
+   * happen inside the per-file lock against the on-disk state, so an agent in
+   * another process can never take a lock that is already held.
    */
   lockTask(id: string, agent = 'agent'): TaskType {
-    const task = this.tasks.get(id)
-    if (!task) throw new Error(`Task not found: ${id}`)
-    const active = getTaskLock(task)
-    if (active && active.lockedBy !== agent) {
-      throw new Error(
-        `Task ${id} is locked by "${active.lockedBy}" since ${active.lockedAt}. Use task_release or wait for expiry (${TASK_LOCK_TTL_MINUTES}m).`,
-      )
-    }
-    return this.updateTask(id, { lockedBy: agent, lockedAt: nowIso() }, { actor: agent })
+    return withFileLock(this.taskPath(id), () => {
+      const active = getTaskLock(this._freshTask(id))
+      if (active && active.lockedBy !== agent) {
+        throw new Error(
+          `Task ${id} is locked by "${active.lockedBy}" since ${active.lockedAt}. Use task_release or wait for expiry (${TASK_LOCK_TTL_MINUTES}m).`,
+        )
+      }
+      return this._updateTaskUnlocked(id, { lockedBy: agent, lockedAt: nowIso() }, { actor: agent })
+    })
   }
 
   /**
@@ -674,16 +757,17 @@ deleteTask(id: string): void {
    * omit it (or pass force: true) to force-release a stale/foreign lock.
    */
   unlockTask(id: string, opts: { agent?: string; force?: boolean } = {}): TaskType {
-    const task = this.tasks.get(id)
-    if (!task) throw new Error(`Task not found: ${id}`)
-    if (!task.lockedBy && !task.lockedAt) return task
-    if (!opts.force && opts.agent != null) {
-      const active = getTaskLock(task)
-      if (active && active.lockedBy !== opts.agent) {
-        throw new Error(`Task ${id} is locked by "${active.lockedBy}", not by "${opts.agent}".`)
+    return withFileLock(this.taskPath(id), () => {
+      const task = this._freshTask(id)
+      if (!task.lockedBy && !task.lockedAt) return task
+      if (!opts.force && opts.agent != null) {
+        const active = getTaskLock(task)
+        if (active && active.lockedBy !== opts.agent) {
+          throw new Error(`Task ${id} is locked by "${active.lockedBy}", not by "${opts.agent}".`)
+        }
       }
-    }
-    return this.updateTask(id, { lockedBy: null, lockedAt: null }, { actor: opts.agent ?? 'user' })
+      return this._updateTaskUnlocked(id, { lockedBy: null, lockedAt: null }, { actor: opts.agent ?? 'user' })
+    })
   }
 
   // ── sprint mutations ─────────────────────────────────────────────────
@@ -757,6 +841,10 @@ deleteTask(id: string): void {
     if (data.lockedAt == null) delete data.lockedAt
     const body = buildTaskBody(task.description, task.acceptanceCriteria, task.notes, task.activity)
     this._atomicWrite(this.taskPath(task.id), serializeFrontmatter(data, body))
+    // Our own write is already in memory: record its stamp so the next
+    // refresh() does not re-parse it.
+    const stamp = fileStamp(this.taskPath(task.id))
+    if (stamp) this.fileStamps.set(`${task.id}.md`, { stamp, id: task.id })
   }
 
   private _writeSprint(sprint: SprintType): void {
@@ -856,6 +944,20 @@ deleteTask(id: string): void {
       createdAt: now,
     })
   }
+}
+
+/** Change stamp of a file (a new inode on every atomic write), or null if it is gone. */
+function fileStamp(file: string): string | null {
+  try {
+    const st = fs.statSync(file)
+    return `${st.ino}:${st.mtimeMs}:${st.size}`
+  } catch {
+    return null
+  }
+}
+
+function unparseableTaskWarning(file: string): string {
+  return `Task file not parseable (skipped): .agentboard/tasks/${file}. Check the YAML frontmatter — e.g. quote titles containing ": " like  title: "Web: foo".`
 }
 
 const isCheckedCriterion = (c?: string): boolean => !!c && /^\[[xX]\]\s*/.test(c)
