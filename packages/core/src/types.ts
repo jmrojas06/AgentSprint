@@ -20,8 +20,49 @@ export type Assignee = z.infer<typeof Assignee>
  * the UI only offers the role values above.
  */
 export const LEGACY_ASSIGNEES = ['human', 'agent'] as const
-const AssigneeAny = z.union([Assignee, z.enum(LEGACY_ASSIGNEES)])
+
+/** Lowercase slug shared by team roles and specialized agent names (`designer`, `fixer`, …). */
+export const ASSIGNEE_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/
+
+/**
+ * Any valid assignee: a workflow role, a legacy value, or the name of a
+ * specialized agent defined in `.agentboard/agents/<name>.md`.
+ */
+export const AssigneeAny = z
+  .string()
+  .regex(ASSIGNEE_SLUG_RE, 'Assignee must be a lowercase slug like "dev" or "designer"')
 export type AssigneeAny = z.infer<typeof AssigneeAny>
+
+/** True when the assignee is a workflow role (or legacy value) rather than a specialized agent. */
+export function isWorkflowAssignee(value: string): boolean {
+  return (
+    (ASSIGNEES as readonly string[]).includes(value) ||
+    (LEGACY_ASSIGNEES as readonly string[]).includes(value)
+  )
+}
+
+/** Model a generated Claude Code subagent runs on; `inherit` uses the orchestrator's model. */
+export const AGENT_MODELS = ['inherit', 'sonnet', 'opus', 'haiku'] as const
+export const AgentModel = z.enum(AGENT_MODELS)
+export type AgentModel = z.infer<typeof AgentModel>
+
+/** Frontmatter of an agent profile file (`.agentboard/agents/<name>.md`). */
+export const AgentMeta = z.object({
+  description: z.string().min(1),
+  color: z.string().default(''),
+  tags: z.array(z.string()).default([]),
+  /** Tool allowlist for the generated subagent; empty inherits every tool (MCP included). */
+  tools: z.array(z.string()).default([]),
+  model: AgentModel.default('inherit'),
+})
+export type AgentMeta = z.infer<typeof AgentMeta>
+
+/** A specialized agent: name comes from the filename, prompt from the markdown body. */
+export const AgentProfile = AgentMeta.extend({
+  name: z.string().regex(ASSIGNEE_SLUG_RE, 'Agent name must be a lowercase slug like "designer"'),
+  prompt: z.string(),
+})
+export type AgentProfile = z.infer<typeof AgentProfile>
 
 export const ACTIVITY_TYPES = ['created', 'status', 'assignee', 'checklist', 'note', 'update'] as const
 export const ActivityEventType = z.enum(ACTIVITY_TYPES)
@@ -122,6 +163,11 @@ export const ProjectConfig = z.object({
   workflow: z.object({
     statuses: z.array(z.string()).min(1).default([...DEFAULT_STATUSES]),
   }),
+  /**
+   * Mirror `.agentboard/agents/` into `.claude/agents/` as Claude Code
+   * subagents (default on). Set `subagents: false` in config.yaml to opt out.
+   */
+  subagents: z.boolean().optional(),
 })
 export type ProjectConfig = z.infer<typeof ProjectConfig>
 
@@ -179,6 +225,7 @@ export const ProjectState = z.object({
   tasks: z.array(Task),
   sprints: z.array(Sprint),
   activeSprint: Sprint.nullable(),
+  agents: z.array(AgentProfile),
 })
 export type ProjectState = z.infer<typeof ProjectState>
 

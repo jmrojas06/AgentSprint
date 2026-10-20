@@ -67,6 +67,17 @@ Liveness probe. Returns `{ "ok": true, "version": "0.1.0" }`. When `--token-all`
 | `GET /api/tasks/:id/activity` | Activity log for the task |
 | `GET /api/tasks/:id/commits` | Git commits referencing the task |
 | `GET /api/templates` | Task templates |
+| `POST /api/tasks/batch` | Create several tasks: `{ tasks: [{ ref?, title, dependsOn?, ... }] }`, validated before any write |
+
+## Agents & dispatch
+
+| Endpoint | Description |
+| -------- | ----------- |
+| `GET /api/agents` | Specialized agent profiles (also in `GET /api/project` as `agents`) |
+| `PUT /api/agents/:name` | Create or update an agent (`description`, `prompt`, `color`, `tags`, `tools`, `model`) |
+| `DELETE /api/agents/:name` | Delete an agent and its generated subagent |
+| `POST /api/agents/sync` | Regenerate `.claude/agents/`; `{ installDefaults: true }` adds missing defaults |
+| `GET /api/dispatch` | Subagent dispatch plan (`plan` JSON + `markdown`); `?sprint=<id>` for a specific sprint |
 
 ## Sprints
 

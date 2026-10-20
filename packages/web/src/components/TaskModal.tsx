@@ -4,6 +4,7 @@ import type { GitCommit, Sprint, Task, TaskPriority, TaskStatus } from '../types
 import { api } from '../api'
 import { ActivityTimeline } from './ActivityTimeline'
 import { cx, criterionChecked, criterionText, getTaskLock } from '../ui'
+import { AssigneeOptions, agentRole, useAgents } from '../agents'
 
 interface Props {
   task: Task
@@ -23,9 +24,9 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   const [description, setDescription] = useState(task.description)
   const [status, setStatus] = useState<TaskStatus>(task.status as TaskStatus)
   const [priority, setPriority] = useState<TaskPriority>(task.priority)
-  const [assignee, setAssignee] = useState<'scrum-master' | 'dev' | 'review' | 'perfect'>(
-    task.assignee as 'scrum-master' | 'dev' | 'review' | 'perfect',
-  )
+  const agents = useAgents()
+  const [assignee, setAssignee] = useState<string>(task.assignee)
+  const assignedAgent = agents.find((a) => a.name === assignee)
   const [sprint, setSprint] = useState<number | null>(task.sprint)
   const [estimate, setEstimate] = useState(task.estimate)
   const [tags, setTags] = useState(task.tags.join(', '))
@@ -213,12 +214,14 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
 
           <div>
             <label className={label}>Assignee</label>
-            <select value={assignee} onChange={(e) => setAssignee(e.target.value as 'scrum-master' | 'dev' | 'review' | 'perfect')} className={field}>
-              <option value="scrum-master">Scrum Master</option>
-              <option value="dev">Development</option>
-              <option value="review">Review</option>
-              <option value="perfect">Perfect Review</option>
+            <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className={field}>
+              <AssigneeOptions agents={agents} current={assignee} />
             </select>
+            {assignedAgent && (
+              <p className="mt-1 text-[11px] leading-snug text-zinc-500" data-testid="agent-hint">
+                Subagent: {agentRole(assignedAgent)}
+              </p>
+            )}
           </div>
 
           <div>

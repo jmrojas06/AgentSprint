@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { parseFrontmatter, parseTaskBody } from './frontmatter.js'
+import { AssigneeAny } from './types.js'
 
 export const TemplateVars = z.record(z.string())
 export type TemplateVars = z.infer<typeof TemplateVars>
@@ -9,7 +10,7 @@ export type TemplateVars = z.infer<typeof TemplateVars>
 const TemplateMeta = z.object({
   title: z.string().optional(),
   priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-  assignee: z.enum(['scrum-master', 'dev', 'review', 'perfect']).optional(),
+  assignee: AssigneeAny.optional(),
   estimate: z.number().int().min(0).max(100).optional(),
   tags: z.array(z.string()).optional(),
 })

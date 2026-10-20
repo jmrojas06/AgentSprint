@@ -1,5 +1,9 @@
 export type {
   ActivityEvent,
+  AgentModel,
+  AgentProfile,
+  DispatchItem,
+  DispatchPlan,
   ActivityEventType,
   Brand,
   BrandAsset,
@@ -17,6 +21,7 @@ export type {
 
 export const DEFAULT_STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 export const TASK_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
+export const AGENT_MODELS = ['inherit', 'sonnet', 'opus', 'haiku'] as const
 export const ACTIVITY_TYPES = ['created', 'status', 'assignee', 'checklist', 'note', 'update'] as const
 
 import type { ProjectState as CoreProjectState } from '@jmrojas06/agentsprint-core'

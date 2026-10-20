@@ -97,7 +97,16 @@ export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
 
   const webDist = opts.webDist ? path.resolve(opts.webDist) : null
   if (webDist && fs.existsSync(webDist)) {
-    await app.register(staticPlugin, { root: webDist, maxAge: '1h', index: 'index.html' })
+    await app.register(staticPlugin, {
+      root: webDist,
+      index: 'index.html',
+      // index.html must revalidate so an upgraded UI shows up on the next
+      // load; hashed bundles under assets/ never change, so cache them for good.
+      cacheControl: false,
+      setHeaders: (res, filePath) => {
+        res.setHeader('Cache-Control', /[\\/]assets[\\/]/.test(filePath) ? 'public, max-age=31536000, immutable' : 'no-cache')
+      },
+    })
     app.setNotFoundHandler((req, reply) => {
       if (req.raw.url?.startsWith('/api/')) {
         reply.code(404).send({ error: 'Not found' })

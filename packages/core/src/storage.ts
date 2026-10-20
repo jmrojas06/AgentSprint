@@ -4,8 +4,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { withFileLock } from './filelock.js'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
-import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, TASK_LOCK_TTL_MINUTES } from './types.js'
-import type { ActivityEvent as ActivityEventType, Assignee as AssigneeType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
+import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, isWorkflowAssignee, TASK_LOCK_TTL_MINUTES, AgentProfile } from './types.js'
+import type { AgentProfile as AgentProfileType, ActivityEvent as ActivityEventType, Assignee as AssigneeType, Brand as BrandType, BrandPatch, ProjectConfig as ProjectConfigType, ProjectState, Sprint as SprintType, SprintStatus, Task as TaskType, TaskInput, TaskLockInfo, TaskStatus } from './types.js'
 
 /** Canonical assignee per status — used by setTaskStatus/updateTask auto-assignment. */
 export const STATUS_ASSIGNEE_MAP: Record<TaskStatus, AssigneeType> = {
@@ -16,6 +16,9 @@ export const STATUS_ASSIGNEE_MAP: Record<TaskStatus, AssigneeType> = {
   Done: 'perfect',
 }
 import { buildSprintReport } from './spec.js'
+import { SAMPLE_AGENTS, isValidAgentName, parseAgent, readAgents, serializeAgent } from './agents.js'
+import { syncClaudeSubagents } from './subagents.js'
+import type { SubagentSyncResult } from './subagents.js'
 import { SAMPLE_TEMPLATES, isValidTemplateName, parseTemplate, readTemplates, renderTemplate } from './templates.js'
 import type { TaskTemplate, TemplateVars } from './templates.js'
 
@@ -32,6 +35,7 @@ This project uses a git-native sprint board under \`.agentboard/\`.
 5. Never skip or rewrite tasks. Update the file, don't create duplicates.
 6. Prefer editing files directly over \`agentboard\` CLI/MCP when possible; the board UI reflects file changes instantly.
 7. If \`.agentboard/brand.md\` exists and is configured, follow the brand guidelines when writing code, copy or UI.
+8. \`.agentboard/agents/\` holds specialized agent profiles (developer, designer, tester, …), mirrored to \`.claude/agents/\` as real Claude Code subagents. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask \`sprint_dispatch\` (or \`agentboard dispatch\`) which subagent takes which task and what can run in parallel.
 `
 
 const BRAND_TEMPLATE = `---
@@ -76,6 +80,7 @@ export class ProjectStore extends EventEmitter {
   private sprints = new Map<number, SprintType>()
   private taskMax = 0
   private warnings: string[] = []
+  private agents: AgentProfileType[] = []
   /** Per task file: change stamp (inode + mtime + size) and the parsed id, or null when unparseable. */
   private fileStamps = new Map<string, { stamp: string; id: string | null }>()
 
@@ -93,6 +98,7 @@ export class ProjectStore extends EventEmitter {
     fs.mkdirSync(path.join(store.boardDir, 'tasks'), { recursive: true })
     fs.mkdirSync(path.join(store.boardDir, 'sprints'), { recursive: true })
     fs.mkdirSync(path.join(store.boardDir, 'templates'), { recursive: true })
+    fs.mkdirSync(path.join(store.boardDir, 'agents'), { recursive: true })
 
     const fresh = !fs.existsSync(store.configPath())
     if (fresh) {
@@ -106,6 +112,7 @@ export class ProjectStore extends EventEmitter {
 
     if (fresh && opts.sample !== false) {
       store._createSample()
+      store.syncSubagents()
     }
     return store
   }
@@ -139,6 +146,9 @@ export class ProjectStore extends EventEmitter {
   private templatesDir(): string {
     return path.join(this.boardDir, 'templates')
   }
+  private agentsDir(): string {
+    return path.join(this.boardDir, 'agents')
+  }
   private taskPath(id: string): string {
     return path.join(this.tasksDir(), `${id}.md`)
   }
@@ -162,6 +172,7 @@ export class ProjectStore extends EventEmitter {
     this.fileStamps.clear()
     this.taskMax = 0
     this.brand = this._readBrand()
+    this.agents = readAgents(this.boardDir)
     this._syncTasks()
     this._syncSprints()
     this.emit('change')
@@ -301,7 +312,8 @@ export class ProjectStore extends EventEmitter {
     const brand = this._readBrand()
     const brandChanged = JSON.stringify({ ...brand, updatedAt: '' }) !== JSON.stringify({ ...this.brand, updatedAt: '' })
     if (brandChanged) this.brand = brand
-    if (tasksChanged || sprintsChanged || brandChanged) this.emit('change')
+    const agentsChanged = this._syncAgents()
+    if (tasksChanged || sprintsChanged || brandChanged || agentsChanged) this.emit('change')
   }
 
   get lastWarnings(): readonly string[] {
@@ -317,6 +329,7 @@ export class ProjectStore extends EventEmitter {
       tasks: [...this.tasks.values()].sort((a, b) => a.id.localeCompare(b.id)),
       sprints: [...this.sprints.values()].sort((a, b) => a.id - b.id),
       activeSprint: active,
+      agents: this.agents,
     }
   }
 
@@ -497,6 +510,117 @@ export class ProjectStore extends EventEmitter {
     )
   }
 
+  // ── agents ───────────────────────────────────────────────────────────
+
+  /** Every specialized agent profile in `.agentboard/agents/` (sorted by name). */
+  listAgents(): AgentProfileType[] {
+    return this.agents
+  }
+
+  /**
+   * Get a single agent profile by name (filename without `.md`), or null.
+   * Reads the file so a broken profile surfaces its parse error.
+   */
+  getAgent(name: string): AgentProfileType | null {
+    const file = this._agentPath(name)
+    let raw: string
+    try {
+      raw = fs.readFileSync(file, 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw err
+    }
+    try {
+      return parseAgent(raw, name)
+    } catch (err) {
+      throw new Error(`Agent "${name}" has invalid frontmatter: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * Create or replace a specialized agent profile, then refresh the
+   * generated Claude Code subagents. Omitted optional fields keep their
+   * current value when the agent already exists.
+   */
+  saveAgent(input: { name: string; description?: string; prompt?: string } & Partial<Pick<AgentProfileType, 'color' | 'tags' | 'tools' | 'model'>>): AgentProfileType {
+    const file = this._agentPath(input.name)
+    const current = this.agents.find((a) => a.name === input.name)
+    const merged = Object.fromEntries(Object.entries({ ...current, ...input }).filter(([, v]) => v !== undefined))
+    const agent = AgentProfile.parse(merged)
+    if (!agent.prompt.trim()) throw new Error('Agent prompt is required: describe the role, its mission and its rules')
+    fs.mkdirSync(this.agentsDir(), { recursive: true })
+    this._atomicWrite(file, serializeAgent(agent))
+    this._syncAgents()
+    this.syncSubagents()
+    this.emit('change')
+    return this.agents.find((a) => a.name === agent.name) ?? agent
+  }
+
+  /** Delete an agent profile (and its generated subagent). Tasks keep their assignee. */
+  deleteAgent(name: string): void {
+    const file = this._agentPath(name)
+    if (!fs.existsSync(file)) throw new Error(`Agent not found: ${name}`)
+    fs.unlinkSync(file)
+    this._syncAgents()
+    this.syncSubagents()
+    this.emit('change')
+  }
+
+  /**
+   * Mirror the agent profiles into `.claude/agents/` so Claude Code can
+   * launch them as real subagents. No-op (returns null) when the project
+   * opted out with `subagents: false` in config.yaml.
+   */
+  syncSubagents(): SubagentSyncResult | null {
+    if (this.config.subagents === false) return null
+    return syncClaudeSubagents(this.rootDir, this.agents, this.config.name)
+  }
+
+  /**
+   * Write the default specialized agents that are missing from
+   * `.agentboard/agents/` (never overwrites an existing profile). Returns the
+   * names that were added; call syncSubagents() to mirror them.
+   */
+  installDefaultAgents(): string[] {
+    fs.mkdirSync(this.agentsDir(), { recursive: true })
+    const added: string[] = []
+    for (const [file, content] of Object.entries(SAMPLE_AGENTS)) {
+      const target = path.join(this.agentsDir(), file)
+      if (fs.existsSync(target)) continue
+      fs.writeFileSync(target, content, 'utf8')
+      added.push(file.replace(/\.md$/, ''))
+    }
+    if (added.length > 0 && this._syncAgents()) this.emit('change')
+    return added
+  }
+
+  private _agentPath(name: string): string {
+    // Security: reject anything that could escape `<boardDir>/agents/`
+    // (path separators, `..`, absolute paths) before touching the filesystem.
+    if (!isValidAgentName(name)) {
+      throw new Error(`Invalid agent name: "${name}" (allowed: lowercase letters, digits and dashes; must start with a letter)`)
+    }
+    return path.join(this.agentsDir(), `${name}.md`)
+  }
+
+  /** Re-read agent profiles; returns true when they changed. */
+  private _syncAgents(): boolean {
+    const next = readAgents(this.boardDir)
+    if (JSON.stringify(next) === JSON.stringify(this.agents)) return false
+    this.agents = next
+    return true
+  }
+
+  /**
+   * Resolve the specialized agent profile matching a task's assignee.
+   * Returns null for workflow roles (scrum-master, dev, …) and for names
+   * with no `.agentboard/agents/<name>.md` file.
+   */
+  agentForTask(task: Pick<TaskType, 'assignee'>): AgentProfile | null {
+    if (isWorkflowAssignee(task.assignee)) return null
+    return this.getAgent(task.assignee)
+  }
+
   // ── task mutations ───────────────────────────────────────────────────
 
   setTaskStatus(id: string, status: TaskStatus, opts: { actor?: string } = {}): TaskType {
@@ -587,6 +711,61 @@ export class ProjectStore extends EventEmitter {
     return withFileLock(this.idLockPath(), () => this._createTaskUnlocked(input, title, sprint, opts))
   }
 
+  /**
+   * Create several tasks in one call — the shape a planner produces when it
+   * breaks an idea into work. Each item may carry a `ref` (any label unique
+   * in the batch) and list `dependsOn` refs or existing task ids; refs are
+   * resolved to the generated ids. Everything is validated before the first
+   * write, and tasks are created dependencies-first.
+   */
+  createTaskBatch(
+    items: Array<TaskInput & { ref?: string; dependsOn?: string[] }>,
+    opts: { actor?: string } = {},
+  ): TaskType[] {
+    if (items.length === 0) throw new Error('Batch is empty: pass at least one task')
+    const refIndex = new Map<string, number>()
+    items.forEach((item, i) => {
+      const where = `item ${i + 1}${item.ref ? ` ("${item.ref}")` : ''}`
+      if (typeof item.title !== 'string' || !item.title.trim()) throw new Error(`Task title is required (${where})`)
+      if (item.sprint != null) this._requireSprint(item.sprint)
+      if (item.ref === undefined) return
+      if (refIndex.has(item.ref)) throw new Error(`Duplicate ref "${item.ref}" in batch`)
+      refIndex.set(item.ref, i)
+    })
+    items.forEach((item, i) => {
+      for (const dep of item.dependsOn ?? []) {
+        if (refIndex.has(dep) || this.tasks.has(dep)) continue
+        throw new Error(`Unknown dependency "${dep}" in item ${i + 1}: not a ref in this batch nor an existing task id`)
+      }
+    })
+
+    // Dependencies-first order (Kahn), stable with respect to the input order.
+    const order: number[] = []
+    const placed = new Set<number>()
+    while (order.length < items.length) {
+      const next = items.findIndex(
+        (item, i) => !placed.has(i) && (item.dependsOn ?? []).every((d) => !refIndex.has(d) || placed.has(refIndex.get(d)!)),
+      )
+      if (next === -1) {
+        const stuck = items.filter((_, i) => !placed.has(i)).map((it) => it.ref ?? it.title)
+        throw new Error(`Dependency cycle in batch between: ${stuck.join(', ')}`)
+      }
+      placed.add(next)
+      order.push(next)
+    }
+
+    const created = new Array<TaskType>(items.length)
+    const idOfRef = new Map<string, string>()
+    for (const i of order) {
+      const { ref, dependsOn, ...input } = items[i]!
+      const deps = [...(input.dependencies ?? []), ...(dependsOn ?? []).map((d) => idOfRef.get(d) ?? d)]
+      const task = this.createTask({ ...input, dependencies: [...new Set(deps)] }, opts)
+      if (ref !== undefined) idOfRef.set(ref, task.id)
+      created[i] = task
+    }
+    return created
+  }
+
   private _createTaskUnlocked(input: TaskInput, title: string, sprint: SprintType | null, opts: { actor?: string }): TaskType {
     if (input.id && fs.existsSync(this.taskPath(input.id))) {
       throw new Error(`Task already exists: ${input.id}`)
@@ -643,8 +822,15 @@ export class ProjectStore extends EventEmitter {
   private _updateTaskUnlocked(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string } = {}): TaskType {
     const current = this._freshTask(id)
     if (!current) throw new Error(`Task not found: ${id}`)
-    // Auto-map assignee before persist — distinguish generic status change from explicit assignee (task_claim)
-    if (patch.status !== undefined && patch.status !== current.status && patch.assignee === undefined) {
+    // Auto-map assignee before persist — distinguish generic status change from explicit assignee (task_claim).
+    // A task assigned to a specialized agent (designer, tester, …) keeps that
+    // assignee across status changes; only workflow roles follow the map.
+    if (
+      patch.status !== undefined &&
+      patch.status !== current.status &&
+      patch.assignee === undefined &&
+      isWorkflowAssignee(current.assignee)
+    ) {
       const mapped = STATUS_ASSIGNEE_MAP[patch.status as TaskStatus]
       if (mapped) patch = { ...patch, assignee: mapped }
     }
@@ -898,6 +1084,8 @@ export class ProjectStore extends EventEmitter {
       const target = path.join(this.templatesDir(), file)
       if (!fs.existsSync(target)) fs.writeFileSync(target, content, 'utf8')
     }
+
+    this.installDefaultAgents()
 
     const sprint = this.createSprint('Kickoff — learn the board')
     const now = nowIso()

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bell, BellOff, GitBranch, LayoutGrid, List, Palette, Plus, Search, Square, X } from 'lucide-react'
+import { AlertTriangle, Bell, BellOff, Bot, GitBranch, LayoutGrid, List, Palette, Play, Plus, Search, Square, X } from 'lucide-react'
 import type { BoardState, Task, TaskPriority } from './types'
 import { TASK_PRIORITIES } from './types'
 import { api, clearStoredToken, getStoredToken, setProject, setStoredToken } from './api'
@@ -13,10 +13,13 @@ import { NewTaskModal } from './components/NewTaskModal'
 import { BrandPanel } from './components/BrandPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { ThemeToggle } from './components/ThemeToggle'
+import { AgentsPanel } from './components/AgentsPanel'
+import { DispatchModal } from './components/DispatchModal'
+import { AgentsContext, AssigneeOptions } from './agents'
 import { cx, computeVelocity, getBlockerTasks, viewFromQuery, type SortBy, type SortDir, type ViewMode } from './ui'
 
 type SprintFilter = 'all' | number
-type SideTab = 'sprints' | 'brand'
+type SideTab = 'sprints' | 'agents' | 'brand'
 
 const VIEW_STORAGE_KEY = 'agentsprint.view'
 
@@ -39,13 +42,14 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [sprintFilter, setSprintFilter] = useState<SprintFilter>('all')
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('')
-  const [assigneeFilter, setAssigneeFilter] = useState<'scrum-master' | 'dev' | 'review' | 'perfect' | ''>('')
+  const [assigneeFilter, setAssigneeFilter] = useState<string>('')
   const [tagFilter, setTagFilter] = useState('')
   const [sortBy, setSortBy] = useState<SortBy>('estimate')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [view, setViewState] = useState<ViewMode>(initialView)
   const [editing, setEditing] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
+  const [dispatching, setDispatching] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
   const [warningsDismissed, setWarningsDismissed] = useState(false)
@@ -299,9 +303,10 @@ export default function App() {
   }
 
   return (
+    <AgentsContext.Provider value={project.agents ?? []}>
     <div className="flex h-full flex-col">
       <header className="border-b border-zinc-800 bg-zinc-950/80 px-4 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <GitBranch className="h-5 w-5 text-indigo-400" />
           <h1 className="text-sm font-bold text-zinc-100">AgentSprint</h1>
           <span className="hidden max-w-[24rem] truncate rounded bg-zinc-900 px-2 py-0.5 font-mono text-[11px] text-zinc-400 sm:block">
@@ -340,15 +345,12 @@ export default function App() {
 
             <select
               value={assigneeFilter}
-              onChange={(e) => setAssigneeFilter(e.target.value as 'scrum-master' | 'dev' | 'review' | 'perfect' | '')}
+              onChange={(e) => setAssigneeFilter(e.target.value)}
               className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
               title="Filter by assignee"
             >
               <option value="">All assignees</option>
-              <option value="scrum-master">Scrum Master</option>
-              <option value="dev">Development</option>
-              <option value="review">Review</option>
-              <option value="perfect">Perfect Review</option>
+              <AssigneeOptions agents={project.agents ?? []} current={assigneeFilter || undefined} />
             </select>
 
             <input
@@ -370,7 +372,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
               <input
@@ -425,8 +427,19 @@ export default function App() {
             </div>
 
             <button
+              onClick={() => setDispatching(true)}
+              title="Plan which subagent builds which task, wave by wave"
+              data-testid="run-sprint"
+              aria-label="Run sprint"
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-zinc-200 hover:border-zinc-600 hover:text-zinc-50"
+            >
+              <Play className="h-3.5 w-3.5 text-indigo-400" />
+              <span className="hidden xl:inline">Run sprint</span>
+            </button>
+
+            <button
               onClick={() => setCreating(true)}
-              className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
             >
               <Plus className="h-3.5 w-3.5" /> New task
             </button>
@@ -464,11 +477,11 @@ export default function App() {
           <span className={cx('h-1.5 w-1.5 rounded-full', project.activeSprint ? 'bg-emerald-500' : 'bg-zinc-600')} />
           {project.activeSprint ? (
             <span>
-              Active sprint <span className="font-mono text-zinc-300">S{project.activeSprint.id}</span> —{' '}
+              Active sprint <span className="font-mono text-zinc-300">S{project.activeSprint.id}</span>:{' '}
               {project.activeSprint.goal || 'no goal'}
             </span>
           ) : (
-            <span>No active sprint — activate one to start planning</span>
+            <span>No active sprint. Activate one to start planning.</span>
           )}
           <span className="ml-auto font-mono">
             {tasks.length}/{project.tasks.length} tasks visible
@@ -571,6 +584,16 @@ export default function App() {
               <Square className="h-3 w-3" /> Sprints
             </button>
             <button
+              onClick={() => setSideTab('agents')}
+              data-testid="tab-agents"
+              className={cx(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                sideTab === 'agents' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+              )}
+            >
+              <Bot className="h-3 w-3" /> Agents
+            </button>
+            <button
               onClick={() => setSideTab('brand')}
               className={cx(
                 'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
@@ -600,6 +623,8 @@ export default function App() {
                 await reload()
               }}
             />
+          ) : sideTab === 'agents' ? (
+            <AgentsPanel agents={project.agents ?? []} tasks={project.tasks} onChanged={reload} />
           ) : (
             <BrandPanel
               brand={project.brand}
@@ -624,6 +649,19 @@ export default function App() {
         />
       )}
 
+      {dispatching && (
+        <DispatchModal
+          sprintId={project.activeSprint?.id}
+          onClose={() => setDispatching(false)}
+          onOpenTask={(id) => {
+            const task = project.tasks.find((t) => t.id === id)
+            if (!task) return
+            setDispatching(false)
+            setEditing(task)
+          }}
+        />
+      )}
+
       {creating && (
         <NewTaskModal sprints={project.sprints} onCreate={createTask} onClose={() => setCreating(false)} />
       )}
@@ -644,7 +682,9 @@ export default function App() {
           await reload()
         }}
         onClearFilters={clearFilters}
+        onRunSprint={() => setDispatching(true)}
       />
     </div>
+    </AgentsContext.Provider>
   )
 }

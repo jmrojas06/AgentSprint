@@ -13,6 +13,7 @@ interface Props {
   onOpenTask: (task: Task) => void
   onActivateSprint: (id: number) => void
   onClearFilters: () => void
+  onRunSprint?: () => void
 }
 
 interface Item {
@@ -36,6 +37,7 @@ export function CommandPalette({
   onOpenTask,
   onActivateSprint,
   onClearFilters,
+  onRunSprint,
 }: Props) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
@@ -73,6 +75,7 @@ export function CommandPalette({
     const actions: Item[] = [
       { key: 'new-task', label: 'Create new task', group: 'Actions', run: onCreateTask },
       { key: 'clear-filters', label: 'Clear all filters', group: 'Actions', run: onClearFilters },
+      ...(onRunSprint ? [{ key: 'run-sprint', label: 'Run sprint with subagents', hint: 'dispatch plan', group: 'Actions' as const, run: onRunSprint }] : []),
     ]
     const taskItems: Item[] = tasks.map((t) => ({
       key: `task-${t.id}`,
@@ -104,7 +107,7 @@ export function CommandPalette({
       .sort((a, b) => b.score - a.score)
       .slice(0, MAX_RESULTS)
       .map((r) => r.item)
-  }, [open, query, tasks, sprints, activeSprintId, onCreateTask, onOpenTask, onActivateSprint, onClearFilters])
+  }, [open, query, tasks, sprints, activeSprintId, onCreateTask, onOpenTask, onActivateSprint, onClearFilters, onRunSprint])
 
   useEffect(() => {
     setIndex((i) => Math.min(i, Math.max(0, items.length - 1)))

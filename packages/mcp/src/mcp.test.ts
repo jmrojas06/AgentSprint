@@ -72,6 +72,112 @@ describe('MCP tools', () => {
     expect(templates.map((t) => t.name).sort()).toEqual(['bug-report', 'chore', 'feature'])
   })
 
+  it('agent_list returns the default specialized agents', async () => {
+    const agents = (await callTool('agent_list', {})) as Array<{ name: string; description: string }>
+    expect(agents.map((a) => a.name)).toEqual([
+      'creative-director',
+      'designer',
+      'developer',
+      'docs',
+      'fixer',
+      'ideator',
+      'tester',
+    ])
+    expect(agents.every((a) => a.description.length > 0)).toBe(true)
+  })
+
+  it('agent_get returns the full prompt of an agent', async () => {
+    const agent = (await callTool('agent_get', { name: 'tester' })) as { name: string; prompt: string }
+    expect(agent.name).toBe('tester')
+    expect(agent.prompt).toContain('## Mission')
+
+    const missing = await callToolError('agent_get', { name: 'nope' })
+    expect(missing.error).toContain('not found')
+  })
+
+  it('agent_upsert creates a subagent that sprint_dispatch routes to', async () => {
+    const created = (await callTool('agent_upsert', {
+      name: 'stripe-expert',
+      description: 'Integrates Stripe payments',
+      prompt: '## Mission\n\nShip payments.',
+      color: '#3b82f6',
+    })) as { name: string; created: boolean }
+    expect(created).toMatchObject({ name: 'stripe-expert', created: true })
+    expect(fs.readFileSync(path.join(dir, '.claude', 'agents', 'stripe-expert.md'), 'utf8')).toContain('Ship payments.')
+
+    const sprint = (await callTool('sprint_create', { goal: 'Payments MVP' })) as { id: number }
+    await callTool('sprint_activate', { id: sprint.id })
+    const batch = (await callTool('task_create_batch', {
+      tasks: [
+        { ref: 'checkout', title: 'Checkout session', sprint: sprint.id, assignee: 'stripe-expert' },
+        { ref: 'qa', title: 'Payment tests', sprint: sprint.id, assignee: 'tester', dependsOn: ['checkout'] },
+      ],
+    })) as Array<{ ref: string; id: string; dependencies: string[] }>
+    expect(batch[1]!.dependencies).toEqual([batch[0]!.id])
+
+    const plan = (await callTool('sprint_dispatch', { format: 'json' })) as { waves: Array<Array<{ id: string; subagent: string }>> }
+    expect(plan.waves[0]).toEqual([expect.objectContaining({ id: batch[0]!.id, subagent: 'stripe-expert' })])
+    expect(plan.waves[1]).toEqual([expect.objectContaining({ id: batch[1]!.id, subagent: 'tester' })])
+
+    const md = (await client.callTool({ name: 'sprint_dispatch', arguments: {} })) as ToolResult
+    expect(md.content[0]?.text).toContain('## Wave 1 — start now')
+  })
+
+  it('task_create_batch rejects an invalid plan without writing anything', async () => {
+    const before = store.state.tasks.length
+    const res = await callToolError('task_create_batch', { tasks: [{ title: 'A', dependsOn: ['missing'] }] })
+    expect(res.error).toContain('Unknown dependency')
+    expect(store.state.tasks.length).toBe(before)
+  })
+
+  it('agent_delete and agent_sync keep .claude/agents in line', async () => {
+    await callTool('agent_delete', { name: 'ideator' })
+    expect(fs.existsSync(path.join(dir, '.claude', 'agents', 'ideator.md'))).toBe(false)
+    const sync = (await callTool('agent_sync', { installDefaults: true })) as { installed: string[]; written: string[] }
+    expect(sync.installed).toEqual(['ideator'])
+    expect(fs.existsSync(path.join(dir, '.claude', 'agents', 'ideator.md'))).toBe(true)
+  })
+
+  it('task_claim with a subagent name assigns the task to it', async () => {
+    const created = (await callTool('task_create', { title: 'Generic work' })) as { id: string }
+    const claimed = (await callTool('task_claim', { id: created.id, agent: 'developer' })) as { assignee: string }
+    expect(claimed.assignee).toBe('developer')
+  })
+
+  it('exposes the run-sprint and idea-to-mvp prompts', async () => {
+    const run = await client.getPrompt({ name: 'run-sprint', arguments: {} })
+    expect((run.messages[0]!.content as { text: string }).text).toContain('Dispatch plan')
+    const mvp = await client.getPrompt({ name: 'idea-to-mvp', arguments: { idea: 'A habit tracker for teams' } })
+    const text = (mvp.messages[0]!.content as { text: string }).text
+    expect(text).toContain('A habit tracker for teams')
+    expect(text).toContain('task_create_batch')
+    expect(text).toContain('`designer`')
+  })
+
+  it('task_create and task_list accept a specialized agent assignee', async () => {
+    const created = (await callTool('task_create', { title: 'Style the hero', assignee: 'designer' })) as { id: string; assignee: string }
+    expect(created.assignee).toBe('designer')
+
+    const tasks = (await callTool('task_list', { assignee: 'designer' })) as Array<{ id: string }>
+    expect(tasks.map((t) => t.id)).toContain(created.id)
+  })
+
+  it('task_claim keeps the specialized agent assignee', async () => {
+    const created = (await callTool('task_create', { title: 'Assert the flow', assignee: 'tester' })) as { id: string }
+    const claimed = (await callTool('task_claim', { id: created.id })) as { status: string; assignee: string }
+    expect(claimed.status).toBe('In Progress')
+    expect(claimed.assignee).toBe('tester')
+  })
+
+  it('task_spec injects the agent profile for a specialized assignee', async () => {
+    const created = (await callTool('task_create', { title: 'Design settings', assignee: 'designer' })) as { id: string }
+    // task_spec returns raw Markdown, not JSON
+    const result = (await client.callTool({ name: 'task_spec', arguments: { id: created.id } })) as ToolResult
+    const spec = result.content[0]?.text ?? ''
+    expect(spec).toContain('## Agent profile — designer')
+    expect(spec).toContain('- **Assignee:** designer')
+  })
+
   it('task_create accepts a template with vars', async () => {
     const created = (await callTool('task_create', {
       template: 'bug-report',

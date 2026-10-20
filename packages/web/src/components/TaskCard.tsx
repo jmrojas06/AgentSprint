@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, Dot, GitCommitHorizontal, Lock } from 'lucide-react'
 import type { Task } from '../types'
+import { AssigneeChip } from '../agents'
 import { cx, criterionChecked, getBlockerTasks, getTaskLock, priorityDot, priorityLabel, statusAccent } from '../ui'
 
 interface Props {
@@ -43,14 +44,7 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
             {lock.lockedBy}
           </span>
         )}
-        <span
-          className={cx(
-            'ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium',
-            task.assignee === 'dev' ? 'bg-indigo-500/15 text-indigo-300' : task.assignee === 'review' ? 'bg-amber-500/15 text-amber-300' : task.assignee === 'perfect' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700/50 text-zinc-300',
-          )}
-        >
-          {task.assignee}
-        </span>
+        <AssigneeChip assignee={task.assignee} className="ml-auto" />
       </div>
 
       <h3 className="mt-2 text-sm font-medium leading-snug text-zinc-100">{task.title}</h3>

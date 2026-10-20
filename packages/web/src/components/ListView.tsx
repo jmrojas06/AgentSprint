@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp } from 'lucide-react'
+import { AssigneeChip } from '../agents'
 import type { Task } from '../types'
 import { criterionChecked, cx, fmtDate, priorityDot, priorityLabel, sortTasks, statusAccent, type SortBy, type SortDir } from '../ui'
 
@@ -86,7 +87,9 @@ export function ListView({ tasks, sortBy, sortDir, onSortBy, onSortDir, onOpen }
                   </span>
                 </td>
                 <td className="px-3 py-2 font-mono text-zinc-400">{task.sprint ?? '—'}</td>
-                <td className="px-3 py-2 text-zinc-300">{task.assignee}</td>
+                <td className="px-3 py-2 text-zinc-300">
+                  <AssigneeChip assignee={task.assignee} />
+                </td>
                 <td className="px-3 py-2 font-mono text-zinc-400">
                   {doneAc}/{task.acceptanceCriteria.length}
                 </td>

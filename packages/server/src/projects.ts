@@ -71,11 +71,14 @@ export class ProjectManager {
     for (const dir of dirs.sort()) {
       const name = path.basename(dir)
       const store = ProjectStore.open(dir)
+      syncSubagentsSafely(store)
       const index = await createIndex()
       index.rebuild(store.state.tasks)
       recordBurndownSnapshot(store)
       const broadcast = new Broadcast()
       const watcher = createWatcher(store, () => {
+        // Hand edits to .agentboard/agents/ flow into .claude/agents/ (idempotent).
+        syncSubagentsSafely(store)
         index.rebuild(store.state.tasks)
         recordBurndownSnapshot(store)
         broadcast.send('change', { project: name, at: new Date().toISOString() })
@@ -109,5 +112,15 @@ export class ProjectManager {
 
   async closeAll(): Promise<void> {
     await Promise.all([...this.handles.values()].map((h) => h.close()))
+  }
+}
+
+/** Regenerate Claude Code subagents without ever taking the server down. */
+function syncSubagentsSafely(store: ProjectStore): void {
+  try {
+    const result = store.syncSubagents()
+    for (const skip of result?.skipped ?? []) console.warn(`[agentboard] subagent "${skip.name}" not synced: ${skip.reason}`)
+  } catch (err) {
+    console.error(`[agentboard] subagent sync failed: ${(err as Error).message}`)
   }
 }

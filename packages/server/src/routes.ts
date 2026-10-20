@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
-import { buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, taskCommitCounts } from '@jmrojas06/agentsprint-core'
+import { buildDispatchPlan, buildSprintReport, buildTaskSpec, computeSprintStats, findTaskRefs, planDispatch, taskCommitCounts } from '@jmrojas06/agentsprint-core'
 import type { ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
 
@@ -85,6 +85,74 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
 
   app.get('/api/templates', async (req) => projects.get(projectName(req)).store.listTemplates())
 
+  app.post('/api/tasks/batch', async (req, reply) => {
+    const { tasks } = (req.body ?? {}) as { tasks?: Array<TaskInput & { ref?: string; dependsOn?: string[] }> }
+    if (!Array.isArray(tasks)) return sendError(reply, 400, 'Body must be { tasks: [...] }')
+    const h = projects.get(projectName(req))
+    try {
+      const created = h.store.createTaskBatch(tasks)
+      for (const task of created) h.index.upsert(task)
+      h.broadcast.send('change', { project: h.info.name, at: new Date().toISOString() })
+      return reply.code(201).send(created)
+    } catch (err) {
+      return sendError(reply, 400, (err as Error).message)
+    }
+  })
+
+  // ── specialized agents ───────────────────────────────────────────────
+
+  app.get('/api/agents', async (req) => projects.get(projectName(req)).store.listAgents())
+
+  app.put('/api/agents/:name', async (req, reply) => {
+    const name = (req.params as { name: string }).name
+    const h = projects.get(projectName(req))
+    try {
+      const agent = h.store.saveAgent({ ...((req.body ?? {}) as object), name })
+      h.broadcast.send('change', { project: h.info.name, at: new Date().toISOString() })
+      return reply.send(agent)
+    } catch (err) {
+      return sendError(reply, 400, (err as Error).message)
+    }
+  })
+
+  app.delete('/api/agents/:name', async (req, reply) => {
+    const name = (req.params as { name: string }).name
+    const h = projects.get(projectName(req))
+    try {
+      h.store.deleteAgent(name)
+      h.broadcast.send('change', { project: h.info.name, at: new Date().toISOString() })
+      return reply.code(204).send()
+    } catch (err) {
+      const message = (err as Error).message
+      return sendError(reply, /not found/i.test(message) ? 404 : 400, message)
+    }
+  })
+
+  app.post('/api/agents/sync', async (req, reply) => {
+    const { installDefaults } = (req.body ?? {}) as { installDefaults?: boolean }
+    const h = projects.get(projectName(req))
+    try {
+      const installed = installDefaults ? h.store.installDefaultAgents() : []
+      const result = h.store.syncSubagents()
+      return reply.send({ installed, enabled: result !== null, ...(result ?? {}) })
+    } catch (err) {
+      return sendError(reply, 500, (err as Error).message)
+    }
+  })
+
+  app.get('/api/dispatch', async (req, reply) => {
+    const raw = (req.query as Record<string, string>).sprint
+    const sprintId = raw ? Number(raw) : undefined
+    if (raw && (!Number.isInteger(sprintId) || sprintId! <= 0)) return sendError(reply, 400, 'sprint must be a positive integer')
+    const { store } = projects.get(projectName(req))
+    try {
+      const plan = planDispatch(store.state, { sprintId })
+      return reply.send({ plan, markdown: buildDispatchPlan(plan, store.getConfig().name) })
+    } catch (err) {
+      return sendError(reply, 404, (err as Error).message)
+    }
+  })
+
   app.get('/api/tasks/:id', async (req, reply) => {
     const id = (req.params as { id: string }).id
     const task = projects.get(projectName(req)).store.state.tasks.find((t) => t.id === id)
@@ -105,7 +173,7 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     const task = state.tasks.find((t) => t.id === id)
     if (!task) return sendError(reply, 404, `Task not found: ${id}`)
     const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-    const spec = buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: h.store.getLearnings() })
+    const spec = buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: h.store.getLearnings(), agent: h.store.agentForTask(task) })
     return reply.send({ id, spec })
   })
 

@@ -42,6 +42,8 @@ AgentSprint mantiene el trabajo donde vive el código:
 - **Sprint management** — plan, activate, close; stats and burndown per sprint
 - **Persistent context** — learnings memory and brand kit injected into every task spec an agent receives
 - **CLI** — init boards, serve the UI, export specs, lint integrity, import TODOs or GitHub issues
+- **Specialized agents as real Claude Code subagents** — developer, designer, tester, fixer, docs, creative-director, ideator (plus your own), generated into `.claude/agents/` and dispatched wave by wave in parallel
+- **Idea → MVP** — one MCP prompt shapes the idea, plans a sprint with linked tasks per specialist and builds it
 - **MCP server** — stdio and HTTP transports so any MCP-compatible agent can work the board
 - **REST API + SSE** — every board operation available programmatically, with live updates
 - **File watcher** — edit `.agentboard/` files directly and the UI updates instantly
@@ -122,6 +124,21 @@ Typical loop with a coding agent:
 
 Humans own *Done*. Agents stop at *Review* — you verify the criteria before work ships.
 
+### From idea to MVP with subagents (Claude Code)
+
+```bash
+agentboard init my-app       # board + 7 specialist agents + .claude/agents/ subagents
+agentboard connect my-app    # register the AgentSprint MCP server in .mcp.json
+cd my-app && claude          # approve "agentsprint", then:
+#   /mcp__agentsprint__idea-to-mvp   "a habit tracker for small teams"
+#   /mcp__agentsprint__run-sprint
+```
+
+The orchestrator plans the sprint, assigns each task to a specialist and
+launches one subagent per task — in parallel when dependencies allow. Watch it
+happen on the board (`agentboard serve`) and use **Run sprint** there to see
+the waves. Details: [docs/agents.md](docs/agents.md).
+
 ## CLI reference
 
 | Command | Purpose |
@@ -136,12 +153,15 @@ Humans own *Done*. Agents stop at *Review* — you verify the criteria before wo
 | `agentboard import todo <file>` | Import bullets/checkboxes from a TODO-style Markdown file |
 | `agentboard import github <owner/repo>` | Import open GitHub issues via the `gh` CLI |
 | `agentboard export md` | Write `BOARD.md`, a static Markdown snapshot |
+| `agentboard agents [sync] [dir]` | List agents / regenerate `.claude/agents/` subagents |
+| `agentboard dispatch [dir]` | Print the parallel subagent plan for the active sprint |
+| `agentboard connect [dir]` | Register the MCP server in `.mcp.json` for Claude Code |
 
 Details and options: [docs/cli.md](https://jmrojas06.github.io/AgentSprint/cli).
 
 ## MCP tools
 
-28 tools are exposed over both transports. Highlights:
+35 tools are exposed over both transports. Highlights:
 
 | Tool | Purpose |
 |---|---|
@@ -153,6 +173,9 @@ Details and options: [docs/cli.md](https://jmrojas06.github.io/AgentSprint/cli).
 | `task_checklist` | Tick acceptance criteria |
 | `task_note` | Append timestamped execution notes |
 | `task_spec` | Get the full copy-pasteable prompt for a task |
+| `task_create_batch` | Create a whole plan with linked dependencies in one call |
+| `agent_list` / `agent_upsert` / `agent_sync` | Manage specialists and their Claude Code subagents |
+| `sprint_dispatch` | Waves of parallel tasks with the subagent for each |
 | `sprint_activate` / `sprint_close` / `sprint_report` | Drive the sprint lifecycle |
 | `brand_get` / `learnings_get` | Read injected project context |
 
@@ -191,6 +214,7 @@ Full documentation at **https://jmrojas06.github.io/AgentSprint/**:
 - [Task file format](https://jmrojas06.github.io/AgentSprint/task-format)
 - [CLI reference](https://jmrojas06.github.io/AgentSprint/cli)
 - [MCP server & tools](https://jmrojas06.github.io/AgentSprint/mcp)
+- [Specialized agents & subagents](https://jmrojas06.github.io/AgentSprint/agents)
 - [REST API](https://jmrojas06.github.io/AgentSprint/api)
 - [Architecture](https://jmrojas06.github.io/AgentSprint/architecture)
 - [Troubleshooting](https://jmrojas06.github.io/AgentSprint/troubleshooting)

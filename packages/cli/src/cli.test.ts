@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { cmdBrand, cmdClose, cmdExport, cmdLint, cmdTaskNew, parseArgs } from './index.js'
+import { cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdDispatch, cmdExport, cmdLint, cmdTaskNew, parseArgs } from './index.js'
 import { startServer } from '@jmrojas06/agentsprint-server'
 
 let dir: string
@@ -297,5 +297,51 @@ describe('port fallback', () => {
 
     await first.close()
     fs.rmSync(dir2, { recursive: true, force: true })
+  })
+})
+describe('agents, dispatch and connect', () => {
+  it('parses agents, agents sync and dispatch', () => {
+    expect(parseArgs(['agents', '/tmp/x'])).toMatchObject({ command: 'agents', dir: '/tmp/x' })
+    expect(parseArgs(['agents', 'sync', '/tmp/x'])).toMatchObject({ command: 'agents-sync', dir: '/tmp/x' })
+    expect(parseArgs(['agents', 'sync'])).toMatchObject({ command: 'agents-sync', dir: process.cwd() })
+    expect(parseArgs(['dispatch', '/tmp/x', '--sprint', '2'])).toMatchObject({ command: 'dispatch', dir: '/tmp/x', sprintId: 2 })
+    expect(parseArgs(['connect', '/tmp/x'])).toMatchObject({ command: 'connect', dir: '/tmp/x' })
+    expect(parseArgs(['mcp', '/tmp/x'])).toMatchObject({ command: 'mcp', dir: '/tmp/x' })
+  })
+
+  it('agents lists the roster and agents sync restores a deleted default', async () => {
+    const store = ProjectStore.init(dir, { sample: true })
+    store.deleteAgent('docs')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await cmdAgentsSync(dir)
+    expect(fs.existsSync(path.join(dir, '.claude', 'agents', 'docs.md'))).toBe(true)
+    await cmdAgents(dir)
+    const out = log.mock.calls.map((c) => String(c[0])).join('\n')
+    log.mockRestore()
+    expect(out).toContain('Added default agents: docs')
+    expect(out).toMatch(/designer\s+Designer/)
+    expect(out).toContain('7 agent(s)')
+  })
+
+  it('dispatch prints the plan for the active sprint', async () => {
+    ProjectStore.init(dir, { sample: true })
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    await cmdDispatch(dir)
+    const out = write.mock.calls.map((c) => String(c[0])).join('')
+    write.mockRestore()
+    expect(out).toContain('# Dispatch plan')
+    expect(out).toContain('Wave 1')
+  })
+
+  it('connect merges the agentsprint server into .mcp.json', async () => {
+    ProjectStore.init(dir, { sample: true })
+    fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'x' } } }), 'utf8')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await cmdConnect(dir, { cliEntry: '/opt/agentboard/index.js' })
+    await cmdConnect(dir, { cliEntry: '/opt/agentboard/index.js' })
+    log.mockRestore()
+    const config = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'))
+    expect(config.mcpServers.other).toEqual({ command: 'x' })
+    expect(config.mcpServers.agentsprint).toEqual({ type: 'stdio', command: process.execPath, args: ['/opt/agentboard/index.js', 'mcp', path.resolve(dir)] })
   })
 })
