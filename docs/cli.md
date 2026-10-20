@@ -31,6 +31,8 @@ Options:
   --mcp             Also expose MCP tools at /mcp (Streamable HTTP)
   --token <secret>  Require Authorization: Bearer <secret> for mutating API/MCP calls (or env AGENTBOARD_TOKEN)
   --token-all       With --token, also protect GETs — all /api/* need auth
+  --allowed-host <name>    Accept this hostname in Host/Origin besides localhost (repeatable, or env AGENTBOARD_ALLOWED_HOSTS)
+  --allowed-origin <origin> Accept browser requests from this exact origin (repeatable, or env AGENTBOARD_ALLOWED_ORIGINS)
   --version         Print the version
 
 Options (close):
@@ -70,6 +72,15 @@ AGENTBOARD_TOKEN=my-secret agentboard serve
 * **Web** — on `401` the UI shows a token prompt, saves it to `localStorage` key `agentsprint-token`, and retries. Use “Clear token” to remove it.
 * **CLI / MCP HTTP** — on `401` set `AGENTBOARD_TOKEN` or pass `--token` and retry with `Authorization: Bearer <token>`. Example: `curl -H "Authorization: Bearer $AGENTBOARD_TOKEN" http://127.0.0.1:4310/api/tasks`.
 * **MCP stdio** — stdio transport bypasses HTTP auth; only the HTTP endpoint (`/mcp`) is protected.
+
+#### Cross-site protection (Host / Origin)
+
+Independently of the token, the server refuses browser requests that come from other sites, so a web page you visit cannot read or edit the board through your browser:
+
+* Requests with an `Origin` header are answered only when the origin is `localhost` / `127.0.0.1` / `[::1]` (any port, which covers the Vite dev server), the board itself, a host from `--allowed-host`, or an origin from `--allowed-origin`. Anything else gets `403`.
+* When bound to loopback (the default) the `Host` header must also be a loopback name or an allowed host. This blocks DNS-rebinding attacks.
+* CLI, MCP and `curl` clients send no `Origin` and are unaffected.
+* With `--host 0.0.0.0` (Docker), the `Host` check is only enforced if you pass `--allowed-host <name>` for every name you browse to, e.g. `--allowed-host board.lan`. The server prints a warning otherwise.
 
 ### `spec <dir> <id>`
 

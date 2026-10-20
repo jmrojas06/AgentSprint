@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
-import { startServer } from '@jmrojas06/agentsprint-server'
+import { isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
 
 const VERSION = '0.1.0'
 
@@ -42,6 +42,13 @@ Options (serve):
    --token <secret>  Require Authorization: Bearer <secret> for mutating API/MCP calls
                      (or set env AGENTBOARD_TOKEN). Without it, board is open.
    --token-all       When used with --token, also protect GET requests (read-only) — all /api/* need auth
+   --allowed-host <name>
+                     Accept this hostname in Host/Origin besides localhost (repeatable;
+                     or env AGENTBOARD_ALLOWED_HOSTS). Needed with --host 0.0.0.0 to keep
+                     DNS-rebinding protection.
+   --allowed-origin <origin>
+                     Accept browser requests from this exact origin (repeatable;
+                     or env AGENTBOARD_ALLOWED_ORIGINS)
 
 Options (close):
    --no-retro        Skip the automatic retro appended to learnings.md
@@ -76,6 +83,8 @@ interface Args {
   retro: boolean
   token?: string
   tokenAll?: boolean
+  allowedHosts?: string[]
+  allowedOrigins?: string[]
 }
 
 export function parseArgs(argv: string[]): Args | null {
@@ -96,6 +105,8 @@ export function parseArgs(argv: string[]): Args | null {
   let retro = true
   let token: string | undefined = process.env.AGENTBOARD_TOKEN?.trim() || undefined
   let tokenAll = false
+  const allowedHosts: string[] = []
+  const allowedOrigins: string[] = []
   const labelTags: Record<string, string[]> = {}
   const milestoneSprints: Record<string, number> = {}
 
@@ -211,6 +222,16 @@ export function parseArgs(argv: string[]): Args | null {
       case '--token-all':
         tokenAll = true
         break
+      case '--allowed-host':
+      case '--allowed-origin': {
+        const value = argv[++i]
+        if (!value) {
+          console.error(`Usage: ${arg} <${arg === '--allowed-host' ? 'hostname' : 'origin'}>`)
+          process.exit(1)
+        }
+        ;(arg === '--allowed-host' ? allowedHosts : allowedOrigins).push(value)
+        break
+      }
       case '--label-tag': {
         const kv = (argv[++i] ?? '').split('=')
         if (kv.length !== 2 || !kv[0] || !kv[1]) {
@@ -309,7 +330,11 @@ export function parseArgs(argv: string[]): Args | null {
   }
 
   const dir = positional.length > 0 && !['close', 'import'].includes(command) ? path.resolve(positional[0]!) : process.cwd()
-  return { command, dir, taskId: undefined, sprintId, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+  return {
+    command, dir, taskId: undefined, sprintId, port, host, open, init, mcp, fallback, retro, token, tokenAll,
+    ...(allowedHosts.length ? { allowedHosts } : {}),
+    ...(allowedOrigins.length ? { allowedOrigins } : {}),
+  }
 }
 
 function resolveWebDist(): string | null {
@@ -364,6 +389,8 @@ async function cmdServe(args: Args): Promise<void> {
     fallback: args.fallback,
     token: args.token,
     tokenAll: args.tokenAll,
+    allowedHosts: args.allowedHosts,
+    allowedOrigins: args.allowedOrigins,
   })
 
   console.log(`\n  AgentSprint v${VERSION}`)
@@ -376,6 +403,14 @@ async function cmdServe(args: Args): Promise<void> {
     console.log(`  UI:      ${url}`)
   } else {
     console.log(`  UI:      build web with "pnpm --filter @jmrojas06/agentsprint-web build"`)
+  }
+  const exposed = !isLoopbackHostname(args.host)
+  const hasAllowedHosts = Boolean(args.allowedHosts?.length || process.env.AGENTBOARD_ALLOWED_HOSTS?.trim())
+  if (exposed && !hasAllowedHosts) {
+    console.warn(`  Warning: bound to ${args.host} without --allowed-host — Host header is not checked (DNS rebinding).`)
+  }
+  if (exposed && !hasToken) {
+    console.warn('  Warning: board reachable from the network without --token — anyone on it can edit tasks.')
   }
   console.log('  Press Ctrl+C to stop.\n')
 
