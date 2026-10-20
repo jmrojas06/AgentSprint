@@ -80,4 +80,55 @@ describe('lintProject', () => {
     expect(result.ok).toBe(false)
     expect(result.issues.some((i) => i.code === 'INVALID_FRONTMATTER')).toBe(true)
   })
+
+  it('reports agent profiles with invalid frontmatter', () => {
+    const agentsDir = path.join(dir, '.agentboard', 'agents')
+    fs.writeFileSync(path.join(agentsDir, 'broken.md'), '---\ncolor: "#fff"\n---\nBody', 'utf8')
+    const result = lintProject(dir)
+    expect(result.ok).toBe(false)
+    expect(result.issues.some((i) => i.code === 'INVALID_AGENT' && i.severity === 'error')).toBe(true)
+  })
+
+  it('reports agent files whose name is not a slug', () => {
+    const agentsDir = path.join(dir, '.agentboard', 'agents')
+    fs.writeFileSync(path.join(agentsDir, 'Bad Agent.md'), '---\ndescription: "X"\n---\nBody', 'utf8')
+    const result = lintProject(dir)
+    expect(result.ok).toBe(false)
+    expect(result.issues.some((i) => i.code === 'INVALID_AGENT' && i.file.includes('Bad Agent'))).toBe(true)
+  })
+
+  it('reports an agent with an empty prompt', () => {
+    const agentsDir = path.join(dir, '.agentboard', 'agents')
+    fs.writeFileSync(path.join(agentsDir, 'hollow.md'), '---\ndescription: "Talks a lot"\n---\n   \n', 'utf8')
+    const result = lintProject(dir)
+    expect(result.ok).toBe(false)
+    expect(result.issues.some((i) => i.code === 'INVALID_AGENT' && i.message.includes('empty'))).toBe(true)
+  })
+
+  it('warns when a task is assigned to an unknown agent', () => {
+    const tasksDir = path.join(dir, '.agentboard', 'tasks')
+    fs.writeFileSync(
+      path.join(tasksDir, 'TK-92.md'),
+      '---\nid: TK-92\ntitle: ghost role\nstatus: To Do\npriority: medium\nassignee: illustrator\nsprint: null\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
+      'utf8',
+    )
+    const result = lintProject(dir)
+    const issue = result.issues.find((i) => i.code === 'UNKNOWN_ASSIGNEE')
+    expect(issue?.severity).toBe('warning')
+    expect(issue?.message).toContain('illustrator')
+    // warnings are reported but do not fail the lint
+    expect(result.ok).toBe(true)
+  })
+
+  it('accepts a task assigned to an existing specialized agent', () => {
+    const tasksDir = path.join(dir, '.agentboard', 'tasks')
+    fs.writeFileSync(
+      path.join(tasksDir, 'TK-93.md'),
+      '---\nid: TK-93\ntitle: styled by designer\nstatus: To Do\npriority: medium\nassignee: designer\nsprint: null\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n',
+      'utf8',
+    )
+    const result = lintProject(dir)
+    expect(result.issues.some((i) => i.code === 'UNKNOWN_ASSIGNEE')).toBe(false)
+    expect(result.ok).toBe(true)
+  })
 })

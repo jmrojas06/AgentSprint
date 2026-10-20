@@ -32,6 +32,9 @@ importers:
       '@jmrojas06/agentsprint-core':
         specifier: workspace:*
         version: link:../core
+      '@jmrojas06/agentsprint-mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@jmrojas06/agentsprint-server':
         specifier: workspace:*
         version: link:../server

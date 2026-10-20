@@ -4,6 +4,7 @@ import type { Sprint, TaskPriority, TaskTemplate } from '../types'
 import { TASK_PRIORITIES } from '../types'
 import { api } from '../api'
 import { priorityDot, priorityLabel } from '../ui'
+import { AssigneeOptions, agentRole, useAgents } from '../agents'
 
 interface Props {
   sprints: Sprint[]
@@ -11,7 +12,7 @@ interface Props {
     title: string
     sprint: number | null
     priority: TaskPriority
-    assignee: 'scrum-master' | 'dev' | 'review' | 'perfect'
+    assignee: string
     template?: string
     vars?: Record<string, string>
   }) => void
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
+  const agents = useAgents()
   const [title, setTitle] = useState('')
 
   useEffect(() => {
@@ -29,7 +31,7 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   const [priority, setPriority] = useState<TaskPriority>('medium')
-  const [assignee, setAssignee] = useState<'scrum-master' | 'dev' | 'review' | 'perfect'>('scrum-master')
+  const [assignee, setAssignee] = useState<string>('scrum-master')
   const [priorityTouched, setPriorityTouched] = useState(false)
   const [assigneeTouched, setAssigneeTouched] = useState(false)
   const [sprint, setSprint] = useState<number | null>(null)
@@ -136,15 +138,12 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
             <select
               value={assignee}
               onChange={(e) => {
-                setAssignee(e.target.value as 'scrum-master' | 'dev' | 'review' | 'perfect')
+                setAssignee(e.target.value)
                 setAssigneeTouched(true)
               }}
               className={field}
             >
-              <option value="scrum-master">Scrum Master</option>
-              <option value="dev">Development</option>
-              <option value="review">Review</option>
-              <option value="perfect">Perfect Review</option>
+              <AssigneeOptions agents={agents} current={assignee} />
             </select>
           </div>
 
@@ -160,6 +159,12 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
             </select>
           </div>
         </div>
+
+        {agents.some((a) => a.name === assignee) && (
+          <p className="-mt-1 mb-3 text-[11px] leading-snug text-zinc-500" data-testid="agent-hint">
+            Built by the <span className="font-medium text-zinc-300">{assignee}</span> subagent: {agentRole(agents.find((a) => a.name === assignee)!)}.
+          </p>
+        )}
 
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">

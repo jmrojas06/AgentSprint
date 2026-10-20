@@ -11,3 +11,4 @@ This project uses a git-native sprint board under `.agentboard/`.
 5. Never skip or rewrite tasks. Update the file, don't create duplicates.
 6. Prefer editing files directly over `agentboard` CLI/MCP when possible; the board UI reflects file changes instantly.
 7. If `.agentboard/brand.md` exists and is configured, follow the brand guidelines when writing code, copy or UI.
+8. `.agentboard/agents/` holds specialized agent profiles (developer, designer, tester, …), mirrored to `.claude/agents/` as real Claude Code subagents. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask `sprint_dispatch` (or `agentboard dispatch`) which subagent takes which task and what can run in parallel.

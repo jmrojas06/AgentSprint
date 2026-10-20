@@ -502,6 +502,89 @@ describe('server API', () => {
       expect(updated.json().assignee).toBe('review')
     })
   })
+
+  describe('specialized agents (endpoints)', () => {
+    it('GET /api/agents returns the default roster with prompts', async () => {
+      const { status, json } = await api('get', '/api/agents')
+      expect(status).toBe(200)
+      const agents = json() as Array<{ name: string; description: string; prompt: string }>
+      expect(agents.map((a) => a.name)).toEqual([
+        'creative-director',
+        'designer',
+        'developer',
+        'docs',
+        'fixer',
+        'ideator',
+        'tester',
+      ])
+      expect(agents.find((a) => a.name === 'tester')?.prompt).toContain('## Mission')
+    })
+
+    it('creates a task assigned to a specialized agent and keeps it across status changes', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Hero design', assignee: 'designer' })
+      expect(created.json().assignee).toBe('designer')
+      const id = created.json().id as string
+
+      const moved = await api('patch', `/api/tasks/${id}/status`, { status: 'In Progress' })
+      expect(moved.json().assignee).toBe('designer')
+
+      const spec = await api('get', `/api/tasks/${id}/spec`)
+      expect(spec.json().spec).toContain('## Agent profile — designer')
+      expect(spec.json().spec).toContain('- **Assignee:** designer')
+    })
+
+    it('PUT /api/agents/:name creates an agent, its subagent, and it shows in /api/project', async () => {
+      const saved = await api('put', '/api/agents/copywriter', { description: 'Writes landing copy', prompt: 'You write copy.' })
+      expect(saved.status).toBe(200)
+      expect(saved.json().name).toBe('copywriter')
+      const project = await api('get', '/api/project')
+      expect((project.json().agents as Array<{ name: string }>).map((a) => a.name)).toContain('copywriter')
+      const sync = await api('post', '/api/agents/sync', {})
+      expect(sync.json().enabled).toBe(true)
+      expect(sync.json().unchanged).toContain('copywriter')
+    })
+
+    it('PUT /api/agents/:name rejects an invalid name or empty prompt', async () => {
+      expect((await api('put', '/api/agents/Bad%20Name', { description: 'X', prompt: 'Y' })).status).toBe(400)
+      expect((await api('put', '/api/agents/hollow', { description: 'X', prompt: ' ' })).status).toBe(400)
+    })
+
+    it('DELETE /api/agents/:name removes it and 404s the second time', async () => {
+      expect((await api('delete', '/api/agents/ideator')).status).toBe(204)
+      expect((await api('delete', '/api/agents/ideator')).status).toBe(404)
+    })
+
+    it('POST /api/tasks/batch + GET /api/dispatch plan waves for the active sprint', async () => {
+      const sprint = await api('post', '/api/sprints', { goal: 'Batch sprint' })
+      const sprintId = sprint.json().id as number
+      await api('patch', `/api/sprints/${sprintId}`, { status: 'active' })
+      const batch = await api('post', '/api/tasks/batch', {
+        tasks: [
+          { ref: 'ui', title: 'Hero', sprint: sprintId, assignee: 'designer' },
+          { title: 'Hero tests', sprint: sprintId, assignee: 'tester', dependsOn: ['ui'] },
+        ],
+      })
+      expect(batch.status).toBe(201)
+      const [ui, tests] = batch.json() as Array<{ id: string; dependencies: string[] }>
+      expect(tests!.dependencies).toEqual([ui!.id])
+
+      const dispatch = await api('get', '/api/dispatch')
+      expect(dispatch.status).toBe(200)
+      const { plan, markdown } = dispatch.json() as { plan: { waves: Array<Array<{ id: string; subagent: string }>> }; markdown: string }
+      expect(plan.waves[0]!.map((t) => t.subagent)).toEqual(['designer'])
+      expect(plan.waves[1]!.map((t) => t.id)).toEqual([tests!.id])
+      expect(markdown).toContain('# Dispatch plan')
+
+      expect((await api('get', '/api/dispatch?sprint=999')).status).toBe(404)
+      expect((await api('post', '/api/tasks/batch', { tasks: [{ title: 'x', dependsOn: ['nope'] }] })).status).toBe(400)
+    })
+
+    it('rejects an assignee that is not a slug', async () => {
+      const created = await api('post', '/api/tasks', { title: 'Bad assignee', assignee: 'Not A Slug' })
+      expect(created.status).toBe(400)
+      expect(String(created.json().error)).toMatch(/slug/i)
+    })
+  })
 })
 
 describe('multi-project', () => {
@@ -662,7 +745,7 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(28)
+      expect(tools.length).toBe(35)
       const names = tools.map((t) => t.name)
       expect(names).toContain('project_list')
       expect(names).toContain('export_board')
@@ -833,6 +916,28 @@ assignee: 'scrum-master',
       expect(fs.existsSync(dbPath)).toBe(true)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('static UI caching', () => {
+  it('revalidates index.html (also as SPA fallback) and caches hashed assets forever', async () => {
+    const web = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-web-'))
+    fs.mkdirSync(path.join(web, 'assets'))
+    fs.writeFileSync(path.join(web, 'index.html'), '<!doctype html><title>x</title>', 'utf8')
+    fs.writeFileSync(path.join(web, 'assets', 'index-abc123.js'), 'console.log(1)', 'utf8')
+    const built = await buildApp({ rootDir: dir, webDist: web })
+    try {
+      const index = await built.app.inject({ method: 'GET', url: '/' })
+      expect(index.headers['cache-control']).toBe('no-cache')
+      const fallback = await built.app.inject({ method: 'GET', url: '/some/client/route' })
+      expect(fallback.statusCode).toBe(200)
+      expect(fallback.headers['cache-control']).toBe('no-cache')
+      const asset = await built.app.inject({ method: 'GET', url: '/assets/index-abc123.js' })
+      expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable')
+    } finally {
+      await built.close()
+      fs.rmSync(web, { recursive: true, force: true })
     }
   })
 })

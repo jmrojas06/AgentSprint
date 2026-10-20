@@ -36,7 +36,7 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 
 ## Tools
 
-28 tools are exposed over both transports (stdio and Streamable HTTP):
+35 tools are exposed over both transports (stdio and Streamable HTTP):
 
 | Tool | Description |
 | --- | --- |
@@ -44,10 +44,11 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `task_list` | List tasks with filters (status, sprint, assignee, search) |
 | `task_get` | Get a single task by id |
 | `task_create` | Create a task, optionally from a reusable template |
+| `task_create_batch` | Create up to 50 tasks in one call; `ref` + `dependsOn` link them, validated before any write |
 | `template_list` | List the reusable task templates in `.agentboard/templates/` (defaults, acceptance criteria and `{{placeholder}}` variables) |
 | `task_update` | Update task fields |
 | `task_status` | Move a task to a status |
-| `task_claim` | Claim a task: set `In Progress` + assignee `agent` (exclusive lock with TTL) |
+| `task_claim` | Claim a task: set `In Progress` (exclusive lock with TTL). A subagent claiming with its own `agent` name becomes the assignee; specialized assignees are kept |
 | `task_release` | Release your exclusive lock on a task so other agents can claim it (`force` breaks foreign/stale locks) |
 | `task_checklist` | Check/uncheck an acceptance criterion by index or text |
 | `task_note` | Append a timestamped execution note/log under `## Notes` |
@@ -57,6 +58,10 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `brand_update` | Update company/brand kit (tokens, fonts, colors, guidelines) |
 | `learnings_get` | Get the full contents of `.agentboard/learnings.md` — retro notes, rules and principles from past sprints |
 | `learnings_append` | Append a single learning/retro entry to `.agentboard/learnings.md` |
+| `agent_list` / `agent_get` | List the specialized agents / read one full prompt |
+| `agent_upsert` / `agent_delete` | Create, update or delete an agent (also regenerates its Claude Code subagent) |
+| `agent_sync` | Regenerate `.claude/agents/` (`installDefaults` adds missing default agents) |
+| `sprint_dispatch` | Waves of parallel tasks with the subagent for each one (Markdown or JSON) |
 | `sprint_current` | Active sprint + its tasks + stats (read this first) |
 | `sprint_list` | List all sprints |
 | `sprint_create` | Create a new planned sprint |
@@ -76,6 +81,7 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `agentboard://tasks` | Live list of all tasks on the board |
 | `agentboard://sprint/current` | Active sprint, associated tasks, and sprint statistics |
 | `agentboard://brand` | Brand kit tokens, assets, and guidelines |
+| `agentboard://agents` | Specialized agent profiles with their prompts |
 
 ## Prompts
 
@@ -84,6 +90,8 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `execute-task` | Pre-formatted handoff prompt to execute a task by ID (with brand injection) |
 | `sprint-plan` | Agent-assisted sprint planning: receives goal/capacity, returns a reviewable plan from backlog + velocity + learnings |
 | `sprint-retro` | Workflow prompt to analyze sprint velocity and capture learnings |
+| `run-sprint` | Orchestrate the active sprint: one subagent per task, wave by wave |
+| `idea-to-mvp` | Turn an idea into a scoped MVP sprint with assigned, linked tasks, then build it |
 
 ## Setup
 
@@ -108,8 +116,17 @@ Add to `opencode.json` (project or global):
 ### Claude Code
 
 ```bash
+agentboard connect /path/to/your-project
+```
+
+writes the server into the project's `.mcp.json`. Or register it by hand:
+
+```bash
 claude mcp add agentsprint -- node /path/to/AgentSprint/packages/mcp/dist/index.js --root /path/to/your-project
 ```
+
+The specialized agents are also generated as Claude Code subagents — see
+[Specialized agents & subagents](./agents.md).
 
 ### Cursor
 

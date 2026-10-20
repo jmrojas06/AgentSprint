@@ -1,5 +1,7 @@
 import type {
   ActivityEvent,
+  AgentProfile,
+  DispatchPlan,
   BoardState,
   Brand,
   Burndown,
@@ -13,6 +15,16 @@ import type {
   TaskStatus,
   TaskTemplate,
 } from './types'
+
+/** Result of regenerating `.claude/agents/` (see POST /api/agents/sync). */
+export interface SubagentSync {
+  enabled: boolean
+  installed: string[]
+  written?: string[]
+  unchanged?: string[]
+  removed?: string[]
+  skipped?: Array<{ name: string; reason: string }>
+}
 
 let activeProject: string | undefined
 
@@ -103,6 +115,14 @@ export const api = {
 
   updateConfig: (patch: Partial<ProjectConfig>) =>
     request<ProjectConfig>('/api/config', { method: 'PUT', body: JSON.stringify(patch) }),
+
+  saveAgent: (name: string, patch: Partial<Omit<AgentProfile, 'name'>>) =>
+    request<AgentProfile>(`/api/agents/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  deleteAgent: (name: string) => request<void>(`/api/agents/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  syncAgents: (installDefaults = false) =>
+    request<SubagentSync>('/api/agents/sync', { method: 'POST', body: JSON.stringify({ installDefaults }) }),
+  dispatch: (sprint?: number) =>
+    request<{ plan: DispatchPlan; markdown: string }>(`/api/dispatch${sprint ? `?sprint=${sprint}` : ''}`),
 
   getBrand: () => request<Brand>('/api/brand'),
   updateBrand: (patch: Partial<Brand>) =>

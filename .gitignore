@@ -12,3 +12,9 @@ coverage/
 .idea/
 .agentboard/metrics/
 docker-compose.override.yml
+
+# local Claude Code state (subagents in .claude/agents/ are tracked)
+.claude/worktrees/
+.claude/settings.local.json
+# written by `agentboard connect` with absolute, machine-specific paths
+.mcp.json

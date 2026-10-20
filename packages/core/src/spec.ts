@@ -1,5 +1,25 @@
+import type { AgentProfile } from './agents.js'
 import type { Brand, Sprint, Task } from './types.js'
 import { hasBrand, DEFAULT_STATUSES } from './types.js'
+
+/**
+ * Render the specialized-agent profile block injected into task specs when
+ * the task's assignee matches an agent in `.agentboard/agents/`. Returns
+ * null when the profile has no usable prompt.
+ */
+export function buildAgentSection(agent: AgentProfile | null | undefined): string | null {
+  if (!agent || !agent.prompt.trim()) return null
+  const lines: string[] = []
+  lines.push(`## Agent profile — ${agent.name}`)
+  lines.push('')
+  lines.push(`**Role:** ${agent.description}`)
+  lines.push('')
+  lines.push('Adopt this role for the whole task. Its rules override generic behavior:')
+  lines.push('')
+  lines.push(agent.prompt.trim())
+  lines.push('')
+  return lines.join('\n')
+}
 
 /**
  * Render the brand guidelines block appended to task specs when the
@@ -50,7 +70,7 @@ export function buildBrandSection(brand: Brand): string | null {
  * Pass the project brand to append brand guidelines and `allTasks` to
  * show the status of each dependency.
  */
-export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: string, options?: { brand?: Brand | null; allTasks?: Task[]; learnings?: string | null }): string {
+export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: string, options?: { brand?: Brand | null; allTasks?: Task[]; learnings?: string | null; agent?: AgentProfile | null }): string {
   const lines: string[] = []
   lines.push(`# ${task.id} — ${task.title}`)
   lines.push('')
@@ -95,6 +115,11 @@ export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: st
       lines.push(`**Depends on:** ${task.dependencies.join(', ')}`)
     }
     lines.push('')
+  }
+
+  const agentSection = buildAgentSection(options?.agent)
+  if (agentSection) {
+    lines.push(agentSection)
   }
 
   const brandSection = options?.brand ? buildBrandSection(options.brand) : null

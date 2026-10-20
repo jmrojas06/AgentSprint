@@ -44,6 +44,29 @@ describe('buildTaskSpec', () => {
     expect(spec).toContain('- [x] The task has a clear description')
     expect(spec).not.toContain('- [ ] The task has a clear description')
   })
+
+  it('injects the specialized agent profile when provided', () => {
+    const task = store.state.tasks.find((t) => t.id === 'TK-1')!
+    const agent = store.getAgent('designer')!
+    const spec = buildTaskSpec(task, null, 'demo', { agent })
+    expect(spec).toContain('## Agent profile — designer')
+    expect(spec).toContain('**Role:**')
+    expect(spec).toContain(agent.prompt.split('\n')[0]!)
+    expect(spec.indexOf('## Agent profile')).toBeLessThan(spec.indexOf('## Rules for the agent'))
+  })
+
+  it('skips the agent section for a null profile', () => {
+    const task = store.state.tasks.find((t) => t.id === 'TK-1')!
+    const spec = buildTaskSpec(task, null, 'demo', { agent: null })
+    expect(spec).not.toContain('## Agent profile')
+  })
+
+  it('resolves the agent from the task assignee through the store', () => {
+    const task = store.createTask({ title: 'Hero banner', assignee: 'designer' })
+    const spec = buildTaskSpec(task, null, 'demo', { agent: store.agentForTask(task) })
+    expect(spec).toContain('## Agent profile — designer')
+    expect(spec).toContain('- **Assignee:** designer')
+  })
 })
 
 describe('computeSprintStats', () => {

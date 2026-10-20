@@ -136,6 +136,30 @@ Imports open GitHub issues via the `gh` CLI (must be authenticated). Labels can 
 agentboard import github . jmrojas06/my-repo --label-tag bug=high
 ```
 
+### `agents [dir]` / `agents sync [dir]`
+
+`agents` lists the specialized agents. `agents sync` adds any missing default
+agent (never overwrites yours) and regenerates `.claude/agents/` so Claude
+Code can launch them as subagents. See [Specialized agents](./agents.md).
+
+### `dispatch [dir] [--sprint <id>]`
+
+Prints the orchestration plan for the active sprint (or `--sprint`): waves of
+tasks that can run in parallel and the subagent for each one. Paste it into
+Claude Code.
+
+### `connect [dir]`
+
+Registers the AgentSprint MCP server in `<dir>/.mcp.json`, keeping other
+servers. Restart Claude Code there and approve `agentsprint`. The entry uses absolute
+paths of your machine (Node binary, CLI, board), so keep `.mcp.json` out of git
+or re-run `connect` on each machine.
+
+### `mcp [dir]`
+
+Runs the MCP server over stdio for the board in `dir` (what `connect` points
+Claude Code at).
+
 ### `export md [dir] [--sprint <id>]`
 
 Writes `BOARD.md` next to the board config: a static Markdown snapshot with sprints, stats, all tasks grouped by status (including acceptance criteria) and current learnings. Use `--sprint <id>` to limit the export to a single sprint.

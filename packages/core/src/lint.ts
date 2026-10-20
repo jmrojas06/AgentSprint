@@ -1,8 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Sprint as SprintType, Task as TaskType } from './types.js'
-import { Sprint, Task, ProjectConfig } from './types.js'
+import { Sprint, Task, ProjectConfig, isWorkflowAssignee } from './types.js'
 import { parseFrontmatter } from './frontmatter.js'
+import { isValidAgentName } from './agents.js'
+import { AgentMeta } from './types.js'
 
 export type LintSeverity = 'error' | 'warning'
 
@@ -26,6 +28,8 @@ const ISSUE = {
   DUPLICATE_ID: 'DUPLICATE_ID',
   INVALID_SPRINT_REF: 'INVALID_SPRINT_REF',
   INVALID_DEPENDENCY: 'INVALID_DEPENDENCY',
+  INVALID_AGENT: 'INVALID_AGENT',
+  UNKNOWN_ASSIGNEE: 'UNKNOWN_ASSIGNEE',
 } as const
 
 function rel(rootDir: string, absPath: string): string {
@@ -67,7 +71,9 @@ function tryParseSprint(filePath: string, content: string): { sprint?: SprintTyp
 /**
  * Lint the integrity of an AgentSprint board at `rootDir`.
  * Checks YAML syntax, frontmatter schema validity, duplicate task IDs,
- * sprint references, and dependency references.
+ * sprint references, dependency references, agent profiles and assignees.
+ * `ok` is false only when there is at least one error — warnings are
+ * reported but do not fail the lint.
  */
 export function lintProject(rootDir: string): LintResult {
   const issues: LintIssue[] = []
@@ -108,9 +114,11 @@ export function lintProject(rootDir: string): LintResult {
 
   const tasksDir = path.join(boardDir, 'tasks')
   const sprintsDir = path.join(boardDir, 'sprints')
+  const agentsDir = path.join(boardDir, 'agents')
   const seenIds = new Map<string, string>()
   const validTaskIds = new Set<string>()
   const sprintIds = new Set<number>()
+  const agentNames = new Set<string>()
   const tasks: TaskType[] = []
 
   if (fs.existsSync(sprintsDir)) {
@@ -133,6 +141,39 @@ export function lintProject(rootDir: string): LintResult {
       }
       if (result.issue) {
         issues.push(result.issue)
+      }
+    }
+  }
+
+  if (fs.existsSync(agentsDir)) {
+    for (const file of fs.readdirSync(agentsDir)) {
+      if (!file.endsWith('.md')) continue
+      const abs = path.join(agentsDir, file)
+      const relPath = rel(root, abs)
+      const name = file.replace(/\.md$/, '')
+      if (!isValidAgentName(name)) {
+        issues.push({
+          file: relPath,
+          severity: 'error',
+          code: ISSUE.INVALID_AGENT,
+          message: `Invalid agent file name "${name}" (must be a lowercase slug like "designer")`,
+        })
+        continue
+      }
+      const content = fs.readFileSync(abs, 'utf8')
+      try {
+        const { body } = parseFrontmatter(content, AgentMeta)
+        if (!body.trim()) {
+          throw new Error('agent prompt (markdown body) is empty')
+        }
+        agentNames.add(name)
+      } catch (err) {
+        issues.push({
+          file: relPath,
+          severity: 'error',
+          code: ISSUE.INVALID_AGENT,
+          message: `Agent error: ${(err as Error).message.split('\n')[0]}`,
+        })
       }
     }
   }
@@ -186,7 +227,16 @@ export function lintProject(rootDir: string): LintResult {
         })
       }
     }
+
+    if (!isWorkflowAssignee(task.assignee) && !agentNames.has(task.assignee)) {
+      issues.push({
+        file: rel(root, path.join(tasksDir, `${task.id}.md`)),
+        severity: 'warning',
+        code: ISSUE.UNKNOWN_ASSIGNEE,
+        message: `Task '${task.id}' is assigned to '${task.assignee}' — not a workflow role and no .agentboard/agents/${task.assignee}.md exists`,
+      })
+    }
   }
 
-  return { issues, ok: issues.length === 0 }
+  return { issues, ok: issues.every((i) => i.severity !== 'error') }
 }

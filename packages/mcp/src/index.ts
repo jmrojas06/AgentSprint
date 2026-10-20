@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats } from '@jmrojas06/agentsprint-core'
+import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, isWorkflowAssignee, planDispatch } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
 import type { SprintStatus, TaskInput } from '@jmrojas06/agentsprint-core'
 
@@ -157,11 +158,11 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'List tasks',
       description:
-        'List tasks with optional filters (status, sprint id, assignee, free-text search). Results are the full task objects.',
+        'List tasks with optional filters (status, sprint id, assignee, free-text search). `assignee` accepts any workflow role (scrum-master, dev, review, perfect) or specialized agent name (designer, tester, …). Results are the full task objects.',
       inputSchema: z.object({
         status: z.enum(STATUSES).optional(),
         sprint: z.number().int().positive().optional(),
-        assignee: z.enum(['human', 'agent']).optional(),
+        assignee: z.string().min(1).optional(),
         q: z.string().optional(),
       }),
     },
@@ -198,7 +199,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Create task',
       description:
-        'Create a new task. Returns the created task with its generated id. Defaults: status "To Do", priority "medium", assignee "human". Optionally create from a reusable template in .agentboard/templates/ by passing `template` (name without .md) and `vars` for its {{placeholders}}; explicit fields override the template defaults.',
+        'Create a new task. Returns the created task with its generated id. Defaults: status "To Do", priority "medium", assignee "scrum-master". `assignee` may be a workflow role or the name of a specialized agent from `.agentboard/agents/`. Optionally create from a reusable template in .agentboard/templates/ by passing `template` (name without .md) and `vars` for its {{placeholders}}; explicit fields override the template defaults.',
       inputSchema: z.object({
         title: z.string().min(1).optional(),
         template: z.string().optional(),
@@ -207,7 +208,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         status: z.enum(STATUSES).optional(),
         sprint: z.number().int().positive().optional(),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-        assignee: z.enum(['scrum-master', 'dev', 'review', 'perfect']).optional(),
+        assignee: z.string().regex(ASSIGNEE_SLUG_RE, 'Assignee must be a lowercase slug like "dev" or "designer"').optional(),
         estimate: z.number().int().min(0).max(100).optional(),
         tags: z.array(z.string()).optional(),
         acceptanceCriteria: z.array(z.string()).optional(),
@@ -229,6 +230,40 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
   )
 
+  const batchItem = z.object({
+    ref: z.string().min(1).optional().describe('Label for this task inside the batch, used by other items in dependsOn (e.g. "api").'),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    status: z.enum(STATUSES).optional(),
+    sprint: z.number().int().positive().optional(),
+    priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+    assignee: z.string().regex(ASSIGNEE_SLUG_RE, 'Assignee must be a lowercase slug like "dev" or "designer"').optional(),
+    estimate: z.number().int().min(0).max(100).optional(),
+    tags: z.array(z.string()).optional(),
+    acceptanceCriteria: z.array(z.string()).optional(),
+    dependsOn: z.array(z.string()).optional().describe('refs of earlier/later items in this batch, or existing task ids (TK-3).'),
+  })
+
+  server.registerTool(
+    'task_create_batch',
+    {
+      title: 'Create tasks in batch',
+      description:
+        'Create a whole plan in one call: up to 50 tasks, each optionally with a `ref` label and `dependsOn` (refs in this batch or existing task ids). Refs resolve to the generated ids and tasks are created dependencies-first. The batch is validated before anything is written (unknown refs, duplicate refs and cycles are rejected). Assign each task to the specialist that should build it (developer, designer, tester, docs, …) so sprint_dispatch can route it to that subagent.',
+      inputSchema: z.object({ tasks: z.array(batchItem).min(1).max(50) }),
+    },
+    async ({ tasks }) => {
+      try {
+        const created = getStore().createTaskBatch(tasks as Array<TaskInput & { ref?: string; dependsOn?: string[] }>, { actor: 'agent' })
+        return textResponse(
+          created.map((t, i) => ({ ref: tasks[i]!.ref ?? null, id: t.id, title: t.title, assignee: t.assignee, sprint: t.sprint, dependencies: t.dependencies })),
+        )
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
+
   server.registerTool(
     'template_list',
     {
@@ -244,13 +279,13 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     'task_update',
     {
       title: 'Update task',
-      description: 'Update fields of an existing task (title, description, priority, assignee, sprint, tags, acceptanceCriteria, estimate).',
+      description: 'Update fields of an existing task (title, description, priority, assignee, sprint, tags, acceptanceCriteria, estimate). `assignee` may be a workflow role or the name of a specialized agent from `.agentboard/agents/`.',
       inputSchema: z.object({
         id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
         title: z.string().min(1).optional(),
         description: z.string().optional(),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-        assignee: z.enum(['scrum-master', 'dev', 'review', 'perfect']).optional(),
+        assignee: z.string().regex(ASSIGNEE_SLUG_RE, 'Assignee must be a lowercase slug like "dev" or "designer"').optional(),
         sprint: z.number().int().positive().nullable().optional(),
         estimate: z.number().int().min(0).max(100).optional(),
         tags: z.array(z.string()).optional(),
@@ -292,7 +327,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Claim a task',
       description:
-        'Mark a task as In Progress and assigned to an agent. Use this when you start working on a task. If the task has incomplete dependencies, the call will fail unless `force` is true. Claims also take an exclusive lock (30 min TTL): pass `agent` to identify yourself — if another agent holds an active lock the call fails unless `force`.',
+        'Mark a task as In Progress and assigned to an agent. A task assigned to a specialized agent (designer, tester, …) keeps that assignee; workflow roles are set to `dev`. Use this when you start working on a task. If the task has incomplete dependencies, the call will fail unless `force` is true. Claims also take an exclusive lock (30 min TTL): pass `agent` to identify yourself — if another agent holds an active lock the call fails unless `force`.',
       inputSchema: z.object({
         id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
         agent: z.string().min(1).optional(),
@@ -315,8 +350,13 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           store.unlockTask(id, { force: true })
           store.lockTask(id, agent ?? 'agent')
         }
-        // Explicit assignee preserves claim priority — In Progress maps to dev
-        const task = store.updateTask(id, { status: 'In Progress', assignee: 'dev' }, { actor: 'agent' })
+        // A subagent claiming with its own name becomes the assignee; otherwise a
+        // task already assigned to a specialized agent keeps it, and workflow
+        // roles map to In Progress's canonical assignee (dev).
+        const current = store.state.tasks.find((t) => t.id === id)
+        const claimer = agent && store.listAgents().some((a) => a.name === agent) ? agent : null
+        const assignee = claimer ?? (current && !isWorkflowAssignee(current.assignee) ? current.assignee : 'dev')
+        const task = store.updateTask(id, { status: 'In Progress', assignee }, { actor: agent ?? 'agent' })
         return textResponse(task)
       } catch (err) {
         return errorResponse((err as Error).message)
@@ -405,7 +445,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       const task = state.tasks.find((t) => t.id === id)
       if (!task) return errorResponse(`Task not found: ${id}`)
       const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-      return textResponse(buildTaskSpec(task, sprint, getProjectName(), { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings() }))
+      return textResponse(buildTaskSpec(task, sprint, getProjectName(), { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings(), agent: store.agentForTask(task) }))
     },
   )
 
@@ -551,7 +591,126 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
   )
 
+  // ── specialized agents ───────────────────────────────────────────────
+
+  server.registerTool(
+    'agent_list',
+    {
+      title: 'List specialized agents',
+      description:
+        'List the specialized agents of this board (`.agentboard/agents/`): name, description, color, tags, tools and model. Each one is also a real Claude Code subagent in `.claude/agents/<name>.md` — launch it with the Agent tool (`subagent_type: <name>`). Defaults: developer, designer, tester, fixer, docs, creative-director, ideator. Use agent_get for the full prompt.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const agents = getStore().listAgents().map(({ prompt: _prompt, ...meta }) => meta)
+      return textResponse(agents.length > 0 ? agents : { message: 'No agent profiles found in .agentboard/agents/. Create one with agent_upsert.' })
+    },
+  )
+
+  server.registerTool(
+    'agent_get',
+    {
+      title: 'Get specialized agent profile',
+      description:
+        'Return the full profile of one specialized agent from `.agentboard/agents/<name>.md`, including its prompt. Adopt the returned prompt as your role before working on a task assigned to that agent.',
+      inputSchema: z.object({ name: z.string().min(1) }),
+    },
+    async ({ name }) => {
+      try {
+        const agent = getStore().getAgent(name)
+        return agent ? textResponse(agent) : errorResponse(`Agent not found: ${name} (use agent_list to see the available profiles)`)
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
+
+  server.registerTool(
+    'agent_upsert',
+    {
+      title: 'Create or update a specialized agent',
+      description:
+        'Create a new specialist (e.g. "stripe-expert", "copywriter", "mobile-dev") or update an existing one. It is written to `.agentboard/agents/<name>.md` and immediately generated as a Claude Code subagent in `.claude/agents/<name>.md`, so it can be assigned tasks and launched right away (Claude Code may need a restart to see a brand-new subagent). The prompt should state the role, its mission, its rules and its expected output. Omitted fields keep their current value.',
+      inputSchema: z.object({
+        name: z.string().regex(ASSIGNEE_SLUG_RE, 'Agent name must be a lowercase slug like "stripe-expert"'),
+        description: z.string().min(1).optional().describe('One or two sentences: who this agent is and when to use it.'),
+        prompt: z.string().min(1).optional().describe('Markdown system prompt: role, mission, rules, output.'),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+        tags: z.array(z.string()).optional(),
+        tools: z.array(z.string()).optional().describe('Claude Code tool allowlist; omit/empty to inherit all tools (MCP included).'),
+        model: z.enum(AGENT_MODELS).optional(),
+      }),
+    },
+    async (input) => {
+      try {
+        const store = getStore()
+        const existed = store.listAgents().some((a) => a.name === input.name)
+        const agent = store.saveAgent(input)
+        return textResponse({ ...agent, created: !existed })
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
+
+  server.registerTool(
+    'agent_delete',
+    {
+      title: 'Delete a specialized agent',
+      description: 'Delete `.agentboard/agents/<name>.md` and its generated Claude Code subagent. Tasks assigned to it keep the name (agentboard lint will flag them).',
+      inputSchema: z.object({ name: z.string().min(1) }),
+    },
+    async ({ name }) => {
+      try {
+        getStore().deleteAgent(name)
+        return textResponse({ deleted: name })
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
+
+  server.registerTool(
+    'agent_sync',
+    {
+      title: 'Sync Claude Code subagents',
+      description:
+        'Regenerate `.claude/agents/` from `.agentboard/agents/` (idempotent). Hand-written subagents with the same name are never overwritten — they are reported as skipped. Set `installDefaults` to first add any missing default agent.',
+      inputSchema: z.object({ installDefaults: z.boolean().optional() }),
+    },
+    async ({ installDefaults }) => {
+      try {
+        const store = getStore()
+        const installed = installDefaults ? store.installDefaultAgents() : []
+        const result = store.syncSubagents()
+        if (!result) return textResponse({ installed, message: 'Subagent sync is disabled (subagents: false in .agentboard/config.yaml).' })
+        return textResponse({ installed, ...result })
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
+
   // ── sprints ──────────────────────────────────────────────────────────
+
+  server.registerTool(
+    'sprint_dispatch',
+    {
+      title: 'Plan subagent dispatch for a sprint',
+      description:
+        'Orchestration plan for a sprint (default: the active one; the backlog when none is active). Splits pending tasks into dependency waves — tasks in the same wave are independent and can run in parallel — and names the subagent for each task (its specialized assignee, `developer` for workflow roles). Returns Markdown with launch prompts; call it again after every wave, it is recomputed from the board.',
+      inputSchema: z.object({ sprint: z.number().int().positive().optional(), format: z.enum(['markdown', 'json']).optional() }),
+    },
+    async ({ sprint, format }) => {
+      try {
+        const store = getStore()
+        const plan = planDispatch(store.state, { sprintId: sprint })
+        return textResponse(format === 'json' ? plan : buildDispatchPlan(plan, getProjectName()))
+      } catch (err) {
+        return errorResponse((err as Error).message)
+      }
+    },
+  )
 
   server.registerTool(
     'sprint_current',
@@ -776,6 +935,24 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     }),
   )
 
+  server.registerResource(
+    'agents',
+    'agentboard://agents',
+    {
+      title: 'Specialized Agents',
+      description: 'Specialized agent profiles (roles an AI can adopt) with their prompts',
+      mimeType: 'application/json',
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          text: JSON.stringify(getStore().listAgents(), null, 2),
+        },
+      ],
+    }),
+  )
+
   // ── prompts ───────────────────────────────────────────────────────────
 
   server.registerPrompt(
@@ -790,7 +967,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       const state = store.state
       const task = state.tasks.find((t) => t.id === id)
       const sprint = task?.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-      const spec = task ? buildTaskSpec(task, sprint, getProjectName(), { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings() }) : `Task ${id} not found.`
+      const spec = task ? buildTaskSpec(task, sprint, getProjectName(), { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings(), agent: store.agentForTask(task) }) : `Task ${id} not found.`
       return {
         messages: [
           {
@@ -907,6 +1084,72 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           },
         ],
       }
+    },
+  )
+
+  server.registerPrompt(
+    'run-sprint',
+    {
+      title: 'Run sprint with subagents',
+      description: 'Orchestrate the active sprint: launch one specialized subagent per task, wave by wave, in parallel where dependencies allow.',
+      argsSchema: { sprint: z.string().optional().describe('Sprint id (default: the active sprint).') },
+    },
+    ({ sprint }) => {
+      const store = getStore()
+      const plan = planDispatch(store.state, { sprintId: sprint ? Number(sprint) : undefined })
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: `Run this sprint as the orchestrator. Delegate every task to its subagent exactly as the plan says, launch the tasks of a wave in parallel, verify between waves, and call sprint_dispatch again before each new wave. Stop when nothing is left to dispatch and give me a summary of what is in Review.\n\n${buildDispatchPlan(plan, getProjectName())}`,
+            },
+          },
+        ],
+      }
+    },
+  )
+
+  server.registerPrompt(
+    'idea-to-mvp',
+    {
+      title: 'Idea → MVP',
+      description: 'Turn a product idea into a scoped MVP: brand kit, sprint, tasks assigned to specialist subagents with dependencies, then run it.',
+      argsSchema: {
+        idea: z.string().describe('The product idea, in your own words.'),
+        stack: z.string().optional().describe('Preferred tech stack (optional).'),
+      },
+    },
+    ({ idea, stack }) => {
+      const store = getStore()
+      const agents = store.listAgents()
+      const roster = agents.length
+        ? agents.map((a) => `- \`${a.name}\` — ${a.description}`).join('\n')
+        : '- (no specialized agents yet — run agent_sync with installDefaults: true first)'
+      const hasBrand = Boolean(store.getBrand().name)
+      const text = `You are the orchestrator turning an idea into a working MVP on the AgentSprint board "${getProjectName()}".
+
+## The idea
+
+${idea}
+${stack ? `\n**Preferred stack:** ${stack}\n` : ''}
+## Specialists available (Claude Code subagents)
+
+${roster}
+
+## Plan, then build
+
+1. **Shape it (ideator + creative-director).** Launch the \`ideator\` subagent for 3 distinct MVP angles, then the \`creative-director\` to pick one and define the cut: the single core user journey, what is explicitly OUT, and the success check. Ask me only if the idea is genuinely ambiguous.
+2. **Brand.** ${hasBrand ? 'A brand kit exists — read it with brand_get and keep to it.' : 'No brand kit yet: write one with brand_update (name, tagline, tone, colors, fonts) that fits the chosen angle.'}
+3. **Missing specialists.** If the MVP needs expertise the roster lacks (payments, mobile, data, …), create it with agent_upsert (name, description, prompt with mission/rules/output).
+4. **Sprint.** sprint_create with the MVP goal, then sprint_activate.
+5. **Tasks.** One task_create_batch call with every task of the MVP (aim for 6–15): each with a verifiable title, 3–6 acceptance criteria, an estimate, \`assignee\` set to the specialist that should build it, \`sprint\` set, and \`dependsOn\` refs. Start with a walking skeleton (project setup + one end-to-end path), then features, then a \`tester\` task and a \`docs\` task (README with how to run it).
+6. **Build.** Call sprint_dispatch and follow it: launch every task of a wave in parallel with the Agent tool (\`subagent_type\` = the subagent), verify between waves (tests, typecheck, run the app), send failures to \`fixer\`, and re-dispatch until nothing is left.
+7. **Hand over.** Summarize what works, how to run it, what is in Review, and what the next sprint should tackle.
+
+Work in small verifiable steps and keep the board updated — it is the source of truth for the subagents.`
+      return { messages: [{ role: 'user', content: { type: 'text', text } }] }
     },
   )
 

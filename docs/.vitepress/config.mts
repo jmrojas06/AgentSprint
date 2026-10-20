@@ -57,6 +57,7 @@ export default defineConfig({
           { text: 'CLI reference', link: '/cli' },
           { text: 'REST API', link: '/api' },
           { text: 'MCP server & tools', link: '/mcp' },
+          { text: 'Specialized agents', link: '/agents' },
           { text: 'Architecture', link: '/architecture' },
           { text: 'Troubleshooting', link: '/troubleshooting' },
         ],

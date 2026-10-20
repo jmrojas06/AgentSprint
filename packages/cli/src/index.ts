@@ -3,8 +3,9 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
+import { ProjectStore, buildDispatchPlan, planDispatch, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
 import { isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
+import { main as runMcpStdio } from '@jmrojas06/agentsprint-mcp'
 
 const VERSION = '0.1.0'
 
@@ -30,6 +31,12 @@ Commands:
                      Import open GitHub issues via the gh CLI
     export md [dir] [--sprint <id>]
                      Write BOARD.md — a static Markdown snapshot of the board
+    agents [dir]      List the specialized agents (Claude Code subagents)
+    agents sync [dir] Add missing default agents and regenerate .claude/agents/
+    dispatch [dir] [--sprint <id>]
+                     Print the subagent dispatch plan (waves of parallel tasks)
+    connect [dir]     Register the AgentSprint MCP server in <dir>/.mcp.json (Claude Code)
+    mcp [dir]         Run the MCP server over stdio for the board in <dir>
     help              Show this help
 
 Options (serve):
@@ -88,7 +95,7 @@ interface Args {
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'agents', 'dispatch', 'connect', 'mcp', 'help'])
   const command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -149,6 +156,40 @@ export function parseArgs(argv: string[]): Args | null {
       else title = title ?? p
     }
     return { command: 'task-new', dir, title, template, vars, taskId: undefined, sprintId: undefined, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+  }
+
+  if (command === 'agents') {
+    const sync = argv[0] === 'sync'
+    if (sync) argv.shift()
+    if (argv.length > 1 || argv.some((a) => a.startsWith('-'))) {
+      console.error('Usage: agentboard agents [sync] [dir]')
+      process.exit(1)
+    }
+    const agentsDir = argv[0] ? path.resolve(argv[0]) : process.cwd()
+    return { command: sync ? 'agents-sync' : 'agents', dir: agentsDir, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+  }
+
+  if (command === 'dispatch') {
+    let dispatchSprint: number | undefined
+    const positional: string[] = []
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!
+      if (arg === '--sprint') {
+        const id = Number(argv[++i])
+        if (!Number.isInteger(id) || id <= 0) {
+          console.error('Usage: --sprint <id>')
+          process.exit(1)
+        }
+        dispatchSprint = id
+      } else if (arg.startsWith('-')) {
+        console.error(`Unknown option: ${arg}`)
+        process.exit(1)
+      } else {
+        positional.push(arg)
+      }
+    }
+    const dispatchDir = positional[0] ? path.resolve(positional[0]) : process.cwd()
+    return { command: 'dispatch', dir: dispatchDir, sprintId: dispatchSprint, port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   if (command === 'export') {
@@ -352,8 +393,9 @@ async function cmdInit(dir: string): Promise<void> {
   ProjectStore.init(dir, { sample: true })
   const board = path.join(dir, '.agentboard')
   console.log(`✔ Board created at ${board}`)
-  console.log(`✔ Sample tasks, templates + AGENTS.md added. Edit the files or run:`)
-  console.log(`\n  agentboard serve ${dir}\n`)
+  console.log(`✔ Sample tasks, templates, specialized agents + AGENTS.md added`)
+  console.log(`✔ Claude Code subagents generated in ${path.join(dir, '.claude', 'agents')}`)
+  console.log(`\nNext:\n  agentboard connect ${dir}   # let Claude Code drive the board over MCP\n  agentboard serve ${dir}     # open the board UI\n`)
 }
 
 async function cmdServe(args: Args): Promise<void> {
@@ -450,7 +492,7 @@ async function cmdSpec(dir: string, taskId: string): Promise<void> {
     process.exit(1)
   }
   const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
-  process.stdout.write(buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: store.getLearnings() }) + '\n')
+  process.stdout.write(buildTaskSpec(task, sprint, state.config.name, { brand: state.brand, allTasks: state.tasks, learnings: store.getLearnings(), agent: store.agentForTask(task) }) + '\n')
 }
 
 export async function cmdImport(
@@ -597,8 +639,8 @@ export async function cmdExport(
 }
 
 export async function cmdLint(dir: string): Promise<number> {
-  const { issues, ok } = lintProject(dir)
-  if (ok) {
+  const { issues } = lintProject(dir)
+  if (issues.length === 0) {
     console.log(`✔ ${path.join(dir, '.agentboard')} is healthy — no issues found.`)
     return 0
   }
@@ -606,8 +648,72 @@ export async function cmdLint(dir: string): Promise<number> {
     const icon = issue.severity === 'error' ? '✖' : '⚠'
     console.error(`${icon} ${issue.file}  [${issue.code}]  ${issue.message}`)
   }
-  console.error(`\nFound ${issues.length} issue(s).`)
-  return 1
+  const errors = issues.filter((i) => i.severity === 'error').length
+  console.error(`\nFound ${issues.length} issue(s) — ${errors} error(s), ${issues.length - errors} warning(s).`)
+  return errors > 0 ? 1 : 0
+}
+
+export async function cmdAgents(dir: string): Promise<void> {
+  const store = ProjectStore.open(dir)
+  const agents = store.listAgents()
+  if (agents.length === 0) {
+    console.log('No specialized agents yet. Add the defaults with: agentboard agents sync')
+    return
+  }
+  const width = Math.max(...agents.map((a) => a.name.length))
+  for (const a of agents) {
+    const extras = [a.model !== 'inherit' ? a.model : '', a.tools.length ? `${a.tools.length} tools` : ''].filter(Boolean).join(', ')
+    console.log(`  ${a.name.padEnd(width)}  ${a.description.split(' — ')[0]}${extras ? `  (${extras})` : ''}`)
+  }
+  console.log(`\n${agents.length} agent(s) in ${path.join(store.boardDir, 'agents')}`)
+  console.log(`Claude Code subagents: ${store.getConfig().subagents === false ? 'disabled (subagents: false)' : path.join(dir, '.claude', 'agents')}`)
+}
+
+export async function cmdAgentsSync(dir: string): Promise<void> {
+  const store = ProjectStore.open(dir)
+  const installed = store.installDefaultAgents()
+  if (installed.length > 0) console.log(`✔ Added default agents: ${installed.join(', ')}`)
+  const result = store.syncSubagents()
+  if (!result) {
+    console.log('Subagent sync is disabled (subagents: false in .agentboard/config.yaml).')
+    return
+  }
+  const rel = path.relative(process.cwd(), result.dir) || result.dir
+  if (result.written.length) console.log(`✔ Wrote ${result.written.length} subagent(s) to ${rel}: ${result.written.join(', ')}`)
+  if (result.removed.length) console.log(`✔ Removed stale subagent(s): ${result.removed.join(', ')}`)
+  if (result.unchanged.length) console.log(`  ${result.unchanged.length} already up to date`)
+  for (const skip of result.skipped) console.warn(`⚠ ${skip.name}: ${skip.reason}`)
+  if (result.written.length || result.removed.length) console.log('\nRestart Claude Code (or run /agents) to pick up new subagents.')
+}
+
+export async function cmdDispatch(dir: string, sprintId?: number): Promise<void> {
+  const store = ProjectStore.open(dir)
+  process.stdout.write(buildDispatchPlan(planDispatch(store.state, { sprintId }), store.getConfig().name) + '\n')
+}
+
+/**
+ * Register this CLI's stdio MCP server in `<dir>/.mcp.json` (the project-scope
+ * file Claude Code reads), keeping every other server already configured.
+ */
+export async function cmdConnect(dir: string, opts: { cliEntry?: string } = {}): Promise<void> {
+  ProjectStore.open(dir) // fail early when there is no board
+  const file = path.join(dir, '.mcp.json')
+  let config: { mcpServers?: Record<string, unknown> } = {}
+  if (fs.existsSync(file)) {
+    try {
+      config = JSON.parse(fs.readFileSync(file, 'utf8')) as typeof config
+    } catch {
+      console.error(`✖ ${file} is not valid JSON — fix or remove it, then retry.`)
+      process.exit(1)
+    }
+  }
+  const entry = opts.cliEntry ?? fileURLToPath(import.meta.url)
+  const servers = { ...(config.mcpServers ?? {}) }
+  servers.agentsprint = { type: 'stdio', command: process.execPath, args: [entry, 'mcp', path.resolve(dir)] }
+  fs.writeFileSync(file, JSON.stringify({ ...config, mcpServers: servers }, null, 2) + '\n', 'utf8')
+  console.log(`✔ AgentSprint MCP registered in ${file}`)
+  console.log('  Restart Claude Code in this folder and approve the "agentsprint" server.')
+  console.log('  Then try: /mcp__agentsprint__idea-to-mvp   or   /mcp__agentsprint__run-sprint')
 }
 
 async function main(): Promise<void> {
@@ -638,6 +744,16 @@ async function main(): Promise<void> {
     })
   } else if (args.command === 'export') {
     await cmdExport(args.dir, args.exportFormat!, args.sprintId)
+  } else if (args.command === 'agents') {
+    await cmdAgents(args.dir)
+  } else if (args.command === 'agents-sync') {
+    await cmdAgentsSync(args.dir)
+  } else if (args.command === 'dispatch') {
+    await cmdDispatch(args.dir, args.sprintId)
+  } else if (args.command === 'connect') {
+    await cmdConnect(args.dir)
+  } else if (args.command === 'mcp') {
+    await runMcpStdio(['--root', args.dir])
   } else {
     await cmdServe(args)
   }
