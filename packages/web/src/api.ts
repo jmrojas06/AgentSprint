@@ -7,7 +7,10 @@ import type {
   Burndown,
   GitCommit,
   ProjectConfig,
+  ProjectContext,
   ProjectInfo,
+  JournalEntry,
+  SkillInfo,
   Sprint,
   SprintStatus,
   Task,
@@ -123,6 +126,13 @@ export const api = {
     request<SubagentSync>('/api/agents/sync', { method: 'POST', body: JSON.stringify({ installDefaults }) }),
   dispatch: (sprint?: number) =>
     request<{ plan: DispatchPlan; markdown: string }>(`/api/dispatch${sprint ? `?sprint=${sprint}` : ''}`),
+
+  context: () => request<ProjectContext>('/api/context'),
+  addHandoff: (entry: { author?: string; summary?: string; done?: string[]; next?: string[]; blockers?: string[] }) =>
+    request<JournalEntry>('/api/journal', { method: 'POST', body: JSON.stringify(entry) }),
+  reviewTask: (id: string, input: { reviewer?: string; verdict: 'approve' | 'changes'; summary?: string; findings?: string[] }) =>
+    request<Task>(`/api/tasks/${id}/review`, { method: 'POST', body: JSON.stringify(input) }),
+  skills: () => request<{ skills: SkillInfo[]; missing: Array<{ agent: string; skill: string }> }>('/api/skills'),
 
   getBrand: () => request<Brand>('/api/brand'),
   updateBrand: (patch: Partial<Brand>) =>

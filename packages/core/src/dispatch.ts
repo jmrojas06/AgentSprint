@@ -1,5 +1,8 @@
 import type { AgentProfile, Sprint, Task, TaskPriority } from './types.js'
 import { getTaskLock, isWorkflowAssignee } from './types.js'
+import { CODE_REVIEWER, UI_REVIEWER, isReviewerAgent } from './agents.js'
+
+type AgentRef = Pick<AgentProfile, 'name'> & Partial<Pick<AgentProfile, 'tags'>>
 
 /** Agent that takes tasks assigned to a workflow role (dev, scrum-master, …). */
 export const DEFAULT_SUBAGENT = 'developer'
@@ -11,6 +14,8 @@ export interface DispatchItem {
   assignee: string
   /** Subagent to launch for this task, or null for a general-purpose agent. */
   subagent: string | null
+  /** Review-gate subagent that checks the work once it reaches Review, or null for no gate. */
+  reviewer: string | null
   dependencies: string[]
 }
 
@@ -34,10 +39,32 @@ const PRIORITY_RANK: Record<TaskPriority, number> = { critical: 0, high: 1, medi
  * Pick the subagent for a task: its specialized assignee when that profile
  * exists, `developer` for workflow roles, otherwise null (general-purpose).
  */
-export function subagentFor(assignee: string, agents: Pick<AgentProfile, 'name'>[]): string | null {
+export function subagentFor(assignee: string, agents: AgentRef[]): string | null {
   const names = new Set(agents.map((a) => a.name))
   if (!isWorkflowAssignee(assignee)) return names.has(assignee) ? assignee : null
   return names.has(DEFAULT_SUBAGENT) ? DEFAULT_SUBAGENT : null
+}
+
+/** Tags that route a task to the UI reviewer instead of the code reviewer. */
+const UI_TAGS = new Set(['design', 'ui', 'ux', 'frontend', 'web', 'css', 'a11y'])
+/** Profile tags whose work is a decision, not an artifact a reviewer can check. */
+const UNREVIEWED_TAGS = new Set(['ideas', 'creative'])
+
+/**
+ * Pick the review gate for a task: `ui-reviewer` for UI work (task or
+ * assignee tagged design/ui/ux/…), `code-reviewer` for everything else.
+ * Null when the board has no reviewer agents, when the task is itself done
+ * by a reviewer, or when its assignee produces decisions (ideator, creative
+ * director) rather than code.
+ */
+export function reviewerFor(task: Pick<Task, 'assignee' | 'tags'>, agents: AgentRef[]): string | null {
+  const names = new Set(agents.map((a) => a.name))
+  const owner = agents.find((a) => a.name === task.assignee)
+  const ownerTags = owner?.tags ?? []
+  if (owner && (isReviewerAgent({ tags: ownerTags }) || ownerTags.some((t) => UNREVIEWED_TAGS.has(t)))) return null
+  const isUi = [...task.tags, ...ownerTags].some((t) => UI_TAGS.has(t.toLowerCase()))
+  if (isUi && names.has(UI_REVIEWER)) return UI_REVIEWER
+  return names.has(CODE_REVIEWER) ? CODE_REVIEWER : null
 }
 
 /**
@@ -47,7 +74,7 @@ export function subagentFor(assignee: string, agents: Pick<AgentProfile, 'name'>
  * moving, or a cycle) are reported as blocked instead.
  */
 export function planDispatch(
-  input: { tasks: Task[]; sprints: Sprint[]; activeSprint: Sprint | null; agents: Pick<AgentProfile, 'name'>[] },
+  input: { tasks: Task[]; sprints: Sprint[]; activeSprint: Sprint | null; agents: AgentRef[] },
   opts: { sprintId?: number; now?: Date } = {},
 ): DispatchPlan {
   const sprint = opts.sprintId != null ? input.sprints.find((s) => s.id === opts.sprintId) ?? null : input.activeSprint
@@ -60,6 +87,7 @@ export function planDispatch(
     priority: t.priority,
     assignee: t.assignee,
     subagent: subagentFor(t.assignee, input.agents),
+    reviewer: reviewerFor(t, input.agents),
     dependencies: t.dependencies,
   })
 
@@ -139,6 +167,10 @@ function launchPrompt(it: DispatchItem): string {
   return `Work on AgentSprint task ${it.id} ("${it.title}"). Follow your AgentSprint protocol: claim it, read task_spec, deliver every acceptance criterion, move it to Review and report back.`
 }
 
+function reviewPrompt(it: DispatchItem): string {
+  return `Review AgentSprint task ${it.id} ("${it.title}"). Follow your review protocol: read task_spec, inspect the change, then record your verdict with task_review.`
+}
+
 /**
  * Render a dispatch plan as orchestrator instructions: which subagent to
  * launch for which task, which tasks can run in parallel and what to check
@@ -173,10 +205,10 @@ export function buildDispatchPlan(plan: DispatchPlan, projectName: string): stri
         i === 0 ? 'start now' : plan.waves.slice(0, i).every((w) => w.length === 0) ? 'once the in-progress tasks are done' : `once wave ${i} is done`
       lines.push(`## Wave ${i + 1} — ${when} (${wave.length} task${wave.length === 1 ? '' : 's'})`)
       lines.push('')
-      lines.push('| Task | Title | Priority | Subagent | Depends on |')
-      lines.push('| --- | --- | --- | --- | --- |')
+      lines.push('| Task | Title | Priority | Subagent | Review gate | Depends on |')
+      lines.push('| --- | --- | --- | --- | --- | --- |')
       for (const it of wave) {
-        lines.push(`| ${it.id} | ${it.title.replace(/\|/g, '\\|')} | ${it.priority} | \`${it.subagent ?? 'general-purpose'}\` | ${it.dependencies.join(', ') || '—'} |`)
+        lines.push(`| ${it.id} | ${it.title.replace(/\|/g, '\\|')} | ${it.priority} | \`${it.subagent ?? 'general-purpose'}\` | ${it.reviewer ? `\`${it.reviewer}\`` : '—'} | ${it.dependencies.join(', ') || '—'} |`)
       }
       lines.push('')
       for (const it of wave) {
@@ -195,6 +227,15 @@ export function buildDispatchPlan(plan: DispatchPlan, projectName: string): stri
     lines.push('')
   }
   if (plan.review.length > 0) {
+    const gated = plan.review.filter((it) => it.reviewer)
+    if (gated.length > 0) {
+      lines.push('## Review gate')
+      lines.push('')
+      lines.push('Launch these reviewers in parallel before the human looks. Skip a task whose notes already hold an approving review newer than its last change.')
+      lines.push('')
+      for (const it of gated) lines.push(`- **${it.id} → \`${it.reviewer}\`:** ${reviewPrompt(it)}`)
+      lines.push('')
+    }
     lines.push('## Waiting for human review')
     lines.push('')
     for (const it of plan.review) lines.push(`- ${it.id} — ${it.title}`)
@@ -211,8 +252,10 @@ export function buildDispatchPlan(plan: DispatchPlan, projectName: string): stri
     lines.push('## Between waves')
     lines.push('')
     lines.push('1. Read every subagent report and confirm its task is in Review (`task_get`). Re-launch or fix any that stopped early.')
-    lines.push('2. Run the full test suite, typecheck and lint once for the whole wave; send failures to the `fixer` subagent.')
-    lines.push('3. Call `sprint_dispatch` again before the next wave — the plan is recomputed from the board, so it reflects what actually landed.')
+    lines.push('2. **Review gate:** launch each task\'s reviewer subagent (column "Review gate") in parallel. A `changes` verdict moves the task back to In Progress with findings — re-launch its subagent with those findings, then review again.')
+    lines.push('3. Run the full test suite, typecheck and lint once for the whole wave; send failures to the `fixer` subagent.')
+    lines.push('4. Call `sprint_dispatch` again before the next wave — the plan is recomputed from the board, so it reflects what actually landed.')
+    lines.push('5. Before you stop, leave a handoff with `session_handoff` (done, next, blockers) so the next session starts where this one ended.')
     lines.push('')
   }
   return lines.join('\n')

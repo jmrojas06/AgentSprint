@@ -21,10 +21,20 @@ import { syncClaudeSubagents } from './subagents.js'
 import type { SubagentSyncResult } from './subagents.js'
 import { SAMPLE_TEMPLATES, isValidTemplateName, parseTemplate, readTemplates, renderTemplate } from './templates.js'
 import type { TaskTemplate, TemplateVars } from './templates.js'
+import { JOURNAL_HEADER, buildProjectContext, formatJournalEntry, parseJournal } from './context.js'
+import type { JournalEntry } from './context.js'
+
+/** Verdict of a review-gate agent (or human) on a task in Review. */
+export type ReviewVerdict = 'approve' | 'changes'
 
 const AGENTS_MD = `# AgentSprint instructions
 
 This project uses a git-native sprint board under \`.agentboard/\`.
+
+## Start and end every session here
+
+- **Start:** run \`agentboard context\` (or call the \`project_context\` MCP tool). It prints where the project is: active sprint, work in progress, what is next, blockers, the last session handoff and recent learnings. Continue from there — never restart from scratch.
+- **End:** leave a handoff with the \`session_handoff\` MCP tool (summary, done, next, blockers), or append it to \`.agentboard/journal.md\`. The next session — yours or another agent's — starts from it.
 
 ## Workflow
 
@@ -35,7 +45,8 @@ This project uses a git-native sprint board under \`.agentboard/\`.
 5. Never skip or rewrite tasks. Update the file, don't create duplicates.
 6. Prefer editing files directly over \`agentboard\` CLI/MCP when possible; the board UI reflects file changes instantly.
 7. If \`.agentboard/brand.md\` exists and is configured, follow the brand guidelines when writing code, copy or UI.
-8. \`.agentboard/agents/\` holds specialized agent profiles (developer, designer, tester, …), mirrored to \`.claude/agents/\` as real Claude Code subagents. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask \`sprint_dispatch\` (or \`agentboard dispatch\`) which subagent takes which task and what can run in parallel.
+8. \`.agentboard/agents/\` holds specialized agent profiles (developer, designer, tester, …), mirrored to \`.claude/agents/\` as real Claude Code subagents with their skills preloaded. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask \`sprint_dispatch\` (or \`agentboard dispatch\`) which subagent takes which task and what can run in parallel.
+9. Work in Review passes a review gate first: \`code-reviewer\` (or \`ui-reviewer\` for UI work) records a verdict with \`task_review\`. \`changes\` sends the task back to In Progress with findings; \`approve\` leaves it for the human.
 `
 
 const BRAND_TEMPLATE = `---
@@ -136,6 +147,9 @@ export class ProjectStore extends EventEmitter {
   }
   private learningsPath(): string {
     return path.join(this.boardDir, 'learnings.md')
+  }
+  private journalPath(): string {
+    return path.join(this.boardDir, 'journal.md')
   }
   private tasksDir(): string {
     return path.join(this.boardDir, 'tasks')
@@ -399,6 +413,63 @@ export class ProjectStore extends EventEmitter {
     })
   }
 
+  // ── session journal & context ───────────────────────────────────────
+
+  /** Session handoffs from `.agentboard/journal.md`, oldest first (empty when missing). */
+  getJournal(): JournalEntry[] {
+    try {
+      return parseJournal(fs.readFileSync(this.journalPath(), 'utf8'))
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw err
+    }
+  }
+
+  /**
+   * Append a session handoff to the journal (append-only, so concurrent
+   * sessions and git merges never lose an entry). Returns the stored entry.
+   */
+  appendJournal(input: { author?: string; summary?: string; done?: string[]; next?: string[]; blockers?: string[] }): JournalEntry {
+    const entry: JournalEntry = {
+      at: nowIso(),
+      author: (input.author ?? 'agent').trim().replace(/\s+/g, ' ') || 'agent',
+      summary: (input.summary ?? '').trim().replace(/\n+/g, ' '),
+      done: (input.done ?? []).map((i) => i.trim().replace(/\n+/g, ' ')).filter(Boolean),
+      next: (input.next ?? []).map((i) => i.trim().replace(/\n+/g, ' ')).filter(Boolean),
+      blockers: (input.blockers ?? []).map((i) => i.trim().replace(/\n+/g, ' ')).filter(Boolean),
+    }
+    if (!entry.summary && entry.done.length + entry.next.length + entry.blockers.length === 0) {
+      throw new Error('A handoff needs a summary or at least one done / next / blockers item')
+    }
+    withFileLock(this.journalPath(), () => {
+      let existing = ''
+      try {
+        existing = fs.readFileSync(this.journalPath(), 'utf8')
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      }
+      const base = existing.trim() ? existing.trimEnd() + '\n\n' : JOURNAL_HEADER + '\n'
+      this._atomicWrite(this.journalPath(), base + formatJournalEntry(entry))
+    })
+    this.emit('change')
+    return entry
+  }
+
+  /** The session-start brief (see `buildProjectContext`). */
+  buildContext(opts: { now?: Date; limit?: number } = {}): string {
+    const state = this.state
+    return buildProjectContext(
+      {
+        projectName: this.config.name,
+        tasks: state.tasks,
+        activeSprint: state.activeSprint,
+        journal: this.getJournal(),
+        learnings: this.getLearnings(),
+      },
+      opts,
+    )
+  }
+
   /**
    * Build the automatic retro summary for a sprint: report plus blockers found.
    * Used when a sprint is closed (see `setSprintStatus`).
@@ -542,7 +613,7 @@ export class ProjectStore extends EventEmitter {
    * generated Claude Code subagents. Omitted optional fields keep their
    * current value when the agent already exists.
    */
-  saveAgent(input: { name: string; description?: string; prompt?: string } & Partial<Pick<AgentProfileType, 'color' | 'tags' | 'tools' | 'model'>>): AgentProfileType {
+  saveAgent(input: { name: string; description?: string; prompt?: string } & Partial<Pick<AgentProfileType, 'color' | 'tags' | 'tools' | 'disallowedTools' | 'skills' | 'model'>>): AgentProfileType {
     const file = this._agentPath(input.name)
     const current = this.agents.find((a) => a.name === input.name)
     const merged = Object.fromEntries(Object.entries({ ...current, ...input }).filter(([, v]) => v !== undefined))
@@ -640,6 +711,38 @@ export class ProjectStore extends EventEmitter {
         id,
         { notes: updatedNotes },
         { actor: author ?? 'user', noteEvent: note.trim() },
+      )
+    })
+  }
+
+  /**
+   * Record a review-gate verdict on a task in Review. The verdict, summary
+   * and findings become a note plus a `review` activity event; `changes`
+   * moves the task back to In Progress so its implementer picks it up again,
+   * `approve` leaves it in Review for the human who moves it to Done.
+   */
+  reviewTask(
+    id: string,
+    input: { reviewer: string; verdict: ReviewVerdict; summary?: string; findings?: string[] },
+  ): TaskType {
+    return withFileLock(this.taskPath(id), () => {
+      const task = this._freshTask(id)
+      if (task.status !== 'Review') {
+        throw new Error(`Task ${id} is "${task.status}", not "Review" — only work handed over for review can get a verdict`)
+      }
+      const findings = (input.findings ?? []).map((f) => f.trim().replace(/\n+/g, ' ')).filter(Boolean)
+      if (input.verdict === 'changes' && findings.length === 0) {
+        throw new Error('A "changes" verdict needs at least one finding the implementer can act on')
+      }
+      const label = input.verdict === 'approve' ? 'approved' : 'changes requested'
+      const summary = (input.summary ?? '').trim().replace(/\n+/g, ' ')
+      const head = `- [${nowIso()}] (${input.reviewer}) **Review: ${label}**${summary ? ` — ${summary}` : ''}`
+      const entry = [head, ...findings.map((f) => `  - ${f}`)].join('\n')
+      const notes = task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
+      return this._updateTaskUnlocked(
+        id,
+        { notes, ...(input.verdict === 'changes' ? { status: 'In Progress' as TaskStatus } : {}) },
+        { actor: input.reviewer, reviewEvent: `${label}${findings.length ? ` (${findings.length} finding${findings.length === 1 ? '' : 's'})` : ''}` },
       )
     })
   }
@@ -814,12 +917,12 @@ export class ProjectStore extends EventEmitter {
   // clobber each other's changes with a stale in-memory copy.
   // Auto-assign assignee according to STATUS_ASSIGNEE_MAP when status changes,
   // unless patch already contains an explicit assignee (preserves task_claim priority).
-  updateTask(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string } = {}): TaskType {
+  updateTask(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string; reviewEvent?: string } = {}): TaskType {
     return withFileLock(this.taskPath(id), () => this._updateTaskUnlocked(id, patch, opts))
   }
 
   /** Update a task without acquiring the file lock. Caller must hold it. */
-  private _updateTaskUnlocked(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string } = {}): TaskType {
+  private _updateTaskUnlocked(id: string, patch: Partial<Omit<TaskInput, 'id'>>, opts: { actor?: string; noteEvent?: string; reviewEvent?: string } = {}): TaskType {
     const current = this._freshTask(id)
     if (!current) throw new Error(`Task not found: ${id}`)
     // Auto-map assignee before persist — distinguish generic status change from explicit assignee (task_claim).
@@ -845,7 +948,7 @@ export class ProjectStore extends EventEmitter {
     })
     if (next.sprint != null) this._requireSprint(next.sprint)
     this._assertStatus(next.status)
-    next.activity = [...current.activity, ...diffActivityEvents(current, next, patch, { actor, noteEvent: opts.noteEvent, at: now })]
+    next.activity = [...current.activity, ...diffActivityEvents(current, next, patch, { actor, noteEvent: opts.noteEvent, reviewEvent: opts.reviewEvent, at: now })]
     this.tasks.set(id, next)
     // Check for cycles after update
     const cycles = this.detectCycles()
@@ -1173,7 +1276,7 @@ function diffActivityEvents(
   current: TaskType,
   next: TaskType,
   patch: Partial<Omit<TaskInput, 'id'>>,
-  ctx: { actor: string; noteEvent?: string; at: string },
+  ctx: { actor: string; noteEvent?: string; reviewEvent?: string; at: string },
 ): ActivityEventType[] {
   const events: ActivityEventType[] = []
   if (patch.status != null && patch.status !== current.status) {
@@ -1202,6 +1305,9 @@ function diffActivityEvents(
   }
   if (ctx.noteEvent) {
     events.push({ at: ctx.at, actor: ctx.actor, type: 'note', detail: ctx.noteEvent })
+  }
+  if (ctx.reviewEvent) {
+    events.push({ at: ctx.at, actor: ctx.actor, type: 'review', detail: ctx.reviewEvent })
   }
   const tracked = ['title', 'description', 'priority', 'sprint', 'estimate', 'tags', 'dependencies'] as const
   const changed: string[] = tracked.filter(

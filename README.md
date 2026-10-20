@@ -1,245 +1,189 @@
-# AgentSprint
-
-> Kanban git-native para coordinar devs y agentes de IA en el mismo repositorio.
-
-[![CI](https://github.com/jmrojas06/AgentSprint/actions/workflows/ci.yml/badge.svg)](https://github.com/jmrojas06/AgentSprint/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/@jmrojas06/agentsprint-cli.svg)](https://www.npmjs.com/package/@jmrojas06/agentsprint-cli)
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fjmrojas06%2Fagentsprint-2496ED.svg)](https://ghcr.io/jmrojas06/agentsprint)
-[![Docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://jmrojas06.github.io/AgentSprint/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
 <p align="center">
-  <a href="docs/public/demo.gif">
-    <img src="docs/public/demo.gif" alt="AgentSprint demo" width="800">
-  </a>
+  <img src="docs/public/logo.svg" width="56" height="56" alt="AgentSprint logo">
 </p>
 
-<details open="block">
-  <summary>Demo del board en acción</summary>
+<h1 align="center">AgentSprint</h1>
 
-  - **GIF:** [docs/public/demo.gif](docs/public/demo.gif) — el tablero en uso: tareas, sprints y un agente moviendo una tarea a Review.
-</details>
+<p align="center">
+  <b>The project control center for coding with AI agents.</b><br>
+  A git-native sprint board that remembers where the project is, so every new agent session picks up exactly where the last one stopped.
+</p>
 
-Documentation · [Issues](https://github.com/jmrojas06/AgentSprint/issues) · [Changelog](CHANGELOG.md)
+<p align="center">
+  <a href="https://github.com/jmrojas06/AgentSprint/actions/workflows/ci.yml"><img src="https://github.com/jmrojas06/AgentSprint/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/@jmrojas06/agentsprint-cli"><img src="https://img.shields.io/npm/v/@jmrojas06/agentsprint-cli.svg" alt="npm"></a>
+  <a href="https://jmrojas06.github.io/AgentSprint/"><img src="https://img.shields.io/badge/docs-github%20pages-5a5ee6" alt="Docs"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e.svg" alt="MIT license"></a>
+</p>
 
-## Why AgentSprint
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/public/screenshots/overview-light.png">
+    <img src="docs/public/screenshots/overview-dark.png" alt="AgentSprint Overview: active sprint progress, work waiting for review, the next task and the last session handoff" width="900">
+  </picture>
+</p>
 
-Los agentes de IA son buenos ejecutando trabajo pero olvidan entre sesiones. El contexto de un chat muere con la ventana de contexto; un `TODO.md` no tiene sprints, ni criterios de aceptación, ni historia versionada.
+## Why
 
-AgentSprint mantiene el trabajo donde vive el código:
+AI agents are great at doing work and terrible at remembering it. When a chat ends, the plan, the half-done task and the reason behind a decision end with it. The next session starts cold and asks you to explain everything again.
 
-- Las tareas son archivos Markdown con YAML en `.agentboard/` — no en la nube de alguien más.
-- Cada tarea es un archivo Markdown con frontmatter, legible por humanos y agentes.
-- Los cambios de status son ediciones de texto plano, por lo que el historial de Git se convierte en historial del tablero — revisable en pull requests, difable y restaurable.
-- Los agentes participan mediante MCP o editando archivos directamente; tú revisas y decides qué está hecho.
+AgentSprint keeps that memory in your repository, next to the code:
 
-**No hay cuentas. No hay servidor que mantener. Tu tablero es una carpeta en Git.**
+- **The board is the memory.** Tasks, sprints, acceptance criteria and notes are Markdown files in `.agentboard/`. Git history is board history.
+- **Every session starts from a brief.** `agentboard context` (or the `project_context` MCP tool) tells any agent where the project is: active sprint, what is in progress, what is waiting for review, what comes next, what is blocked, the last handoff and the lessons learned.
+- **Every session ends with a handoff.** `session_handoff` appends what was done, what is next and what is in the way to `.agentboard/journal.md`. The next session reads it first.
+- **Specialists do the work, with their skills loaded.** Developer, designer, tester, fixer and docs agents become real Claude Code subagents that preload the skills they need.
+- **A review gate checks it before you do.** A read-only `code-reviewer` and `ui-reviewer` judge every task in Review and send it back with findings when it is not right. You only look at work that already passed.
 
-## What AgentSprint gives you
+No accounts, no cloud, no server to babysit. Your board is a folder in Git.
 
-- **Git-native task storage** — one task = one Markdown file under `.agentboard/tasks/`
-- **Kanban board** — local web UI with configurable columns, filters, sorting and checklists
-- **Sprint management** — plan, activate, close; stats and burndown per sprint
-- **Persistent context** — learnings memory and brand kit injected into every task spec an agent receives
-- **CLI** — init boards, serve the UI, export specs, lint integrity, import TODOs or GitHub issues
-- **Specialized agents as real Claude Code subagents** — developer, designer, tester, fixer, docs, creative-director, ideator (plus your own), generated into `.claude/agents/` and dispatched wave by wave in parallel
-- **Idea → MVP** — one MCP prompt shapes the idea, plans a sprint with linked tasks per specialist and builds it
-- **MCP server** — stdio and HTTP transports so any MCP-compatible agent can work the board
-- **REST API + SSE** — every board operation available programmatically, with live updates
-- **File watcher** — edit `.agentboard/` files directly and the UI updates instantly
-- **Full-text search** — SQLite-backed index with zero native dependencies
-- **Docker** — self-hosted image with health check for always-on setups
-- **Port fallback** — automatic port selection if 4310 is busy
+## Quick start
 
-## Choose your setup
-
-AgentSprint está dividido en varios paquetes internos, pero los usuarios solo need elegir un punto de entrada: el CLI, el servidor MCP, la imagen Docker o el repositorio source.
-
-| Use case | Recommended entry point |
-|---|---|
-| Run the board quickly | [CLI](#quick-start-with-the-cli) |
-| Connect an AI agent | [MCP server](#connect-an-ai-agent-with-mcp) |
-| Run with containers | [Docker](#docker) |
-| Modify or contribute | [Source repository](#install-from-source) |
-
-You never install the internal packages (`core`, `server`, `web`) manually — they ship as dependencies of the entry point you pick.
-
-## Quick start with the CLI
-
-Requires Node.js ≥ 20.
+Requires Node.js 20 or newer.
 
 ```bash
-npx @jmrojas06/agentsprint-cli init   # creates .agentboard/ with sample content
-npx @jmrojas06/agentsprint-cli serve  # starts the board at http://127.0.0.1:4310
+npx @jmrojas06/agentsprint-cli init      # board, sample sprint and 9 specialist agents
+npx @jmrojas06/agentsprint-cli connect   # MCP server + SessionStart hook for Claude Code
+npx @jmrojas06/agentsprint-cli serve     # the board at http://127.0.0.1:4310
 ```
 
-What each command does:
-
-- `init` — scaffolds `.agentboard/` (config, sample tasks, sprints, templates) plus an `AGENTS.md` that tells any coding agent how to work here.
-- `serve` — starts the local server, serves the Kanban UI and REST API, and watches board files for changes. If port 4310 is busy it automatically picks the next free port.
-
-Prefer a global install so the short `agentboard` binary is on your PATH:
-
-```bash
-npm install -g @jmrojas06/agentsprint-cli
-agentboard init
-agentboard serve
-```
-
-Then point your AI coding agent at the repository — it will follow `AGENTS.md`.
-
-## Motion flow: onboarding from zero to agent-powered board
-
-### Profile 1: Dev solo con agentes de IA
-
-Llega por GitHub, lee el hero y entiende el "Why" en segundos. Ve la tabla "Choose your setup" y elige la ruta CLI. Ejecuta `npx @jmrojas06/agentsprint-cli init` y el board queda listo con muestra contenido. Abre la UI en `http://127.0.0.1:4310` y ve `.agentboard/` — tasks, sprints, todo configurado. Configura su agente apuntando al repositorio; el agente leerá `AGENTS.md` y comenzará a reclamar tareas. El flujo completo:
-
-1. `npx @jmrojas06/agentsprint-cli init` — board scaffolded
-2. `npx @jmrojas06/agentsprint-cli serve` — UI + API running
-3. Agent claims a task → status moves to In Progress
-4. Agent ticks acceptance criteria, logs notes
-5. Developer reviews, sets Done — Git records code + board together
-
-### Profile 2: Dev que quiere Docker siempre-on
-
-Llega por GitHub y salta directo a la sección Docker. Copia el comando `docker run`, ajusta la ruta al proyecto (`-v /path/to/your-project:/board`), levanta el container. Abre la UI en `http://localhost:4310` y ve que el board ya está inicializado. Añade `--mcp` para exponer `/mcp` y que su agente remoto se conecte. El flujo:
-
-1. `docker run -d --name board --restart unless-stopped -p 4310:4310 -v /path/to/your-project:/board ghcr.io/jmrojas06/agentsprint serve /board --host 0.0.0.0 --no-open --init`
-2. Open `http://localhost:4310` for the UI
-3. Add `--mcp` to expose `/mcp` for remote agents
-4. Agent connects via HTTP stdio and starts claiming tasks
-
-## Agent workflow
-
-Typical loop with a coding agent:
+Then open Claude Code in the folder and approve the `agentsprint` MCP server. From now on every session starts with the project brief injected automatically. Try:
 
 ```text
-1. Developer runs agentboard init and plans tasks/sprints.
-2. Agent reads AGENTS.md and the active sprint.
-3. Agent claims a task — status moves to In Progress.
-4. Agent works on the codebase, ticking acceptance criteria.
-5. Agent moves the task to Review and logs execution notes.
-6. Developer reviews, sets Done; Git records code + board together.
+/mcp__agentsprint__idea-to-mvp   "a habit tracker for small teams"
+/mcp__agentsprint__run-sprint
+/mcp__agentsprint__resume
 ```
 
-Humans own *Done*. Agents stop at *Review* — you verify the criteria before work ships.
+Prefer the short `agentboard` binary? `npm install -g @jmrojas06/agentsprint-cli`.
 
-### From idea to MVP with subagents (Claude Code)
+## How a session works
 
-```bash
-agentboard init my-app       # board + 7 specialist agents + .claude/agents/ subagents
-agentboard connect my-app    # register the AgentSprint MCP server in .mcp.json
-cd my-app && claude          # approve "agentsprint", then:
-#   /mcp__agentsprint__idea-to-mvp   "a habit tracker for small teams"
-#   /mcp__agentsprint__run-sprint
+```text
+start   agentboard context / project_context  →  where are we, what is next
+work    task_claim → task_spec → code → task_checklist / task_note → Review
+gate    code-reviewer or ui-reviewer → task_review: approve, or changes with findings
+end     session_handoff  →  .agentboard/journal.md (done, next, blockers)
 ```
 
-The orchestrator plans the sprint, assigns each task to a specialist and
-launches one subagent per task — in parallel when dependencies allow. Watch it
-happen on the board (`agentboard serve`) and use **Run sprint** there to see
-the waves. Details: [docs/agents.md](docs/agents.md).
+`agentboard connect` writes a `SessionStart` hook into `.claude/settings.local.json`, so the brief arrives in every new, resumed, cleared or compacted Claude Code session without anyone asking for it. Agents that are not Claude Code read the same instructions from `AGENTS.md` and the MCP server instructions.
 
-## CLI reference
+## Specialists and their skills
+
+`agentboard init` writes nine agent profiles to `.agentboard/agents/` and mirrors them to `.claude/agents/` as Claude Code subagents. Each one preloads the [skills](https://code.claude.com/docs/en/skills) that match its job:
+
+| Agent | Job | Skills preloaded |
+| --- | --- | --- |
+| `developer` | Smallest correct change, full suite green | karpathy-guidelines, principios-codigo, test-driven-development, systematic-debugging, verification-before-completion |
+| `designer` | Builds UI that does not look templated | design-taste-frontend, frontend-design, design-md-library, awesome-design-md, web-design-guidelines, playwright-cli |
+| `tester` | Tests from acceptance criteria, edges first | test-driven-development, tdd, playwright-cli, verification-before-completion |
+| `fixer` | Reproduce, root cause, failing test, small patch | systematic-debugging, diagnose, test-driven-development, verification-before-completion |
+| `docs` | Docs verified against the code that ships | grill-with-docs, verification-before-completion |
+| `creative-director` | Vision, tone and the quality bar | design-taste-frontend, design-md-library, brainstorming |
+| `ideator` | Divergent options, ranked shortlist | brainstorming |
+| `code-reviewer` | Review gate for code, read-only | requesting-code-review, karpathy-guidelines, principios-codigo, verification-before-completion |
+| `ui-reviewer` | Review gate for UI, read-only | web-design-guidelines, design-taste-frontend, playwright-cli |
+
+A skill that is not installed is skipped by Claude Code, so the defaults are safe anywhere. `agentboard skills` lists the skills on your machine and flags the ones an agent references but you do not have; the **Agents** tab lets you add any installed skill to any agent.
+
+<p align="center">
+  <img src="docs/public/screenshots/agents-dark.png" alt="Agents tab: the designer profile with its six preloaded design skills" width="900">
+</p>
+
+## The review gate
+
+Work moves to Review, then a reviewer subagent checks it before a human does. `sprint_dispatch` names the gate for every task: `ui-reviewer` for anything tagged design, ui, ux or frontend, `code-reviewer` for the rest. Reviewers cannot edit files (`disallowedTools: Edit, Write, NotebookEdit`); they record a verdict with `task_review`:
+
+- **approve** keeps the task in Review, with an "Approved" badge, for you to move to Done.
+- **changes** moves it back to In Progress with findings (file:line, failing scenario, fix) and the orchestrator re-launches the implementer.
+
+<p align="center">
+  <img src="docs/public/screenshots/dispatch-dark.png" alt="Run sprint: waves of parallel tasks with the subagent and review gate for each" width="900">
+</p>
+
+## The board
+
+<table>
+  <tr>
+    <td width="66%"><img src="docs/public/screenshots/board-dark.png" alt="Kanban board in dark mode"></td>
+    <td width="34%"><img src="docs/public/screenshots/overview-mobile.png" alt="Overview on a phone"></td>
+  </tr>
+</table>
+
+- **Overview**: sprint progress, work in flight with its last note, review verdicts, what is ready next, blockers, the last handoff and the session journal. Write a handoff or copy the brief for a new session from here.
+- **Board and List**: drag and drop, filters, sorting, checklists, dependency badges, linked commits.
+- **Run sprint**: the dispatch plan as waves of parallel subagents, ready to paste into Claude Code.
+- **Sprints, Agents and Brand** in a collapsible side panel; light and dark themes; `⌘K` command palette.
+
+<p align="center">
+  <img src="docs/public/demo.gif" alt="Tour of the Overview, Board, Run sprint, Agents and task views" width="900">
+</p>
+
+## CLI
 
 | Command | Purpose |
-|---|---|
-| `agentboard init [dir]` | Scaffold `.agentboard/` with sample content |
-| `agentboard serve [dir]` | Start the server, UI and REST API (default command) |
-| `agentboard spec <dir> <id>` | Print a self-contained agent prompt for a task |
-| `agentboard brand [dir]` | Print the project's brand kit |
-| `agentboard lint [dir]` | Check board integrity (YAML, IDs, sprints, dependency cycles) |
-| `agentboard close [dir] [id]` | Close a sprint and append a retrospective |
-| `agentboard task new [title] [dir]` | Create a task, optionally from a template |
-| `agentboard import todo <file>` | Import bullets/checkboxes from a TODO-style Markdown file |
-| `agentboard import github <owner/repo>` | Import open GitHub issues via the `gh` CLI |
-| `agentboard export md` | Write `BOARD.md`, a static Markdown snapshot |
-| `agentboard agents [sync] [dir]` | List agents / regenerate `.claude/agents/` subagents |
-| `agentboard dispatch [dir]` | Print the parallel subagent plan for the active sprint |
-| `agentboard connect [dir]` | Register the MCP server in `.mcp.json` for Claude Code |
+| --- | --- |
+| `agentboard init [dir]` | Scaffold `.agentboard/`, `AGENTS.md` and the specialist agents |
+| `agentboard serve [dir]` | Board UI, REST API and file watcher (default command) |
+| `agentboard context [dir]` | Print the session brief: sprint, in progress, next, blockers, last handoff |
+| `agentboard handoff [dir] --summary … --next … --blocker …` | Append a session handoff to `journal.md` |
+| `agentboard connect [dir]` | Register the MCP server and the SessionStart hook for Claude Code |
+| `agentboard agents [sync] [dir]` | List agents or regenerate `.claude/agents/` |
+| `agentboard skills [dir]` | Installed skills and which agents preload them |
+| `agentboard dispatch [dir]` | The parallel subagent plan for the active sprint |
+| `agentboard spec <dir> <id>` | A self-contained prompt for one task |
+| `agentboard lint [dir]` | Check board integrity |
+| `agentboard close [dir] [id]` | Close a sprint and append a retro to `learnings.md` |
+| `agentboard task new`, `import todo`, `import github`, `export md`, `brand`, `mcp` | See the [CLI reference](https://jmrojas06.github.io/AgentSprint/cli) |
 
-Details and options: [docs/cli.md](https://jmrojas06.github.io/AgentSprint/cli).
+## MCP
 
-## MCP tools
-
-35 tools are exposed over both transports. Highlights:
+Around 40 tools over stdio (`agentboard mcp`) and Streamable HTTP (`agentboard serve --mcp`). The ones that matter most:
 
 | Tool | Purpose |
-|---|---|
-| `board_summary` | Active sprint, counts per status, completion % |
-| `task_list` / `task_get` | Browse and read tasks with filters |
-| `task_create` / `task_update` / `task_delete` | Manage tasks |
-| `task_claim` / `task_release` | Claim work exclusively (lock with TTL) |
-| `task_status` | Move a task across the board |
-| `task_checklist` | Tick acceptance criteria |
-| `task_note` | Append timestamped execution notes |
-| `task_spec` | Get the full copy-pasteable prompt for a task |
-| `task_create_batch` | Create a whole plan with linked dependencies in one call |
-| `agent_list` / `agent_upsert` / `agent_sync` | Manage specialists and their Claude Code subagents |
-| `sprint_dispatch` | Waves of parallel tasks with the subagent for each |
-| `sprint_activate` / `sprint_close` / `sprint_report` | Drive the sprint lifecycle |
-| `brand_get` / `learnings_get` | Read injected project context |
+| --- | --- |
+| `project_context` | Start here: the session brief |
+| `session_handoff` / `session_journal` | Leave and read handoffs |
+| `task_claim` / `task_spec` / `task_checklist` / `task_note` / `task_status` | Work one task end to end |
+| `task_review` | Review-gate verdict: approve or changes with findings |
+| `sprint_dispatch` | Waves of parallel tasks with the subagent and reviewer for each |
+| `task_create_batch` | Create a whole linked plan in one call |
+| `agent_upsert` / `agent_sync` / `skill_list` | Manage specialists and their skills |
 
-Complete reference: [docs/mcp.md](https://jmrojas06.github.io/AgentSprint/mcp).
+Prompts: `resume`, `idea-to-mvp`, `run-sprint`, `sprint-plan`, `execute-task`, `sprint-retro`. Full reference: [docs/mcp.md](https://jmrojas06.github.io/AgentSprint/mcp).
 
-## Features
+## Docker
 
-Available today:
+```bash
+docker run -d --name board --restart unless-stopped -p 4310:4310 \
+  -v /path/to/your-project:/board \
+  ghcr.io/jmrojas06/agentsprint serve /board --host 0.0.0.0 --no-open --init --mcp
+```
 
-- [x] Git-native Markdown tasks with YAML frontmatter
-- [x] Kanban UI with configurable columns, filters and sorting
-- [x] Interactive acceptance-criteria checklists with live sync
-- [x] Sprints: plan, activate, close, stats and burndown
-- [x] Dependency graph with cycle detection and blocked-task awareness
-- [x] Task spec export with brand-kit and learnings injection
-- [x] MCP server (stdio + Streamable HTTP)
-- [x] REST API + SSE real-time updates + file watcher
-- [x] SQLite full-text search with in-memory fallback
-- [x] Board linter, TODO/GitHub issue import, static `BOARD.md` export
-- [x] Docker image with health check + docker-compose
-- [x] Automatic port fallback (`--no-fallback` to disable)
-
-## Roadmap
-
-- [ ] Velocity charts and retrospectives polish
-- [ ] Review gates
-- [ ] Plugin system for custom task sources
-- [ ] Web component library for embedding boards
+The board is at `http://localhost:4310` and remote agents connect to `/mcp`. Add `--token <secret>` before exposing it beyond your machine.
 
 ## Documentation
 
-Full documentation at **https://jmrojas06.github.io/AgentSprint/**:
-
-- [Installation](https://jmrojas06.github.io/AgentSprint/installation)
-- [Quick start](https://jmrojas06.github.io/AgentSprint/quick-start)
-- [Task file format](https://jmrojas06.github.io/AgentSprint/task-format)
-- [CLI reference](https://jmrojas06.github.io/AgentSprint/cli)
-- [MCP server & tools](https://jmrojas06.github.io/AgentSprint/mcp)
-- [Specialized agents & subagents](https://jmrojas06.github.io/AgentSprint/agents)
-- [REST API](https://jmrojas06.github.io/AgentSprint/api)
-- [Architecture](https://jmrojas06.github.io/AgentSprint/architecture)
-- [Troubleshooting](https://jmrojas06.github.io/AgentSprint/troubleshooting)
-- [Video demo](docs/video-storyboard.md) — storyboard y guion para demo de 45 seg.
+[Installation](https://jmrojas06.github.io/AgentSprint/installation) ·
+[Quick start](https://jmrojas06.github.io/AgentSprint/quick-start) ·
+[Task format](https://jmrojas06.github.io/AgentSprint/task-format) ·
+[Agents, skills and review gate](https://jmrojas06.github.io/AgentSprint/agents) ·
+[MCP](https://jmrojas06.github.io/AgentSprint/mcp) ·
+[REST API](https://jmrojas06.github.io/AgentSprint/api) ·
+[Architecture](https://jmrojas06.github.io/AgentSprint/architecture) ·
+[Troubleshooting](https://jmrojas06.github.io/AgentSprint/troubleshooting) ·
+[Changelog](CHANGELOG.md)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing and pull request guidelines. In short — fork, branch, and validate with:
+See [CONTRIBUTING.md](CONTRIBUTING.md). Before a pull request:
 
 ```bash
-pnpm typecheck
-pnpm test
-pnpm build
+pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
+
+AgentSprint is built on its own board: `.agentboard/` in this repository is the real plan, and `agentboard context .` shows where it stands.
 
 ## License
 
 [MIT](LICENSE)
-
-## Support the project
-
-If AgentSprint is useful to you:
-
-- Star the repository.
-- Try it in a real project.
-- Open an issue with feedback.
-- Share your workflow.
-- Contribute documentation or code.

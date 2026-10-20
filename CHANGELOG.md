@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Session continuity**: `agentboard context`, the `project_context` MCP tool, the `resume` prompt and `GET /api/context` render a brief of where the project is (sprint progress, work in flight with its last note, review queue, next unblocked tasks, blockers, recently done, last handoff, recent learnings). Handoffs go to an append-only `.agentboard/journal.md` via `session_handoff`, `agentboard handoff`, `POST /api/journal` or the UI. The MCP server sends instructions to start and end every session with them, and `agentboard connect` installs a Claude Code `SessionStart` hook that injects the brief.
+- **Skills in agent profiles**: `skills` (preloaded Claude Code skills) and `disallowedTools` in `.agentboard/agents/*.md`, rendered into `.claude/agents/`. Default agents preload matching skills; the designer loads every design skill. `agentboard skills`, `skill_list` and `GET /api/skills` show installed and missing skills.
+- **Review gate**: read-only `code-reviewer` and `ui-reviewer` agents with their own protocol; `task_review` (MCP) and `POST /api/tasks/:id/review` record `approve` or `changes` (findings, back to In Progress) as a note and a `review` activity event. `sprint_dispatch` names the reviewer per task and lists a Review gate section.
+- **Overview** view (new default): sprint progress, in progress, waiting for review with verdict badges, ready next, blocked, last handoff, journal, *Copy brief* and *Write handoff*.
 - **Specialized agents** in `.agentboard/agents/` (developer, designer, tester, fixer, docs, creative-director, ideator) with `tools` / `model` options. A task assigned to one gets its prompt injected into the spec and keeps that assignee across status changes; `agentboard lint` flags unknown assignees and broken profiles.
 - **Real Claude Code subagents**: every agent is mirrored to `.claude/agents/<name>.md` with the board protocol appended, on init, on every agent change and while the server runs. Hand-written subagents are never overwritten; opt out with `subagents: false`.
 - **Dispatch plan**: `sprint_dispatch` (MCP), `agentboard dispatch`, `GET /api/dispatch` and the **Run sprint** button split a sprint into waves of parallel tasks with the subagent for each one.
@@ -15,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The UI shows specialist assignees with their color, groups the assignee pickers (workflow roles vs. specialists) and adds "Run sprint" to the command palette.
 
 ### Changed
+- UI polish: Geist type, calibrated near-black and light themes with one indigo accent, a two-row header (navigation and filters), flexible board columns, a collapsible side panel, quieter task cards, skills editing in the Agents tab, review gate in Run sprint, global focus rings and reduced-motion support.
+- README rewritten around the session workflow with real screenshots and a new demo tour.
 - `agentboard lint` exits 0 when only warnings are found.
 - `task_claim` records the claiming agent as the activity actor and, when it is a specialist, as the assignee.
 

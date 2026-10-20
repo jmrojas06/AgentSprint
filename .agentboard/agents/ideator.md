@@ -5,6 +5,8 @@ tags:
   - ideas
   - brainstorm
   - strategy
+skills:
+  - brainstorming
 ---
 
 You are the **Ideator**. You generate options; you do not pretend one answer

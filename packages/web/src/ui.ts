@@ -24,12 +24,43 @@ export function getTaskLock(
   return { lockedBy: task.lockedBy, lockedAt: task.lockedAt }
 }
 
-export type ViewMode = 'kanban' | 'list'
+export type ViewMode = 'overview' | 'kanban' | 'list'
+
+export function isViewMode(value: unknown): value is ViewMode {
+  return value === 'overview' || value === 'kanban' || value === 'list'
+}
 
 /** Resolve the board view from a URL query string (e.g. "?view=list"), falling back to `fallback`. */
 export function viewFromQuery(search: string, fallback: ViewMode = 'kanban'): ViewMode {
   const value = new URLSearchParams(search).get('view')
-  return value === 'list' || value === 'kanban' ? value : fallback
+  return isViewMode(value) ? value : fallback
+}
+
+export interface ReviewState {
+  verdict: 'approved' | 'changes'
+  by: string
+  at: string
+}
+
+/**
+ * The review-gate verdict that still applies to a task: the latest `review`
+ * activity event, unless the task moved again after it (a newer status change
+ * means the verdict was about older work). Null when never reviewed.
+ */
+export function reviewState(task: Pick<Task, 'activity'>): ReviewState | null {
+  const events = task.activity ?? []
+  let idx = -1
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]!.type === 'review') {
+      idx = i
+      break
+    }
+  }
+  if (idx === -1) return null
+  const review = events[idx]!
+  const movedLater = events.slice(idx + 1).some((e) => e.type === 'status' && e.at !== review.at)
+  if (movedLater) return null
+  return { verdict: review.detail.startsWith('approved') ? 'approved' : 'changes', by: review.actor, at: review.at }
 }
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
@@ -168,4 +199,12 @@ export function sortTasks(tasks: Task[], sortBy: SortBy, sortDir: SortDir): Task
     if (typeof aVal === 'number' && typeof bVal === 'number') return (aVal - bVal) * dir
     return String(aVal).localeCompare(String(bVal)) * dir
   })
+}
+
+/** Last top-level note of a task, without its `[timestamp] (author)` prefix (mirrors core's lastNote). */
+export function lastNoteText(task: Pick<Task, 'notes'>): string | null {
+  const entries = (task.notes ?? '').split('\n').filter((l) => l.startsWith('- '))
+  const last = entries[entries.length - 1]
+  if (!last) return null
+  return last.replace(/^-\s+(\[[^\]]+\]\s*)?(\([^)]+\)\s*)?/, '').replace(/\*\*/g, '').trim() || null
 }

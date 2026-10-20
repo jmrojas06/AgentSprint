@@ -75,6 +75,7 @@ describe('MCP tools', () => {
   it('agent_list returns the default specialized agents', async () => {
     const agents = (await callTool('agent_list', {})) as Array<{ name: string; description: string }>
     expect(agents.map((a) => a.name)).toEqual([
+      'code-reviewer',
       'creative-director',
       'designer',
       'developer',
@@ -82,6 +83,7 @@ describe('MCP tools', () => {
       'fixer',
       'ideator',
       'tester',
+      'ui-reviewer',
     ])
     expect(agents.every((a) => a.description.length > 0)).toBe(true)
   })
@@ -491,5 +493,64 @@ describe('MCP with other processes on the same board', () => {
     ProjectStore.open(dir).lockTask('TK-3', 'agent-b')
     const res = await callToolError('task_claim', { id: 'TK-3', agent: 'agent-a' })
     expect(res.error).toContain('locked by "agent-b"')
+  })
+})
+
+describe('session continuity & review gate', () => {
+  it('advertises how to resume and hand off in the server instructions', () => {
+    expect(client.getInstructions()).toContain('project_context')
+    expect(client.getInstructions()).toContain('session_handoff')
+  })
+
+  it('project_context returns the Markdown brief and session_handoff feeds it', async () => {
+    const before = await client.callTool({ name: 'project_context', arguments: {} }) as ToolResult
+    expect(before.content[0]?.text).toContain('# Where we are')
+    expect(before.content[0]?.text).not.toContain('Last session handoff')
+
+    const entry = (await callTool('session_handoff', {
+      summary: 'Wired the API',
+      done: ['TK-1 spec written'],
+      next: ['TK-2 plan goals'],
+      author: 'claude',
+    })) as { author: string; at: string }
+    expect(entry.author).toBe('claude')
+
+    const after = await client.callTool({ name: 'project_context', arguments: {} }) as ToolResult
+    expect(after.content[0]?.text).toContain('Last session handoff')
+    expect(after.content[0]?.text).toContain('Wired the API')
+    const journal = (await callTool('session_journal', {})) as Array<{ summary: string }>
+    expect(journal[0]?.summary).toBe('Wired the API')
+  })
+
+  it('session_handoff rejects an empty handoff', async () => {
+    const err = await callToolError('session_handoff', { summary: ' ' })
+    expect(err.error).toMatch(/handoff needs/)
+  })
+
+  it('task_review records verdicts and sends changes back', async () => {
+    store.setTaskStatus('TK-1', 'Review')
+    const approved = (await callTool('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'approve', summary: 'ok' })) as { status: string; notes: string }
+    expect(approved.status).toBe('Review')
+    expect(approved.notes).toContain('**Review: approved**')
+    const changed = (await callTool('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'changes', findings: ['a.ts:1 — broken'] })) as { status: string }
+    expect(changed.status).toBe('In Progress')
+    const err = await callToolError('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'approve' })
+    expect(err.error).toMatch(/not "Review"/)
+  })
+
+  it('agent_upsert stores skills and skill_list reports missing ones', async () => {
+    const agent = (await callTool('agent_upsert', { name: 'qa', description: 'QA', prompt: 'Check things.', skills: ['surely-not-installed-skill'], disallowedTools: ['Edit'] })) as { skills: string[]; disallowedTools: string[] }
+    expect(agent.skills).toEqual(['surely-not-installed-skill'])
+    expect(agent.disallowedTools).toEqual(['Edit'])
+    const list = (await callTool('skill_list', {})) as { skills: unknown[]; missing: Array<{ agent: string; skill: string }> }
+    expect(Array.isArray(list.skills)).toBe(true)
+    expect(list.missing).toContainEqual({ agent: 'qa', skill: 'surely-not-installed-skill' })
+  })
+
+  it('the resume prompt embeds the project brief', async () => {
+    const prompt = await client.getPrompt({ name: 'resume', arguments: {} })
+    const text = (prompt.messages[0]?.content as { text: string }).text
+    expect(text).toContain('# Where we are')
+    expect(text).toContain('session_handoff')
   })
 })

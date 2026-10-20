@@ -18,6 +18,10 @@ export function buildAgentSection(agent: AgentProfile | null | undefined): strin
   lines.push('')
   lines.push(agent.prompt.trim())
   lines.push('')
+  if (agent.skills.length > 0) {
+    lines.push(`**Skills to load:** ${agent.skills.map((s) => `\`${s}\``).join(', ')} — invoke each one that is installed before you start.`)
+    lines.push('')
+  }
   return lines.join('\n')
 }
 

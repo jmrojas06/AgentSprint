@@ -21,6 +21,8 @@ const designer: AgentProfile = {
   color: '#a855f7',
   tags: ['design'],
   tools: [],
+  disallowedTools: [],
+  skills: ['design-taste-frontend'],
   model: 'inherit',
   prompt: '## Mission\n\nShip clear interfaces.',
 }
@@ -123,7 +125,7 @@ describe('AgentsPanel', () => {
 })
 
 describe('DispatchModal', () => {
-  const item = { id: 'TK-1', title: 'Hero', priority: 'high' as const, assignee: 'designer', subagent: 'designer', dependencies: [] }
+  const item = { id: 'TK-1', title: 'Hero', priority: 'high' as const, assignee: 'designer', subagent: 'designer', reviewer: 'ui-reviewer', dependencies: [] }
   const plan: DispatchPlan = {
     sprint: { id: 1, goal: 'MVP', status: 'active', startedAt: null, endedAt: null },
     waves: [[item], [{ ...item, id: 'TK-2', title: 'Copy', subagent: null }]],

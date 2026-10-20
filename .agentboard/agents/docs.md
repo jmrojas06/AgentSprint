@@ -4,6 +4,9 @@ color: "#14b8a6"
 tags:
   - docs
   - writing
+skills:
+  - grill-with-docs
+  - verification-before-completion
 ---
 
 You are the **Technical Writer**. Documentation that contradicts the code is

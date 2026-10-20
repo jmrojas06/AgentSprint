@@ -145,13 +145,38 @@ Code can launch them as subagents. See [Specialized agents](./agents.md).
 ### `dispatch [dir] [--sprint <id>]`
 
 Prints the orchestration plan for the active sprint (or `--sprint`): waves of
-tasks that can run in parallel and the subagent for each one. Paste it into
-Claude Code.
+tasks that can run in parallel, the subagent for each one and its review gate.
+Paste it into Claude Code.
+
+### `context [dir] [--hook]`
+
+Prints the session brief: active sprint and progress, last session handoff,
+tasks in progress (with their last note), waiting for review, next unblocked
+tasks by priority, blocked tasks, recently done work and recent learnings.
+Start every agent session with it. `--hook` exits silently when the folder has
+no board, for use in hooks.
+
+### `handoff [dir] --summary <text> [--done <x>] [--next <x>] [--blocker <x>] [--author <name>]`
+
+Appends a session handoff to `.agentboard/journal.md`. `--done`, `--next` and
+`--blocker` are repeatable. The next `context` shows it first.
+
+```bash
+agentboard handoff --summary "API done, UI started" --next "TK-12 settings screen" --blocker "CI needs a secret"
+```
+
+### `skills [dir]`
+
+Lists the Claude Code skills installed in `<dir>/.claude/skills/` and
+`~/.claude/skills/`, which agents preload each one, and warns about skills an
+agent references that are not installed.
 
 ### `connect [dir]`
 
 Registers the AgentSprint MCP server in `<dir>/.mcp.json`, keeping other
-servers. Restart Claude Code there and approve `agentsprint`. The entry uses absolute
+servers, and a `SessionStart` hook in `<dir>/.claude/settings.local.json` that
+runs `agentboard context --hook` (existing settings and hooks are kept; re-running
+replaces only its own hook). Restart Claude Code there and approve `agentsprint`. The entry uses absolute
 paths of your machine (Node binary, CLI, board), so keep `.mcp.json` out of git
 or re-run `connect` on each machine.
 

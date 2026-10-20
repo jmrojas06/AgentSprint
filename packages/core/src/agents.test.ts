@@ -81,6 +81,7 @@ describe('scaffolded sample agents', () => {
     ProjectStore.init(dir, { sample: true })
     const names = readAgents(path.join(dir, '.agentboard')).map((a) => a.name)
     expect(names).toEqual([
+      'code-reviewer',
       'creative-director',
       'designer',
       'developer',
@@ -88,8 +89,9 @@ describe('scaffolded sample agents', () => {
       'fixer',
       'ideator',
       'tester',
+      'ui-reviewer',
     ])
-    expect(Object.keys(SAMPLE_AGENTS)).toHaveLength(7)
+    expect(Object.keys(SAMPLE_AGENTS)).toHaveLength(9)
   })
 
   it('every sample agent parses and ships a real prompt', () => {
@@ -113,7 +115,7 @@ describe('scaffolded sample agents', () => {
 describe('store agent accessors', () => {
   it('lists and gets agents', () => {
     const store = ProjectStore.init(dir, { sample: true })
-    expect(store.listAgents()).toHaveLength(7)
+    expect(store.listAgents()).toHaveLength(9)
     const designer = store.getAgent('designer')
     expect(designer?.name).toBe('designer')
     expect(designer?.prompt).toContain('Designer')

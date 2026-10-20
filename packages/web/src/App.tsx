@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bell, BellOff, Bot, GitBranch, LayoutGrid, List, Palette, Play, Plus, Search, Square, X } from 'lucide-react'
+import { AlertTriangle, Bell, BellOff, Bot, Compass, LayoutGrid, List, Palette, PanelRightClose, PanelRightOpen, Play, Plus, Search, Square, X } from 'lucide-react'
 import type { BoardState, Task, TaskPriority } from './types'
 import { TASK_PRIORITIES } from './types'
 import { api, clearStoredToken, getStoredToken, setProject, setStoredToken } from './api'
@@ -15,24 +15,41 @@ import { CommandPalette } from './components/CommandPalette'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AgentsPanel } from './components/AgentsPanel'
 import { DispatchModal } from './components/DispatchModal'
+import { Overview } from './components/Overview'
 import { AgentsContext, AssigneeOptions } from './agents'
-import { cx, computeVelocity, getBlockerTasks, viewFromQuery, type SortBy, type SortDir, type ViewMode } from './ui'
+import { cx, computeVelocity, getBlockerTasks, isViewMode, type SortBy, type SortDir, type ViewMode } from './ui'
 
 type SprintFilter = 'all' | number
 type SideTab = 'sprints' | 'agents' | 'brand'
 
 const VIEW_STORAGE_KEY = 'agentsprint.view'
+const PANEL_STORAGE_KEY = 'agentsprint.panel'
 
+function initialPanel(): boolean {
+  try {
+    return localStorage.getItem(PANEL_STORAGE_KEY) !== 'closed'
+  } catch {
+    return true
+  }
+}
+
+const VIEWS: Array<{ id: ViewMode; label: string; icon: typeof Compass; hint: string }> = [
+  { id: 'overview', label: 'Overview', icon: Compass, hint: 'Where the project is and what comes next' },
+  { id: 'kanban', label: 'Board', icon: LayoutGrid, hint: 'Kanban board' },
+  { id: 'list', label: 'List', icon: List, hint: 'Sortable list' },
+]
+
+/** URL first (`?view=`), then the last view used, then the overview. */
 function initialView(): ViewMode {
-  const fromUrl = typeof window !== 'undefined' ? viewFromQuery(window.location.search) : null
-  if (fromUrl) return fromUrl
+  const fromUrl = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('view') : null
+  if (isViewMode(fromUrl)) return fromUrl
   try {
     const saved = localStorage.getItem(VIEW_STORAGE_KEY)
-    if (saved === 'list' || saved === 'kanban') return saved
+    if (isViewMode(saved)) return saved
   } catch {
     /* storage unavailable */
   }
-  return 'kanban'
+  return 'overview'
 }
 
 export default function App() {
@@ -52,6 +69,17 @@ export default function App() {
   const [dispatching, setDispatching] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
+  const [panelOpen, setPanelOpen] = useState(initialPanel)
+  const togglePanel = useCallback(() => {
+    setPanelOpen((open) => {
+      try {
+        localStorage.setItem(PANEL_STORAGE_KEY, open ? 'closed' : 'open')
+      } catch {
+        /* storage unavailable */
+      }
+      return !open
+    })
+  }, [])
   const [warningsDismissed, setWarningsDismissed] = useState(false)
   const [commitCounts, setCommitCounts] = useState<Record<string, number>>({})
   const [needsAuth, setNeedsAuth] = useState(false)
@@ -158,8 +186,8 @@ export default function App() {
       /* storage unavailable */
     }
     const url = new URL(window.location.href)
-    if (next === 'list') url.searchParams.set('view', 'list')
-    else url.searchParams.delete('view')
+    if (next === 'overview') url.searchParams.delete('view')
+    else url.searchParams.set('view', next)
     window.history.replaceState(null, '', url)
   }, [])
 
@@ -305,189 +333,191 @@ export default function App() {
   return (
     <AgentsContext.Provider value={project.agents ?? []}>
     <div className="flex h-full flex-col">
-      <header className="border-b border-zinc-800 bg-zinc-950/80 px-4 py-3">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <GitBranch className="h-5 w-5 text-indigo-400" />
-          <h1 className="text-sm font-bold text-zinc-100">AgentSprint</h1>
-          <span className="hidden max-w-[24rem] truncate rounded bg-zinc-900 px-2 py-0.5 font-mono text-[11px] text-zinc-400 sm:block">
-            {project.rootDir}
-          </span>
+      <header className="border-b border-zinc-800 bg-zinc-950 px-4">
+        <div className="flex h-14 items-center gap-3">
+          <img src="/logo.svg" alt="" width={20} height={20} className="h-5 w-5 shrink-0" />
+          <div className="flex min-w-0 items-baseline gap-2">
+            <h1 className="truncate text-sm font-semibold tracking-tight text-zinc-50" title={project.rootDir}>
+              {project.config.name || 'AgentSprint'}
+            </h1>
+            {projects.length > 1 ? (
+              <select
+                value={projects.find((p) => project.rootDir === p.rootDir)?.name ?? ''}
+                onChange={(e) => switchProject(e.target.value)}
+                className="max-w-[10rem] truncate rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 outline-none focus:border-indigo-500"
+                title="Switch project"
+                aria-label="Switch project"
+              >
+                {projects.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.configName || p.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
 
-           {projects.length > 1 && (
-            <select
-              value={projects.find((p) => project.rootDir === p.rootDir)?.name ?? ''}
-              onChange={(e) => switchProject(e.target.value)}
-              className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs font-medium text-zinc-200 outline-none focus:border-indigo-500"
-              title="Switch project"
+          <nav className="ml-2 flex items-center gap-0.5 rounded-lg bg-zinc-900 p-0.5" role="group" aria-label="Board view" data-testid="view-toggle">
+            {VIEWS.map((v) => {
+              const Icon = v.icon
+              const active = view === v.id
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => setView(v.id)}
+                  aria-pressed={active}
+                  title={v.hint}
+                  className={cx(
+                    'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                    active ? 'bg-zinc-800 text-zinc-50 shadow-sm shadow-black/20' : 'text-zinc-400 hover:text-zinc-200',
+                  )}
+                >
+                  <Icon className={cx('h-3.5 w-3.5', active && 'text-indigo-400')} />
+                  <span className="hidden sm:inline">{v.label}</span>
+                </button>
+              )
+            })}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="hidden items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900 py-1.5 pl-2 pr-1.5 text-xs text-zinc-500 hover:border-zinc-700 hover:text-zinc-300 md:flex"
+              title="Command palette"
             >
-              {projects.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.configName || p.name}
+              <Search className="h-3.5 w-3.5" /> Jump to
+              <kbd className="rounded border border-zinc-700 px-1 font-mono text-[10px] text-zinc-400">⌘K</kbd>
+            </button>
+            <button
+              onClick={() => setDispatching(true)}
+              title="Plan which subagent builds which task, wave by wave"
+              data-testid="run-sprint"
+              aria-label="Run sprint"
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-zinc-200 hover:border-zinc-700 hover:text-zinc-50 active:translate-y-px"
+            >
+              <Play className="h-3.5 w-3.5 text-indigo-400" />
+              <span className="hidden lg:inline">Run sprint</span>
+            </button>
+            <button
+              onClick={() => setCreating(true)}
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 active:translate-y-px"
+            >
+              <Plus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">New task</span>
+            </button>
+            {notificationsSupported && (
+              <button
+                onClick={() => (notificationsEnabled ? disableNotifications() : void requestNotifications())}
+                aria-pressed={notificationsEnabled}
+                aria-label={notificationsEnabled ? 'Disable review notifications' : 'Enable review notifications'}
+                title={notificationsEnabled ? 'Notifications on. Click to disable' : 'Enable review notifications'}
+                data-testid="notify-toggle"
+                className={cx(
+                  'rounded-md p-1.5 hover:bg-zinc-900 hover:text-zinc-100',
+                  notificationsEnabled ? 'text-indigo-400' : 'text-zinc-500',
+                )}
+              >
+                {notificationsEnabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+              </button>
+            )}
+            {hasStoredToken && (
+              <button
+                onClick={() => void clearToken()}
+                title="Clear saved bearer token (agentsprint-token)"
+                data-testid="header-token-clear"
+                className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
+              >
+                Clear token
+              </button>
+            )}
+            <button
+              onClick={togglePanel}
+              aria-pressed={panelOpen}
+              aria-label={panelOpen ? 'Hide side panel' : 'Show side panel'}
+              title={panelOpen ? 'Hide sprints, agents and brand' : 'Show sprints, agents and brand'}
+              className="hidden rounded-md p-1.5 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-100 lg:block"
+            >
+              {panelOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+            </button>
+            <ThemeToggle />
+          </div>
+        </div>
+
+        {view !== 'overview' && (
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-zinc-800/70 py-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filter tasks…"
+                aria-label="Filter tasks by text"
+                name="task-filter"
+                autoComplete="off"
+                className="w-40 rounded-md border border-zinc-800 bg-zinc-900 py-1 pl-7 pr-2 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500 sm:w-52"
+              />
+            </div>
+            <select
+              value={sprintFilter === 'all' ? '' : sprintFilter}
+              onChange={(e) => setSprintFilter(e.target.value === '' ? 'all' : Number(e.target.value))}
+              aria-label="Filter by sprint"
+              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
+            >
+              <option value="">All sprints</option>
+              {project.sprints.map((s) => (
+                <option key={s.id} value={s.id}>
+                  Sprint {s.id}
+                  {s.status === 'active' ? ' (active)' : ''}
                 </option>
               ))}
             </select>
-          )}
-
-          <div className="ml-2 flex flex-wrap items-center gap-1.5">
             <select
               value={priorityFilter}
               onChange={(e) => setPriorityFilter(e.target.value as TaskPriority | '')}
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
+              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
               title="Filter by priority"
+              aria-label="Filter by priority"
             >
-              <option value="">All priorities</option>
+              <option value="">Any priority</option>
               {TASK_PRIORITIES.map((p) => (
                 <option key={p} value={p}>
                   {p}
                 </option>
               ))}
             </select>
-
             <select
               value={assigneeFilter}
               onChange={(e) => setAssigneeFilter(e.target.value)}
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
+              className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-indigo-500"
               title="Filter by assignee"
+              aria-label="Filter by assignee"
             >
-              <option value="">All assignees</option>
+              <option value="">Anyone</option>
               <AssigneeOptions agents={project.agents ?? []} current={assigneeFilter || undefined} />
             </select>
-
             <input
               value={tagFilter}
               onChange={(e) => setTagFilter(e.target.value)}
               placeholder="Tag…"
-              className="w-20 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+              name="tag-filter"
+              autoComplete="off"
+              className="w-20 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
               title="Filter by tag"
+              aria-label="Filter by tag"
             />
-
             {(priorityFilter || assigneeFilter || tagFilter || query || sprintFilter !== 'all') && (
               <button
                 onClick={clearFilters}
-                className="rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-1 text-xs text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
                 title="Clear all filters"
               >
-                <X className="h-3 w-3" />
+                <X className="h-3 w-3" /> Clear
               </button>
             )}
-          </div>
-
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search tasks…  ⌘K"
-                className="w-44 rounded-md border border-zinc-700 bg-zinc-900 py-1.5 pl-7 pr-2 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500 sm:w-56"
-              />
-            </div>
-
-            <select
-              value={sprintFilter === 'all' ? '' : sprintFilter}
-              onChange={(e) => setSprintFilter(e.target.value === '' ? 'all' : Number(e.target.value))}
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-indigo-500"
-            >
-              <option value="">All sprints</option>
-              {project.sprints.map((s) => (
-                <option key={s.id} value={s.id}>
-                  Sprint {s.id}
-                </option>
-              ))}
-            </select>
-
-            <div
-              className="flex overflow-hidden rounded-md border border-zinc-700 bg-zinc-900"
-              role="group"
-              aria-label="Board view"
-              data-testid="view-toggle"
-            >
-              <button
-                onClick={() => setView('kanban')}
-                aria-pressed={view === 'kanban'}
-                title="Kanban view"
-                className={cx(
-                  'px-2 py-1.5 text-zinc-400 hover:text-zinc-200',
-                  view === 'kanban' && 'bg-zinc-800 text-indigo-400',
-                )}
-              >
-                <LayoutGrid className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => setView('list')}
-                aria-pressed={view === 'list'}
-                title="List view"
-                className={cx(
-                  'border-l border-zinc-700 px-2 py-1.5 text-zinc-400 hover:text-zinc-200',
-                  view === 'list' && 'bg-zinc-800 text-indigo-400',
-                )}
-              >
-                <List className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <button
-              onClick={() => setDispatching(true)}
-              title="Plan which subagent builds which task, wave by wave"
-              data-testid="run-sprint"
-              aria-label="Run sprint"
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-zinc-200 hover:border-zinc-600 hover:text-zinc-50"
-            >
-              <Play className="h-3.5 w-3.5 text-indigo-400" />
-              <span className="hidden xl:inline">Run sprint</span>
-            </button>
-
-            <button
-              onClick={() => setCreating(true)}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
-            >
-              <Plus className="h-3.5 w-3.5" /> New task
-            </button>
-
-            {notificationsSupported && (
-              <button
-                onClick={() => (notificationsEnabled ? disableNotifications() : void requestNotifications())}
-                aria-pressed={notificationsEnabled}
-                title={notificationsEnabled ? 'Notifications on — click to disable' : 'Enable review notifications'}
-                data-testid="notify-toggle"
-                className={cx(
-                  'rounded-md border border-zinc-700 p-1.5 hover:text-zinc-100',
-                  notificationsEnabled ? 'text-indigo-400' : 'text-zinc-400',
-                )}
-              >
-                {notificationsEnabled ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
-              </button>
-            )}
-
-            {hasStoredToken && (
-              <button
-                onClick={() => void clearToken()}
-                title="Clear saved bearer token (agentsprint-token)"
-                data-testid="header-token-clear"
-                className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
-              >
-                Clear token
-              </button>
-            )}
-            <ThemeToggle />
-          </div>
-        </div>
-
-        <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-500">
-          <span className={cx('h-1.5 w-1.5 rounded-full', project.activeSprint ? 'bg-emerald-500' : 'bg-zinc-600')} />
-          {project.activeSprint ? (
-            <span>
-              Active sprint <span className="font-mono text-zinc-300">S{project.activeSprint.id}</span>:{' '}
-              {project.activeSprint.goal || 'no goal'}
+            <span className="tabular ml-auto text-[11px] text-zinc-500">
+              {tasks.length === project.tasks.length ? `${tasks.length} tasks` : `${tasks.length} of ${project.tasks.length} tasks`}
             </span>
-          ) : (
-            <span>No active sprint. Activate one to start planning.</span>
-          )}
-          <span className="ml-auto font-mono">
-            {tasks.length}/{project.tasks.length} tasks visible
-            {(priorityFilter || assigneeFilter || tagFilter || query || sprintFilter !== 'all') && ' (filtered)'}
-          </span>
-        </div>
+          </div>
+        )}
 
         {project.warnings && project.warnings.length > 0 && !warningsDismissed && (
           <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-600/50 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
@@ -544,11 +574,20 @@ export default function App() {
             <span className="text-[11px] text-zinc-400">Saved as <code className="rounded bg-black/40 px-1">agentsprint-token</code></span>
           </div>
         )}
+        {((project.warnings && project.warnings.length > 0 && !warningsDismissed) || needsAuth) && <div className="h-2" />}
       </header>
 
-      <div className="grid flex-1 grid-cols-1 gap-3 overflow-hidden p-3 lg:grid-cols-[1fr_280px]">
-        <div className="overflow-x-auto">
-          {view === 'kanban' ? (
+      <div className={cx('grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4', panelOpen && 'lg:grid-cols-[minmax(0,1fr)_300px]')}>
+        <div className={cx(view === 'overview' ? 'overflow-y-auto' : 'overflow-x-auto')}>
+          {view === 'overview' ? (
+            <Overview
+              version={project}
+              onOpenTask={(id) => {
+                const task = project.tasks.find((t) => t.id === id)
+                if (task) setEditing(task)
+              }}
+            />
+          ) : view === 'kanban' ? (
             <Board
               statuses={statuses}
               tasks={tasks}
@@ -572,7 +611,7 @@ export default function App() {
             />
           )}
         </div>
-        <div className="hidden overflow-y-auto lg:block">
+        <div className={cx('hidden overflow-y-auto', panelOpen && 'lg:block')}>
           <div className="mb-2 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/60 p-1">
             <button
               onClick={() => setSideTab('sprints')}
