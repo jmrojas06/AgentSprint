@@ -26,6 +26,14 @@ curl -i -H "Authorization: Bearer $AGENTBOARD_TOKEN" -H "Content-Type: applicati
   http://127.0.0.1:4310/mcp
 ```
 
+## Errors
+
+A failed call returns `isError: true` with a JSON body `{ "error": "<message>" }` (plus extra fields where useful, e.g. `blockers` from `task_claim`). Invalid arguments are rejected by the schema with a JSON-RPC `-32602` error.
+
+## Multiple agents
+
+Each agent can run its own stdio server on the same board. Every tool call re-syncs with the files on disk first, ids are allocated under a board-wide lock and `task_claim` checks the lock against the on-disk state, so agents in different processes see each other's work and never get the same task id or the same claim.
+
 ## Tools
 
 28 tools are exposed over both transports (stdio and Streamable HTTP):

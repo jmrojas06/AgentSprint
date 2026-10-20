@@ -19,6 +19,13 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
   return JSON.parse(result.content[0]?.text ?? 'null')
 }
 
+/** Call a tool that must fail: asserts `isError` and returns the parsed `{ error, ... }` body. */
+async function callToolError(name: string, args: Record<string, unknown>): Promise<{ error: string; [k: string]: unknown }> {
+  const result = (await client.callTool({ name, arguments: args })) as ToolResult
+  expect(result.isError).toBe(true)
+  return JSON.parse(result.content[0]?.text ?? 'null')
+}
+
 
 
 afterEach(async () => {
@@ -94,7 +101,7 @@ describe('MCP tools', () => {
   })
 
   it('task_claim blocks tasks with incomplete dependencies unless force is true', async () => {
-    const blocked = (await callTool('task_claim', { id: 'TK-2' })) as { error?: string; blockers?: string[] }
+    const blocked = (await callToolError('task_claim', { id: 'TK-2' })) as { error: string; blockers?: string[] }
     expect(blocked.error).toContain('blocked')
     expect(blocked.blockers).toContain('TK-1')
 
@@ -110,7 +117,7 @@ describe('MCP tools', () => {
     const first = (await callTool('task_claim', { id, agent: 'agent-a' })) as { status: string; lockedBy?: string }
     expect(first.status).toBe('In Progress')
 
-    const second = (await callTool('task_claim', { id, agent: 'agent-b' })) as { error?: string }
+    const second = await callToolError('task_claim', { id, agent: 'agent-b' })
     expect(second.error).toContain('locked by "agent-a"')
 
     // agent-a re-claiming refreshes its own lock without error
@@ -129,7 +136,7 @@ describe('MCP tools', () => {
     const id = tasks[tasks.length - 1]!.id
 
     await callTool('task_claim', { id, agent: 'agent-a' })
-    const wrongAgent = (await callTool('task_release', { id, agent: 'agent-b' })) as { error?: string }
+    const wrongAgent = await callToolError('task_release', { id, agent: 'agent-b' })
     expect(wrongAgent.error).toContain('not by')
 
     const released = (await callTool('task_release', { id })) as { ok?: boolean }
@@ -342,5 +349,41 @@ describe('MCP tools', () => {
     const text = (res.messages[0]?.content as { text: string }).text ?? ''
     expect(text).toContain('(not provided — propose one from the backlog)')
     expect(text).toContain('unknown (no closed sprints)')
+  })
+})
+
+describe('MCP error contract', () => {
+  it('flags domain errors with isError and a JSON { error } body', async () => {
+    expect((await callToolError('task_get', { id: 'TK-999' })).error).toBe('Task not found: TK-999')
+    expect((await callToolError('task_spec', { id: 'TK-999' })).error).toBe('Task not found: TK-999')
+    expect((await callToolError('task_update', { id: 'TK-999', title: 'x' })).error).toContain('not found')
+    expect((await callToolError('sprint_report', { id: 999 })).error).toBe('Sprint not found: 999')
+    expect((await callToolError('sprint_close', {})).error).toContain('No active sprint')
+    expect((await callToolError('task_create', {})).error).toContain('title or a template')
+  })
+
+  it('keeps successful calls unflagged', async () => {
+    const result = (await client.callTool({ name: 'task_get', arguments: { id: 'TK-1' } })) as ToolResult
+    expect(result.isError).toBeFalsy()
+  })
+})
+
+describe('MCP with other processes on the same board', () => {
+  it('sees tasks and edits made by another process', async () => {
+    const other = ProjectStore.open(dir)
+    const created = other.createTask({ title: 'made elsewhere' })
+    other.updateTask('TK-3', { title: 'renamed elsewhere' })
+
+    expect(((await callTool('task_get', { id: created.id })) as { title: string }).title).toBe('made elsewhere')
+    expect(((await callTool('task_get', { id: 'TK-3' })) as { title: string }).title).toBe('renamed elsewhere')
+
+    const mine = (await callTool('task_create', { title: 'made here' })) as { id: string }
+    expect(mine.id).not.toBe(created.id)
+  })
+
+  it('task_claim fails when another process holds the lock', async () => {
+    ProjectStore.open(dir).lockTask('TK-3', 'agent-b')
+    const res = await callToolError('task_claim', { id: 'TK-3', agent: 'agent-a' })
+    expect(res.error).toContain('locked by "agent-b"')
   })
 })

@@ -34,6 +34,17 @@ export function textResponse(value: unknown): { content: Array<{ type: 'text'; t
   }
 }
 
+/**
+ * A failed tool call: `isError: true` so the agent can tell it apart from a
+ * result, with a JSON `{ error, ...extra }` body it can parse.
+ */
+export function errorResponse(
+  message: string,
+  extra: Record<string, unknown> = {},
+): { content: Array<{ type: 'text'; text: string }>; isError: true } {
+  return { ...textResponse({ error: message, ...extra }), isError: true }
+}
+
 export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?: { store?: ProjectStore }): McpServer {
   let provider: ProjectProvider | null = null
   let baseRoot: string
@@ -48,8 +59,15 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     baseStore = provider.store()
   }
 
-  const getStore = (): ProjectStore => (provider ? provider.store() : baseStore)
-  const getProjectName = (): string => getStore().getConfig().name || ''
+  // Re-sync with the disk before every tool call: the stdio server has no file
+  // watcher, and other agents (separate processes) or humans edit the board.
+  const getStore = (): ProjectStore => {
+    const store = provider ? provider.store() : baseStore
+    store.refresh()
+    return store
+  }
+  // Config is not re-synced, so no refresh() here (it is always called right after getStore()).
+  const getProjectName = (): string => (provider ? provider.store() : baseStore).getConfig().name || ''
 
   const server = new McpServer({ name: 'agentsprint', version: '0.1.0' })
 
@@ -94,7 +112,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
           provider!.use(name)
           return textResponse({ ok: true, activeProject: provider!.current() })
         } catch (err) {
-          return textResponse({ error: (err as Error).message })
+          return errorResponse((err as Error).message)
         }
       },
     )
@@ -170,7 +188,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id }) => {
       const task = getStore().state.tasks.find((t) => t.id === id)
-      if (!task) return textResponse(`Task not found: ${id}`)
+      if (!task) return errorResponse(`Task not found: ${id}`)
       return textResponse(task)
     },
   )
@@ -199,14 +217,14 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       try {
         const store = getStore()
         if (!template && !input.title) {
-          return textResponse({ error: 'Provide a title or a template.' })
+          return errorResponse('Provide a title or a template.')
         }
         const task = template
           ? store.createTaskFromTemplate(template, { vars, overrides: input, actor: 'agent' })
           : store.createTask(input as TaskInput, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -244,7 +262,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().updateTask(id, patch, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -264,7 +282,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().setTaskStatus(id, status, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -287,12 +305,12 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const blocked = store.isTaskBlocked(id)
         if (blocked && !force) {
           const blockers = store.getBlockers(id)
-          return textResponse({ error: `Task ${id} is blocked by ${blockers.join(', ')}`, blockers })
+          return errorResponse(`Task ${id} is blocked by ${blockers.join(', ')}`, { blockers })
         }
         try {
           store.lockTask(id, agent ?? 'agent')
         } catch (err) {
-          if (!force) return textResponse({ error: (err as Error).message })
+          if (!force) return errorResponse((err as Error).message)
           await Promise.resolve()
           store.unlockTask(id, { force: true })
           store.lockTask(id, agent ?? 'agent')
@@ -301,7 +319,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = store.updateTask(id, { status: 'In Progress', assignee: 'dev' }, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -323,7 +341,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().unlockTask(id, { agent, force })
         return textResponse({ ok: true, id: task.id, lockedBy: null })
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -346,7 +364,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().setTaskChecklist(id, { index, text, completed }, { actor: 'agent' })
         return textResponse(task)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -368,7 +386,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = getStore().appendTaskNote(id, note, author ?? 'agent')
         return textResponse(task)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -385,7 +403,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       const store = getStore()
       const state = store.state
       const task = state.tasks.find((t) => t.id === id)
-      if (!task) return textResponse(`Task not found: ${id}`)
+      if (!task) return errorResponse(`Task not found: ${id}`)
       const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task.sprint) ?? null : null
       return textResponse(buildTaskSpec(task, sprint, getProjectName(), { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings() }))
     },
@@ -403,7 +421,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         getStore().deleteTask(id)
         return textResponse({ ok: true, deleted: id })
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -427,7 +445,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         })
         return textResponse(markdown)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -497,7 +515,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const brand = getStore().updateBrand(patch)
         return textResponse(brand)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -579,7 +597,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const sprint = getStore().setSprintStatus(id, 'active' as SprintStatus)
         return textResponse(sprint)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -598,7 +616,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const sprint = getStore().createSprint(goal ?? '')
         return textResponse(sprint)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -618,11 +636,11 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       try {
         const store = getStore()
         const targetId = id ?? store.state.activeSprint?.id
-        if (!targetId) return textResponse('Error: no active sprint to close and no sprint id provided.')
+        if (!targetId) return errorResponse('No active sprint to close and no sprint id provided.')
         const sprint = store.setSprintStatus(targetId, 'closed', { retro })
         return textResponse(sprint)
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -642,9 +660,9 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const store = getStore()
         const state = store.state
         const targetId = id ?? state.activeSprint?.id
-        if (!targetId) return textResponse('Error: no active sprint and no sprint id provided.')
+        if (!targetId) return errorResponse('No active sprint and no sprint id provided.')
         const sprint = state.sprints.find((s) => s.id === targetId)
-        if (!sprint) return textResponse(`Sprint not found: ${targetId}`)
+        if (!sprint) return errorResponse(`Sprint not found: ${targetId}`)
         const report = store.buildSprintRetro(targetId)
         const sprintTasks = state.tasks.filter((t) => t.sprint === targetId)
         const done = sprintTasks.filter((t) => t.status === 'Done')
@@ -662,7 +680,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         suggestedLearnings.push(`${done.length}/${sprintTasks.length} tasks completed — record what made the difference (scope, clarity of AC, agent vs human).`)
         return textResponse({ report, suggestedLearnings })
       } catch (err) {
-        return textResponse({ error: (err as Error).message })
+        return errorResponse((err as Error).message)
       }
     },
   )
@@ -681,9 +699,9 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       const store = getStore()
       const state = store.state
       const targetId = id ?? state.activeSprint?.id
-      if (!targetId) return textResponse('Error: no active sprint and no sprint id provided.')
+      if (!targetId) return errorResponse('No active sprint and no sprint id provided.')
       const sprint = state.sprints.find((s) => s.id === targetId)
-      if (!sprint) return textResponse(`Sprint not found: ${targetId}`)
+      if (!sprint) return errorResponse(`Sprint not found: ${targetId}`)
       const report = buildSprintReport(sprint, state.tasks, state.config.workflow.statuses)
       return textResponse(report)
     },

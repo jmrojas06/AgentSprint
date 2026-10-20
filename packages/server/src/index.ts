@@ -7,6 +7,9 @@ import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { registerApi } from './routes.js'
 import { registerMcpRoute } from './mcpRoute.js'
 import { ProjectManager } from './projects.js'
+import { createRequestGuard, listFromEnv } from './security.js'
+
+export { createRequestGuard, hostnameOf, isLoopbackHostname } from './security.js'
 
 export interface ServerOptions {
   rootDir: string
@@ -25,6 +28,10 @@ export interface ServerOptions {
   token?: string
   /** When true, all routes (including GET) require the bearer token. Default false: only POST/PUT/PATCH/DELETE are protected. */
   tokenAll?: boolean
+  /** Extra hostnames accepted in Host/Origin besides loopback (or AGENTBOARD_ALLOWED_HOSTS, comma-separated). */
+  allowedHosts?: string[]
+  /** Extra exact origins accepted for browser requests (or AGENTBOARD_ALLOWED_ORIGINS, comma-separated). */
+  allowedOrigins?: string[]
 }
 
 export interface BuiltApp {
@@ -42,6 +49,22 @@ export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
   const tokenAll = opts.tokenAll ?? false
 
   const app = Fastify({ logger: opts.logger ?? false })
+
+  // CSRF + DNS-rebinding guard, before auth and CORS: a web page the user
+  // happens to visit must not be able to drive the board through the browser.
+  const guard = createRequestGuard({
+    bindHost: opts.host,
+    allowedHosts: opts.allowedHosts ?? listFromEnv(process.env.AGENTBOARD_ALLOWED_HOSTS),
+    allowedOrigins: opts.allowedOrigins ?? listFromEnv(process.env.AGENTBOARD_ALLOWED_ORIGINS),
+  })
+  app.addHook('onRequest', async (req, reply) => {
+    const origin = req.headers.origin
+    const rejection = guard.check({ host: req.headers.host, origin: Array.isArray(origin) ? origin[0] : origin })
+    if (rejection) {
+      reply.code(403).send({ error: rejection })
+      return reply
+    }
+  })
 
   // Optional bearer auth: when AGENTBOARD_TOKEN / --token is set, protect API+MCP routes.
   // Default protects only mutating methods (POST/PUT/PATCH/DELETE); with tokenAll=true also GETs/HEAD.
@@ -64,6 +87,8 @@ export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
     })
   }
 
+  // Origins reaching this point already passed the guard above, so reflecting
+  // them is safe; disallowed origins never get CORS headers.
   await app.register(cors, { origin: true, allowedHeaders: ['Content-Type', 'Authorization'] })
   await registerApi(app, projects)
   if (opts.mcp) {
