@@ -34,11 +34,28 @@ docker run -d --name board --restart unless-stopped \
   agentsprint serve /board --host 0.0.0.0 --no-open --mcp
 ```
 
-For multi-project setups use [`docker-compose.yml`](https://github.com/jmrojas06/AgentSprint/blob/main/docker-compose.yml):
+For multi-project setups use [`docker-compose.yml`](https://github.com/jmrojas06/AgentSprint/blob/main/docker-compose.yml). Mount the folder that holds your repos in a `docker-compose.override.yml` (git ignores it), then start or upgrade it from the checkout:
 
 ```bash
-docker compose up -d
+pnpm docker:up     # rebuilds the image from this checkout, stamps the commit, restarts the container
+pnpm docker:logs   # follow its log
 ```
+
+A plain `docker compose up -d` does not rebuild: it keeps serving the last image, however old. The container runs as the image's `node` user (uid 1000) so files it writes in your repos stay yours. If your host uid is different, set `user: "<uid>:<gid>"` in the override.
+
+### Which AgentSprint am I talking to?
+
+One board can be served by several AgentSprint processes at once, each from its own build:
+
+| What | Where | Built from | Updated by |
+| --- | --- | --- | --- |
+| Docker board (UI + HTTP MCP at `/mcp`, every mounted project) | `http://localhost:4310` | the image | `pnpm docker:up` |
+| Claude Code's MCP server (`.mcp.json`, stdio) | inside Claude Code | `packages/*/dist` | `pnpm build`, then reconnect the server (`/mcp`) |
+| A local `agentboard serve` (e.g. `.claude/launch.json`) | the port you pass | `packages/*/dist` | `pnpm build`, then restart it |
+
+Run `agentboard doctor .` to check all of them at once: it compares each server's commit with `HEAD`, flags a `dist` older than its `src` and an `.mcp.json` pointing at a missing file.
+
+`GET /api/health` returns `{ version, commit, builtAt }`, and the UI shows the same in the side panel footer and the command palette. `commit` ends in `-dirty` when the build had uncommitted changes. If a board shows files as *not parseable* and the reason says the server may be older than the file, the writer was a newer build: upgrade the one that complains.
 
 ## From source
 

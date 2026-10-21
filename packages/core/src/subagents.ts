@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { isReviewerAgent } from './agents.js'
+import { READ_ONLY_BLOCKED_TOOLS, isReviewAssistant, isReviewerAgent } from './agents.js'
 import { serializeFrontmatter } from './frontmatter.js'
 import type { AgentProfile } from './types.js'
 
@@ -11,6 +11,21 @@ import type { AgentProfile } from './types.js'
  * is never touched.
  */
 export const SUBAGENT_MARKER = 'agentsprint:generated'
+
+/**
+ * Version of the rendered protocol, written into the marker as `schema=<n>`.
+ * Bump it whenever the protocol text changes, so an older AgentSprint never
+ * overwrites what a newer one generated. Files without it are schema 0.
+ * 2: review-assistant always blocks the board-changing MCP tools.
+ */
+export const SUBAGENT_SCHEMA = 2
+
+/** Schema of a generated subagent file (0 when unstamped), or null for a hand-written one. */
+export function subagentSchema(content: string): number | null {
+  if (!content.includes(SUBAGENT_MARKER)) return null
+  const m = new RegExp(`${SUBAGENT_MARKER} schema=(\\d+)`).exec(content)
+  return m ? Number(m[1]) : 0
+}
 
 /** Where Claude Code looks for project subagents. */
 export function claudeAgentsDir(rootDir: string): string {
@@ -77,16 +92,46 @@ Use the AgentSprint MCP tools (server \`agentsprint\`):
    Progress with your findings so the orchestrator re-launches the
    implementer.
 
-Without the MCP tools, append your verdict under \`## Notes\` in
-\`.agentboard/tasks/<id>.md\` and, for \`changes\`, set \`status: In Progress\`.
+Without the MCP tools, use the same calls through the CLI from the project
+root (\`agentboard\`, or \`npx @jmrojas06/agentsprint-cli\`), one \`--finding\`
+per item:
+
+    agentboard task show . <id>
+    agentboard task show . <id> --json
+    agentboard task review . <id> --agent ${agent.name} --verdict approve|changes --summary "…" --finding "…"
+
+Never edit the frontmatter or the \`## Activity\` section by hand.
 
 Your final message is the report the orchestrator reads: task id, verdict,
 findings and the commands you ran.`
 }
 
+/** The protocol a human-review assistant follows: it reads the Review column and briefs, it never writes to the board. */
+function reviewAssistantProtocolSection(agent: AgentProfile, projectName: string): string {
+  return `## AgentSprint human-review protocol
+
+You run as the \`${agent.name}\` subagent of the **${projectName}** board. The
+main session hands you a sprint or a list of task ids waiting in Review and
+asks the human afterwards. You only read.
+
+Use the AgentSprint MCP tools (server \`agentsprint\`): \`review_queue { sprint?, ids? }\`,
+then \`task_spec { id }\` and \`task_get { id }\` per task. Without them, use the CLI
+from the project root (\`agentboard\`, or \`npx @jmrojas06/agentsprint-cli\`):
+
+    agentboard review . --json
+    agentboard task show . <id> --json
+
+Never claim, move, note, review or decide a task, and never close a sprint:
+the human's answers are recorded by the main session.
+
+Your final message is the brief the main session reads: groups, one brief per
+task and the proposed question batches.`
+}
+
 /** The board protocol every generated subagent follows, whatever its role. */
 function protocolSection(agent: AgentProfile, projectName: string): string {
   if (isReviewerAgent(agent)) return reviewerProtocolSection(agent, projectName)
+  if (isReviewAssistant(agent)) return reviewAssistantProtocolSection(agent, projectName)
   return `## AgentSprint protocol
 
 You run as the \`${agent.name}\` subagent of the **${projectName}** board. The
@@ -107,9 +152,18 @@ Use the AgentSprint MCP tools (server \`agentsprint\`, e.g.
    to Done; a human does that. If blocked: \`task_note\` the blocker, then
    \`task_release { id }\` and stop.
 
-Without the MCP tools, edit \`.agentboard/tasks/<id>.md\` directly: set
-\`status: In Progress\` and \`assignee: ${agent.name}\` in the frontmatter when
-you start, tick \`- [x]\` criteria, and set \`status: Review\` when done.
+Without the MCP tools, run the same steps through the CLI from the project
+root (\`agentboard\`, or \`npx @jmrojas06/agentsprint-cli\`). It takes the same
+lock and writes the same activity:
+
+    agentboard task claim . <id> --agent ${agent.name}
+    agentboard task show . <id>
+    agentboard task check . <id> "<criterion text>" --agent ${agent.name}
+    agentboard task note . <id> "<decision>" --agent ${agent.name}
+    agentboard task status . <id> Review --agent ${agent.name}
+    agentboard task release . <id> --agent ${agent.name}
+
+Never edit the frontmatter or the \`## Activity\` section by hand.
 
 Your final message is the report the orchestrator reads: task id, what changed
 (files), commands run with their results, and anything left open.`
@@ -119,17 +173,21 @@ Your final message is the report the orchestrator reads: task id, what changed
 export function renderClaudeSubagent(agent: AgentProfile, projectName: string): string {
   const data: Record<string, unknown> = {
     name: agent.name,
-    description: `${agent.description.trim()} Use for AgentSprint tasks assigned to "${agent.name}" (pass the task id, e.g. TK-12).`,
+    description: isReviewAssistant(agent)
+      ? `${agent.description.trim()} Use in the AgentSprint human-review flow (pass a sprint or the task ids in Review).`
+      : `${agent.description.trim()} Use for AgentSprint tasks assigned to "${agent.name}" (pass the task id, e.g. TK-12).`,
   }
   if (agent.tools.length > 0) data.tools = agent.tools.join(', ')
-  if (agent.disallowedTools.length > 0) data.disallowedTools = agent.disallowedTools.join(', ')
+  // The review assistant is read-only by tools whatever its profile on disk says.
+  const disallowed = isReviewAssistant(agent) ? [...new Set([...agent.disallowedTools, ...READ_ONLY_BLOCKED_TOOLS])] : agent.disallowedTools
+  if (disallowed.length > 0) data.disallowedTools = disallowed.join(', ')
   if (agent.skills.length > 0) data.skills = agent.skills
   if (agent.model !== 'inherit') data.model = agent.model
   const color = nearestClaudeColor(agent.color)
   if (color) data.color = color
   const body = [
     '',
-    `<!-- ${SUBAGENT_MARKER} — edit .agentboard/agents/${agent.name}.md instead; this file is regenerated. -->`,
+    `<!-- ${SUBAGENT_MARKER} schema=${SUBAGENT_SCHEMA} — edit .agentboard/agents/${agent.name}.md instead; this file is regenerated. -->`,
     '',
     agent.prompt.trim(),
     '',
@@ -145,7 +203,7 @@ export interface SubagentSyncResult {
   written: string[]
   unchanged: string[]
   removed: string[]
-  /** Agents not written because a hand-written file with that name exists. */
+  /** Agents not written (or not removed): a hand-written file with that name, or one from a newer generator. */
   skipped: Array<{ name: string; reason: string }>
 }
 
@@ -172,10 +230,15 @@ function readOrNull(file: string): string | null {
   }
 }
 
+function newerGenerator(file: string, schema: number): string {
+  return `skipped: newer generator — ${path.join('.claude', 'agents', file)} has schema ${schema}, this AgentSprint writes ${SUBAGENT_SCHEMA}; upgrade it`
+}
+
 /**
  * Make `.claude/agents/` mirror the board's agent profiles. Idempotent: it
  * compares content, so a second run writes nothing. Generated files whose
- * profile was deleted are removed; files without the marker are left alone.
+ * profile was deleted are removed; files without the marker, or from a newer
+ * schema, are left alone.
  */
 export function syncClaudeSubagents(rootDir: string, agents: AgentProfile[], projectName: string): SubagentSyncResult {
   const dir = claudeAgentsDir(rootDir)
@@ -187,8 +250,11 @@ export function syncClaudeSubagents(rootDir: string, agents: AgentProfile[], pro
   for (const [file, { name, content }] of wanted) {
     const target = path.join(dir, file)
     const existing = readOrNull(target)
-    if (existing !== null && !existing.includes(SUBAGENT_MARKER)) {
+    const schema = existing === null ? 0 : subagentSchema(existing)
+    if (schema === null) {
       result.skipped.push({ name, reason: `${path.join('.claude', 'agents', file)} is hand-written; rename one of them to sync` })
+    } else if (schema > SUBAGENT_SCHEMA) {
+      result.skipped.push({ name, reason: newerGenerator(file, schema) })
     } else if (existing === content) {
       result.unchanged.push(name)
     } else {
@@ -200,7 +266,10 @@ export function syncClaudeSubagents(rootDir: string, agents: AgentProfile[], pro
   for (const file of fs.readdirSync(dir)) {
     if (!file.endsWith('.md') || wanted.has(file)) continue
     const target = path.join(dir, file)
-    if (readOrNull(target)?.includes(SUBAGENT_MARKER)) {
+    const schema = subagentSchema(readOrNull(target) ?? '')
+    if (schema !== null && schema > SUBAGENT_SCHEMA) {
+      result.skipped.push({ name: file.replace(/\.md$/, ''), reason: newerGenerator(file, schema) })
+    } else if (schema !== null) {
       fs.unlinkSync(target)
       result.removed.push(file.replace(/\.md$/, ''))
     }

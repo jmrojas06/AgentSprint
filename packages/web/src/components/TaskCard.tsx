@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight, Dot, GitCommitHorizontal, Lock } from 'lucid
 import type { Task } from '../types'
 import { AssigneeChip } from '../agents'
 import { cx, criterionChecked, getBlockerTasks, getTaskLock, priorityDot, priorityLabel, reviewState } from '../ui'
-import { ReviewBadge } from './Overview'
+import { ReviewBadge } from './ReviewControls'
 
 interface Props {
   task: Task
@@ -30,6 +30,7 @@ export function TaskCard({ task, allTasks, statuses, commitCount, onOpen, onMove
     <button
       type="button"
       onClick={() => onOpen(task)}
+      data-task-id={task.id}
       className={cx(
         'group w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-left',
         'transition-colors duration-150 hover:border-zinc-700 hover:bg-zinc-800/60',

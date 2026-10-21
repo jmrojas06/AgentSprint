@@ -4,10 +4,10 @@ import { pathToFileURL } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats } from '@jmrojas06/agentsprint-core'
-import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, discoverSkills, isWorkflowAssignee, missingSkills, planDispatch } from '@jmrojas06/agentsprint-core'
+import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats, learningsTail } from '@jmrojas06/agentsprint-core'
+import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, buildIdeaToMvpPrompt, buildReviewQueue, discoverSkills, isWorkflowAssignee, missingSkills, planDispatch } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
-import type { SprintStatus, TaskInput } from '@jmrojas06/agentsprint-core'
+import type { SprintStatus, Task, TaskInput } from '@jmrojas06/agentsprint-core'
 
 const STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 
@@ -56,6 +56,25 @@ export function errorResponse(
   return { ...textResponse({ error: message, ...extra }), isError: true }
 }
 
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+
+/**
+ * One diagnostic line on stderr (MCP hosts keep it in their server log).
+ * Synchronous, so it is written even when the process exits right after.
+ */
+export function logLine(message: string): void {
+  try {
+    fs.writeSync(2, `[agentboard mcp] ${message}\n`)
+  } catch {
+    /* stderr is gone too — nothing left to tell */
+  }
+}
+
+/** Task as returned by write tools: only the last 3 activity events, so long histories don't fill the agent's context. */
+export function compactTask(task: Task): Task & { activityCount: number } {
+  return { ...task, activity: task.activity.slice(-3), activityCount: task.activity.length }
+}
+
 export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?: { store?: ProjectStore }): McpServer {
   let provider: ProjectProvider | null = null
   let baseRoot: string
@@ -74,13 +93,30 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
   // watcher, and other agents (separate processes) or humans edit the board.
   const getStore = (): ProjectStore => {
     const store = provider ? provider.store() : baseStore
-    store.refresh()
+    try {
+      store.refresh()
+    } catch (err) {
+      throw new Error(`Board re-sync failed: ${errorMessage(err)}`)
+    }
     return store
   }
   // Config is not re-synced, so no refresh() here (it is always called right after getStore()).
   const getProjectName = (): string => (provider ? provider.store() : baseStore).getConfig().name || ''
 
   const server = new McpServer({ name: 'agentsprint', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS })
+
+  // Every tool runs behind a guard: anything it throws (a failed re-sync
+  // included) becomes an isError result plus a stderr line, never a crash.
+  const registerTool = server.registerTool.bind(server)
+  server.registerTool = ((name: string, config: never, handler: (...args: never[]) => unknown) =>
+    registerTool(name, config, (async (...args: never[]) => {
+      try {
+        return await handler(...args)
+      } catch (err) {
+        logLine(`tool ${name} failed: ${errorMessage(err)}`)
+        return errorResponse(errorMessage(err))
+      }
+    }) as never)) as typeof server.registerTool
 
   // ── projects (multi-project only) ────────────────────────────────────
 
@@ -279,7 +315,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = template
           ? store.createTaskFromTemplate(template, { vars, overrides: input, actor: 'agent' })
           : store.createTask(input as TaskInput, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -351,7 +387,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, ...patch }) => {
       try {
         const task = getStore().updateTask(id, patch, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -371,7 +407,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, status }) => {
       try {
         const task = getStore().setTaskStatus(id, status, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -413,7 +449,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const claimer = agent && store.listAgents().some((a) => a.name === agent) ? agent : null
         const assignee = claimer ?? (current && !isWorkflowAssignee(current.assignee) ? current.assignee : 'dev')
         const task = store.updateTask(id, { status: 'In Progress', assignee }, { actor: agent ?? 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -458,7 +494,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, index, text, completed }) => {
       try {
         const task = getStore().setTaskChecklist(id, { index, text, completed }, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -480,7 +516,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, note, author }) => {
       try {
         const task = getStore().appendTaskNote(id, note, author ?? 'agent')
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -503,11 +539,41 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id, ...input }) => {
       try {
-        return textResponse(getStore().reviewTask(id, input))
+        return textResponse(compactTask(getStore().reviewTask(id, input)))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
     },
+  )
+
+  server.registerTool(
+    'review_queue',
+    {
+      title: 'Human review queue',
+      description:
+        'Tasks waiting in Review for the human, each with criteria done/total, its latest verdict (who, when, summary, findings), `approvedSinceLastChange` and a recommendation (`approve` only when the latest approval still applies and every criterion is ticked; `look` | `changes-pending` otherwise) with the reason. Ask the human about each one, then record the answer with review_decide.',
+      inputSchema: z.object({
+        sprint: z.number().int().positive().optional(),
+        ids: z.array(z.string().regex(/^[A-Z]{2}-[0-9]+$/)).optional(),
+      }),
+    },
+    async ({ sprint, ids }) => textResponse(buildReviewQueue(getStore().state.tasks, { sprint, ids })),
+  )
+
+  server.registerTool(
+    'review_decide',
+    {
+      title: 'Record the human review decision',
+      description:
+        'Record what the human decided about a task in Review: `done` moves it to Done; `changes` sends it back to In Progress with the findings. `by` is the human (default `user`). Only for an explicit human decision, never your own; tasks not in Review are refused.',
+      inputSchema: z.object({
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
+        decision: z.enum(['done', 'changes']),
+        findings: z.array(z.string()).optional().describe('Required for `changes`: what the human wants fixed, one item each.'),
+        by: z.string().min(1).optional(),
+      }),
+    },
+    async ({ id, ...input }) => textResponse(compactTask(getStore().decideReview(id, input))),
   )
 
   server.registerTool(
@@ -665,8 +731,8 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       }),
     },
     async ({ entry }) => {
-      const content = getStore().appendLearning(entry)
-      return textResponse({ ok: true, content })
+      getStore().appendLearning(entry)
+      return textResponse({ ok: true, entry })
     },
   )
 
@@ -1132,7 +1198,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
             )
           : null
       const plannedSprint = sprint ? state.sprints.find((s) => String(s.id) === sprint) ?? null : null
-      const learnings = store.getLearnings()
+      const learnings = learningsTail(store.getLearnings(), 40)
 
       const backlogLines = backlog.length
         ? backlog
@@ -1238,34 +1304,42 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     ({ idea, stack }) => {
       const store = getStore()
-      const agents = store.listAgents()
-      const roster = agents.length
-        ? agents.map((a) => `- \`${a.name}\` — ${a.description}`).join('\n')
-        : '- (no specialized agents yet — run agent_sync with installDefaults: true first)'
-      const hasBrand = Boolean(store.getBrand().name)
-      const text = `You are the orchestrator turning an idea into a working MVP on the AgentSprint board "${getProjectName()}".
-
-## The idea
-
-${idea}
-${stack ? `\n**Preferred stack:** ${stack}\n` : ''}
-## Specialists available (Claude Code subagents)
-
-${roster}
-
-## Plan, then build
-
-1. **Shape it (ideator + creative-director).** Launch the \`ideator\` subagent for 3 distinct MVP angles, then the \`creative-director\` to pick one and define the cut: the single core user journey, what is explicitly OUT, and the success check. Ask me only if the idea is genuinely ambiguous.
-2. **Brand.** ${hasBrand ? 'A brand kit exists — read it with brand_get and keep to it.' : 'No brand kit yet: write one with brand_update (name, tagline, tone, colors, fonts) that fits the chosen angle.'}
-3. **Missing specialists.** If the MVP needs expertise the roster lacks (payments, mobile, data, …), create it with agent_upsert (name, description, prompt with mission/rules/output).
-4. **Sprint.** sprint_create with the MVP goal, then sprint_activate.
-5. **Tasks.** One task_create_batch call with every task of the MVP (aim for 6–15): each with a verifiable title, 3–6 acceptance criteria, an estimate, \`assignee\` set to the specialist that should build it, \`sprint\` set, and \`dependsOn\` refs. Start with a walking skeleton (project setup + one end-to-end path), then features, then a \`tester\` task and a \`docs\` task (README with how to run it).
-6. **Build.** Call sprint_dispatch and follow it: launch every task of a wave in parallel with the Agent tool (\`subagent_type\` = the subagent), verify between waves (tests, typecheck, run the app), send failures to \`fixer\`, and re-dispatch until nothing is left.
-7. **Hand over.** Summarize what works, how to run it, what is in Review, and what the next sprint should tackle.
-
-Work in small verifiable steps and keep the board updated — it is the source of truth for the subagents.`
+      const text = buildIdeaToMvpPrompt({ idea, stack, projectName: getProjectName(), agents: store.listAgents(), hasBrand: Boolean(store.getBrand().name) })
       return { messages: [{ role: 'user', content: { type: 'text', text } }] }
     },
+  )
+
+  server.registerPrompt(
+    'human-review',
+    {
+      title: 'Human review in chat',
+      description: 'Walk the human through the Review column in chat: review_queue, an optional review-assistant brief, batched multiple-choice questions, then review_decide and close the sprint only if they chose it.',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: [
+              'Run the human review of what waits in Review. You are the main session: only you can ask the human, so never delegate the decision and never decide for them.',
+              '',
+              '1. Call review_queue (pass `sprint` or `ids` when the human named them). If it is empty, say so and stop.',
+              '2. Group the items by sprint. When the queue is long or an item needs a closer look (recommendation `look` or `changes-pending`, criteria not all ticked, an approval older than the last change), launch the read-only `review-assistant` subagent with those ids: it returns a short decision brief per task and proposed questions. It records nothing.',
+              '3. Ask with AskUserQuestion (without it, numbered questions in chat), at most 4 questions per call, 2–4 options each, your recommended option first:',
+              '   - one question per sprint for its `approve` items, even when the same sprint also has odd items: "Approve these N" / "Leave in Review" (offer "Approve all and close Sprint N" only when, with them, nothing else in that sprint stays open);',
+              '   - one separate question per odd item (stale approval, changes pending, unticked or obsolete criterion, no verdict), with its one-line brief: "Approve" / "Send back with changes" / "Leave in Review".',
+              '   Ask the next batch only after the previous one is answered.',
+              '4. Apply exactly what was chosen: review_decide { id, decision: "done" } for each approved task; review_decide { id, decision: "changes", findings: [...] } with the human\'s own words as findings. Leave everything else in Review.',
+              '5. Call sprint_close only for a sprint the human chose to close, and only after task_list for that sprint shows every task Done.',
+              '6. Finish with a summary: moved to Done, sent back, left in Review, sprints closed.',
+              '',
+              'Without the MCP tools: `agentboard review --json`, `agentboard review --done TK-1,TK-2`, `agentboard review --changes TK-3 --finding "…"`, `agentboard close . <sprint>`.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
   )
 
   server.registerPrompt(
@@ -1290,7 +1364,59 @@ Work in small verifiable steps and keep the board updated — it is the source o
   return server
 }
 
+/**
+ * Make every way the stdio process can end say why on stderr, as one
+ * `[agentboard mcp] exiting: <reason>` line: the host closing stdin, a signal,
+ * an uncaught exception or rejection, or any other process.exit().
+ */
+export function installExitLogging(): void {
+  let logged = false
+  const exitWith = (reason: string, code: number, stack?: string): void => {
+    if (!logged) {
+      logged = true
+      logLine(`exiting: ${reason}`)
+      if (stack) logLine(stack)
+    }
+    process.exit(code)
+  }
+  const describe = (err: unknown): [string, string | undefined] => [errorMessage(err), err instanceof Error ? err.stack : undefined]
+
+  // A closed stdin is the host hanging up: only note it. Exiting here would cut
+  // off a response still being computed or written; the process ends on its
+  // own once in-flight work is done, and the 'exit' listener logs the reason.
+  let pendingReason: string | null = null
+  process.stdin.once('end', () => (pendingReason ??= 'stdin closed'))
+  process.stdin.once('close', () => (pendingReason ??= 'stdin closed'))
+  process.stdout.once('error', (err) => exitWith(`stdout error: ${err.message}`, 0))
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    // Log, then re-raise: the once-listener is gone, so the default action ends
+    // the process by the signal exactly as before (hosts see the same status).
+    process.once(signal, () => {
+      if (!logged) {
+        logged = true
+        logLine(`exiting: received ${signal}`)
+      }
+      process.kill(process.pid, signal)
+    })
+  }
+  process.on('uncaughtException', (err) => {
+    const [message, stack] = describe(err)
+    exitWith(`uncaught exception: ${message}`, 1, stack)
+  })
+  process.on('unhandledRejection', (reason) => {
+    const [message, stack] = describe(reason)
+    exitWith(`unhandled rejection: ${message}`, 1, stack)
+  })
+  process.once('exit', (code) => {
+    if (!logged) {
+      logged = true
+      logLine(`exiting: ${pendingReason ?? `exit code ${code}`}`)
+    }
+  })
+}
+
 export async function main(argv: string[]): Promise<void> {
+  installExitLogging()
   const rootFlag = argv.indexOf('--root')
   const rootEnv = process.env.AGENTSPRINT_ROOT
   const rootDir = rootFlag !== -1 ? argv[rootFlag + 1] : rootEnv ?? process.cwd()

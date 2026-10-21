@@ -129,6 +129,7 @@ describe('DispatchModal', () => {
   const plan: DispatchPlan = {
     sprint: { id: 1, goal: 'MVP', status: 'active', startedAt: null, endedAt: null },
     waves: [[item], [{ ...item, id: 'TK-2', title: 'Copy', subagent: null }]],
+    conflicts: [],
     inProgress: [],
     review: [],
     blocked: [],

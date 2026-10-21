@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, ClipboardCopy, Play, ShieldCheck, X } from 'lucide-react'
 import type { DispatchItem, DispatchPlan } from '../types'
 import { api } from '../api'
 import { AssigneeChip } from '../agents'
+import { useDialogFocus } from '../hooks/useDialogFocus'
 import { cx, priorityDot } from '../ui'
 
 interface Props {
@@ -24,14 +25,11 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
   const [data, setData] = useState<{ plan: DispatchPlan; markdown: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  // Focus moves to Close on open, Tab stays inside, Escape closes, and focus
+  // returns to the Run sprint button (same pattern as the command palette).
+  useDialogFocus(dialogRef, onClose, closeRef)
 
   useEffect(() => {
     let cancelled = false
@@ -60,42 +58,37 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
 
   const gated = plan ? plan.review.filter((it) => it.reviewer) : []
 
-  const row = (it: DispatchItem, extra?: string, showReviewer = true) => (
-    <li key={it.id}>
-      <button
-        type="button"
-        onClick={() => onOpenTask(it.id)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-800/70"
-      >
-        <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', priorityDot[it.priority])} />
-        <span className="w-14 shrink-0 font-mono text-[11px] text-zinc-500" translate="no">{it.id}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-zinc-200">{it.title}</span>
-        {extra && <span className="hidden shrink-0 text-[11px] text-zinc-500 sm:inline">{extra}</span>}
-        {it.subagent ? (
+  const row = (it: DispatchItem, extra?: string) => (
+    <TaskLine
+      key={it.id}
+      id={it.id}
+      title={it.title}
+      onOpen={onOpenTask}
+      lead={<span className={cx('h-1.5 w-1.5 rounded-full', priorityDot[it.priority])} />}
+      extra={extra}
+      chip={
+        it.subagent ? (
           <AssigneeChip assignee={it.subagent} className="shrink-0" />
         ) : (
           <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400" title="No specialist matches: use the default agent">
             general-purpose
           </span>
-        )}
-        {showReviewer && it.reviewer && (
-          <span className="hidden shrink-0 items-center gap-1 text-[10px] text-zinc-500 md:flex" title={`Then checked by ${it.reviewer}`}>
-            <ShieldCheck className="h-3 w-3" />
-            {it.reviewer}
-          </span>
-        )}
-      </button>
-    </li>
+        )
+      }
+      reviewer={it.reviewer}
+    />
   )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="dispatch-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl outline-none"
         data-testid="dispatch-modal"
       >
         <div className="flex items-start gap-3 border-b border-zinc-800 p-4">
@@ -108,7 +101,7 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
               {plan ? (plan.sprint ? `Sprint ${plan.sprint.id}: ${plan.sprint.goal || 'no goal'}` : 'Backlog (no active sprint)') : 'Planning waves…'}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-800" aria-label="Close">
+          <button ref={closeRef} type="button" onClick={onClose} className="-m-1 ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -142,7 +135,7 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
           {plan?.waves.map((wave, i) =>
             wave.length === 0 ? null : (
               <section key={i} aria-label={`Wave ${i + 1}`}>
-                <h3 className="mb-1 flex items-baseline gap-2 text-xs font-semibold text-zinc-200">
+                <h3 className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs font-semibold text-zinc-200">
                   Wave {i + 1}
                   <span className="font-normal text-zinc-500">
                     {waveLabel(plan.waves, i)}
@@ -172,20 +165,20 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
 
           {gated.length > 0 && (
             <section aria-label="Review gate">
-              <h3 className="mb-1 flex items-baseline gap-2 text-xs font-semibold text-zinc-200">
+              <h3 className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs font-semibold text-zinc-200">
                 Review gate
                 <span className="font-normal text-zinc-500">reviewer subagents check these before you do</span>
               </h3>
               <ul className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-1">
                 {gated.map((it) => (
-                  <li key={it.id}>
-                    <button type="button" onClick={() => onOpenTask(it.id)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-800/70">
-                      <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      <span className="w-14 shrink-0 font-mono text-[11px] text-zinc-500" translate="no">{it.id}</span>
-                      <span className="min-w-0 flex-1 truncate text-xs text-zinc-200">{it.title}</span>
-                      <AssigneeChip assignee={it.reviewer!} className="shrink-0" />
-                    </button>
-                  </li>
+                  <TaskLine
+                    key={it.id}
+                    id={it.id}
+                    title={it.title}
+                    onOpen={onOpenTask}
+                    lead={<ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />}
+                    chip={<AssigneeChip assignee={it.reviewer!} className="shrink-0" />}
+                  />
                 ))}
               </ul>
             </section>
@@ -214,5 +207,55 @@ export function DispatchModal({ sprintId, onOpenTask, onClose }: Props) {
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * One task in the plan. From sm up it is a single line (id, title, chips);
+ * below sm the chips drop to a second line so the title keeps the width.
+ */
+function TaskLine({
+  id,
+  title,
+  onOpen,
+  lead,
+  chip,
+  extra,
+  reviewer,
+}: {
+  id: string
+  title: string
+  onOpen: (id: string) => void
+  lead: ReactNode
+  chip: ReactNode
+  extra?: string
+  reviewer?: string | null
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onOpen(id)}
+        className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-zinc-800/70 sm:items-center"
+      >
+        <span className="flex h-4 w-3.5 shrink-0 items-center justify-center">{lead}</span>
+        <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="shrink-0 font-mono text-[11px] text-zinc-500 sm:w-14" translate="no">{id}</span>
+            <span className="line-clamp-2 min-w-0 flex-1 break-words text-xs text-zinc-200 sm:line-clamp-1">{title}</span>
+          </span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:shrink-0 sm:flex-nowrap">
+            {extra && <span className="text-[11px] text-zinc-500">{extra}</span>}
+            {chip}
+            {reviewer && (
+              <span className="hidden shrink-0 items-center gap-1 text-[10px] text-zinc-500 md:flex" title={`Then checked by ${reviewer}`}>
+                <ShieldCheck className="h-3 w-3" />
+                {reviewer}
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
+    </li>
   )
 }

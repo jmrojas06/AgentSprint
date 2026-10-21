@@ -440,6 +440,49 @@ describe('server API', () => {
       expect(a4.headers['x-cache']).toBe('MISS')
     })
 
+    it('honours a custom gitCacheTtlMs that expires before the default TTL', async () => {
+      vi.useFakeTimers()
+      const built2 = await buildApp({ rootDir: dir, gitCacheTtlMs: 1_000 })
+      try {
+        const r1 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r1.headers['x-cache']).toBe('MISS')
+        const r2 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r2.headers['x-cache']).toBe('HIT')
+        vi.advanceTimersByTime(1_100)
+        const r3 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r3.headers['x-cache']).toBe('MISS')
+      } finally {
+        await built2.close()
+      }
+    })
+
+    it('reads the TTL from AGENTBOARD_GIT_CACHE_TTL_MS (0 disables the cache)', async () => {
+      vi.stubEnv('AGENTBOARD_GIT_CACHE_TTL_MS', '0')
+      const built2 = await buildApp({ rootDir: dir })
+      try {
+        const r1 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r1.headers['x-cache']).toBe('MISS')
+        const r2 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r2.headers['x-cache']).toBe('MISS')
+      } finally {
+        vi.unstubAllEnvs()
+        await built2.close()
+      }
+    })
+
+    it('invalidates the git cache when the board watcher sees a change', async () => {
+      await new Promise((r) => setTimeout(r, 300)) // let chokidar finish its initial scan
+      expect((await app.inject({ method: 'GET', url: '/api/git/commit-counts' })).headers['x-cache']).toBe('MISS')
+      expect((await app.inject({ method: 'GET', url: '/api/git/commit-counts' })).headers['x-cache']).toBe('HIT')
+      fs.appendFileSync(path.join(dir, '.agentboard', 'tasks', 'TK-1.md'), '\nedited\n')
+      let cache: unknown = 'HIT'
+      for (let i = 0; i < 40 && cache === 'HIT'; i++) {
+        await new Promise((r) => setTimeout(r, 100))
+        cache = (await app.inject({ method: 'GET', url: '/api/git/commit-counts' })).headers['x-cache']
+      }
+      expect(cache).toBe('MISS')
+    })
+
     it('exports clearGitCache helper and respects manual invalidation', async () => {
       clearGitCache()
       const r1 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
@@ -515,6 +558,7 @@ describe('server API', () => {
         'docs',
         'fixer',
         'ideator',
+        'review-assistant',
         'tester',
         'ui-reviewer',
       ])
@@ -561,8 +605,8 @@ describe('server API', () => {
       await api('patch', `/api/sprints/${sprintId}`, { status: 'active' })
       const batch = await api('post', '/api/tasks/batch', {
         tasks: [
-          { ref: 'ui', title: 'Hero', sprint: sprintId, assignee: 'designer' },
-          { title: 'Hero tests', sprint: sprintId, assignee: 'tester', dependsOn: ['ui'] },
+          { ref: 'ui', title: 'Hero', sprint: sprintId, assignee: 'designer', acceptanceCriteria: ['Hero renders'] },
+          { title: 'Hero tests', sprint: sprintId, assignee: 'tester', dependsOn: ['ui'], acceptanceCriteria: ['Tests pass'] },
         ],
       })
       expect(batch.status).toBe(201)
@@ -746,9 +790,11 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(40)
+      expect(tools.length).toBe(42)
       const names = tools.map((t) => t.name)
       expect(names).toContain('project_list')
+      expect(names).toContain('review_queue')
+      expect(names).toContain('review_decide')
       expect(names).toContain('export_board')
       expect(names).toContain('task_release')
       expect(names).toContain('template_list')
@@ -975,10 +1021,65 @@ describe('session continuity API', () => {
     expect(missing.status).toBe(404)
   })
 
+  it('GET /api/review-queue lists Review tasks with their recommendation', async () => {
+    await api('patch', '/api/tasks/TK-1/status', { status: 'Review' })
+    await api('patch', '/api/tasks/TK-2/status', { status: 'Review' })
+    // `approve` needs every criterion ticked, not just an approving verdict.
+    const criteria = (await api('get', '/api/tasks/TK-1')).json().acceptanceCriteria as string[]
+    for (let index = 0; index < criteria.length; index++) await api('patch', '/api/tasks/TK-1/checklist', { index, completed: true })
+    await api('post', '/api/tasks/TK-1/review', { reviewer: 'code-reviewer', verdict: 'approve' })
+    const { status, json } = await api('get', '/api/review-queue')
+    expect(status).toBe(200)
+    expect(json().map((q: { id: string; recommendation: string }) => [q.id, q.recommendation])).toEqual([['TK-1', 'approve'], ['TK-2', 'look']])
+    expect((await api('get', '/api/review-queue?ids=TK-2,TK-3')).json().map((q: { id: string }) => q.id)).toEqual(['TK-2'])
+    expect((await api('get', '/api/review-queue?sprint=999')).json()).toEqual([])
+    expect((await api('get', '/api/review-queue?sprint=x')).status).toBe(400)
+  })
+
   it('GET /api/skills lists skills and missing references', async () => {
     const { status, json } = await api('get', '/api/skills')
     expect(status).toBe(200)
     expect(Array.isArray(json().skills)).toBe(true)
     expect(Array.isArray(json().missing)).toBe(true)
+  })
+
+  it('POST /api/prompts/idea-to-mvp renders the full prompt with the idea verbatim', async () => {
+    const idea = 'A shared "shopping" list\nfor flatmates who don\'t talk: $5 `stripe`'
+    const { status, json } = await api('post', '/api/prompts/idea-to-mvp', { idea, stack: 'Vite + React', scope: 'one list, no accounts' })
+    expect(status).toBe(200)
+    const { text } = json()
+    expect(text).toContain(`## The idea\n\n${idea}\n`)
+    expect(text).toContain('**Preferred stack:** Vite + React')
+    expect(text).toContain('**Scope:** one list, no accounts')
+    expect(text).toContain('task_create_batch')
+    expect(fs.existsSync(path.join(dir, '.agentboard', 'tasks', 'TK-4.md'))).toBe(false)
+  })
+
+  it('POST /api/prompts/idea-to-mvp rejects an empty idea', async () => {
+    expect((await api('post', '/api/prompts/idea-to-mvp', { idea: '   ' })).status).toBe(400)
+    expect((await api('post', '/api/prompts/idea-to-mvp', {})).status).toBe(400)
+    // A non-string stack or scope is a client error too, not a 500.
+    expect((await api('post', '/api/prompts/idea-to-mvp', { idea: 'x', stack: 42 })).status).toBe(400)
+    expect((await api('post', '/api/prompts/idea-to-mvp', { idea: 'x', scope: ['a'] })).status).toBe(400)
+  })
+})
+
+describe('subagent sync logging', () => {
+  it('warns about a skipped subagent once, not on every sync', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-skiplog-'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      ProjectStore.init(root, { sample: true })
+      fs.writeFileSync(path.join(root, '.claude', 'agents', 'developer.md'), '---\nname: developer\ndescription: mine\n---\nHand-written', 'utf8')
+      const { ProjectManager } = await import('./projects.js')
+      const first = await ProjectManager.discover(root)
+      const second = await ProjectManager.discover(root)
+      await first.closeAll()
+      await second.closeAll()
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('"developer"'))).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })

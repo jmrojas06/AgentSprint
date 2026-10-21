@@ -107,5 +107,7 @@ describe('server rejects cross-site browser requests', () => {
     expect(devProxy.headers['access-control-allow-origin']).toBe('http://localhost:5173')
     const cli = await app.inject({ method: 'GET', url: '/api/health' })
     expect(cli.statusCode).toBe(200)
+    // Health names the build so a stale server (old image, old dist) is recognizable.
+    expect(cli.json()).toEqual({ ok: true, version: expect.any(String), commit: null, builtAt: null })
   })
 })

@@ -14,13 +14,19 @@ interface Props {
   onActivateSprint: (id: number) => void
   onClearFilters: () => void
   onRunSprint?: () => void
+  /** Opens the Idea → MVP dialog. */
+  onStartIdea?: () => void
+  /** Opens the side panel (a drawer on narrow screens) on one of its sections. */
+  onOpenPanel?: (section: 'sprints' | 'agents' | 'brand') => void
+  /** Server build shown as an info row (not a command). */
+  build?: { label: string; title?: string } | null
 }
 
 interface Item {
   key: string
   label: string
   hint?: string
-  group: 'Actions' | 'Tasks' | 'Sprints'
+  group: 'Actions' | 'Go to' | 'Tasks' | 'Sprints'
   keywords?: string
   run: () => void
 }
@@ -38,6 +44,9 @@ export function CommandPalette({
   onActivateSprint,
   onClearFilters,
   onRunSprint,
+  onStartIdea,
+  onOpenPanel,
+  build,
 }: Props) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
@@ -76,7 +85,18 @@ export function CommandPalette({
       { key: 'new-task', label: 'Create new task', group: 'Actions', run: onCreateTask },
       { key: 'clear-filters', label: 'Clear all filters', group: 'Actions', run: onClearFilters },
       ...(onRunSprint ? [{ key: 'run-sprint', label: 'Run sprint with subagents', hint: 'dispatch plan', group: 'Actions' as const, run: onRunSprint }] : []),
+      ...(onStartIdea
+        ? [{ key: 'start-idea', label: 'Start from an idea', hint: 'idea → MVP prompt', keywords: 'idea mvp plan new project prompt', group: 'Actions' as const, run: onStartIdea }]
+        : []),
     ]
+    const panelItems: Item[] = onOpenPanel
+      ? [
+          { key: 'panel-agents', label: 'Agents', hint: 'view, edit and sync subagents', keywords: 'subagents specialists', group: 'Go to', run: () => onOpenPanel('agents') },
+          { key: 'panel-sprints', label: 'Sprints', hint: 'create, activate and close', group: 'Go to', run: () => onOpenPanel('sprints') },
+          { key: 'panel-brand', label: 'Brand kit', hint: 'colors, fonts and tone', keywords: 'brand design tokens', group: 'Go to', run: () => onOpenPanel('brand') },
+        ]
+      : []
+    actions.push(...panelItems)
     const taskItems: Item[] = tasks.map((t) => ({
       key: `task-${t.id}`,
       label: `${t.id} — ${t.title}`,
@@ -107,7 +127,7 @@ export function CommandPalette({
       .sort((a, b) => b.score - a.score)
       .slice(0, MAX_RESULTS)
       .map((r) => r.item)
-  }, [open, query, tasks, sprints, activeSprintId, onCreateTask, onOpenTask, onActivateSprint, onClearFilters, onRunSprint])
+  }, [open, query, tasks, sprints, activeSprintId, onCreateTask, onOpenTask, onActivateSprint, onClearFilters, onRunSprint, onStartIdea, onOpenPanel])
 
   useEffect(() => {
     setIndex((i) => Math.min(i, Math.max(0, items.length - 1)))
@@ -126,8 +146,13 @@ export function CommandPalette({
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    // Escape is handled by the capture-phase window listener above
-    if (e.key === 'ArrowDown') {
+    // Escape is handled by the capture-phase window listener above.
+    // Combobox: focus stays in the input and arrows move the active option,
+    // so Tab must not walk out to the page (or the modal) behind the palette.
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      inputRef.current?.focus()
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       setIndex((i) => Math.max(0, Math.min(i + 1, items.length - 1)))
     } else if (e.key === 'ArrowUp') {
@@ -147,6 +172,9 @@ export function CommandPalette({
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[12vh]" onClick={onClose}>
       <div
         data-testid="command-palette"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
         onKeyDown={onKeyDown}
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-lg overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
@@ -160,27 +188,33 @@ export function CommandPalette({
               setQuery(e.target.value)
               setIndex(0)
             }}
+            role="combobox"
+            aria-label="Search tasks and commands"
+            aria-expanded="true"
+            aria-controls="command-palette-results"
+            aria-activedescendant={items[index] ? `command-option-${index}` : undefined}
             placeholder="Search tasks, run a command…"
             className="w-full bg-transparent py-1 text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
           />
           <kbd className="rounded border border-zinc-700 px-1 font-mono text-[10px] text-zinc-500">esc</kbd>
         </div>
 
-        <ul ref={listRef} role="listbox" aria-label="Command palette results" className="max-h-80 overflow-y-auto py-1">
+        <ul ref={listRef} id="command-palette-results" role="listbox" aria-label="Command palette results" className="max-h-80 overflow-y-auto py-1">
           {items.length === 0 && (
-            <li className="px-3 py-6 text-center text-xs text-zinc-600">No matching commands or tasks</li>
+            <li className="px-3 py-6 text-center text-xs text-zinc-500">No matching commands or tasks</li>
           )}
           {items.map((item, i) => {
             const header = headerKeys.has(item.key) ? item.group : null
             return (
-              <li key={item.key} role="option" aria-selected={i === index}>
+              <li key={item.key} id={`command-option-${i}`} role="option" aria-selected={i === index}>
                 {header && (
-                  <div className="mt-1 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
+                  <div className="mt-1 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
                     {header}
                   </div>
                 )}
                 <button
                   type="button"
+                  tabIndex={-1}
                   data-testid="command-item"
                   data-active={i === index}
                   onMouseEnter={() => setIndex(i)}
@@ -202,6 +236,14 @@ export function CommandPalette({
             )
           })}
         </ul>
+        {build && (
+          <div className="border-t border-zinc-800 px-3 py-1.5 text-[11px] text-zinc-500">
+            Server{' '}
+            <span className="font-mono" title={build.title} data-testid="server-build">
+              {build.label}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

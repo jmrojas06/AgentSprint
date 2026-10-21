@@ -16,6 +16,8 @@
     "test": "pnpm -r test",
     "lint": "eslint .",
     "agentsprint": "pnpm --filter @jmrojas06/agentsprint-cli start",
+    "docker:up": "AGENTBOARD_COMMIT=$(git rev-parse --short HEAD)$(git diff --quiet HEAD || echo -dirty) docker compose up -d --build",
+    "docker:logs": "docker compose logs -f --tail 50",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"

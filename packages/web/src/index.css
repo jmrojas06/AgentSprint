@@ -29,7 +29,8 @@ html {
   --color-zinc-800: #1f2126;
   --color-zinc-700: #2d3037;
   --color-zinc-600: #484c55;
-  --color-zinc-500: #6c717c;
+  /* Secondary text: 5.0:1 on zinc-900 cards, 4.6:1 on hovered rows (AA). */
+  --color-zinc-500: #80868f;
   --color-zinc-400: #9297a1;
   --color-zinc-300: #c4c8cf;
   --color-zinc-200: #dfe2e7;
@@ -38,8 +39,12 @@ html {
 
   --color-indigo-300: #b4b7fb;
   --color-indigo-400: #9195f8;
-  --color-indigo-500: #6d70f2;
-  --color-indigo-600: #5a5ee6;
+  /*
+   * 600 is the primary button, 500 its hover and the focus ring. White labels
+   * stay at 5.5:1 and 4.7:1, and the ring keeps 3.4:1 or more on every surface.
+   */
+  --color-indigo-500: #6064ea;
+  --color-indigo-600: #5357e0;
   --color-indigo-950: #17183a;
 }
 
@@ -54,7 +59,8 @@ html.light {
   --color-zinc-800: #e5e7eb;
   --color-zinc-700: #d3d6dc;
   --color-zinc-600: #a3a8b2;
-  --color-zinc-500: #6b707b;
+  /* Secondary text: 5.2:1 on zinc-900 cards, 4.6:1 on zinc-800 (AA). */
+  --color-zinc-500: #62676f;
   --color-zinc-400: #4f545e;
   --color-zinc-300: #3a3e47;
   --color-zinc-200: #262930;
@@ -115,6 +121,24 @@ body {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Side panel drawer below 1024px: slides in from the edge it lives on. */
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+.drawer-in {
+  animation: drawer-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scrim-in {
+  animation: scrim-in 180ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {

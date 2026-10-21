@@ -17,6 +17,20 @@ afterEach(() => {
 })
 
 describe('ProjectStore', () => {
+  it('says why a task file was skipped instead of always blaming the YAML', () => {
+    const tasks = path.join(dir, '.agentboard', 'tasks')
+    const original = fs.readFileSync(path.join(tasks, 'TK-1.md'), 'utf8')
+    fs.writeFileSync(path.join(tasks, 'TK-1.md'), original.replace(/^status: .*$/m, 'status: Shipped'))
+    fs.writeFileSync(path.join(tasks, 'TK-2.md'), '---\nid: TK-2\ntitle: Web: foo\n---\n')
+    const warnings = ProjectStore.open(dir).lastWarnings
+    const schema = warnings.find((w) => w.includes('TK-1.md'))
+    const yaml = warnings.find((w) => w.includes('TK-2.md'))
+    expect(schema).toContain('field `status`')
+    expect(schema).toContain('may be older')
+    expect(yaml).toContain('YAML error')
+    expect(yaml).toContain('title: "Web: foo"')
+  })
+
   it('scaffolds sample content', () => {
     const state = store.state
     expect(state.tasks).toHaveLength(3)

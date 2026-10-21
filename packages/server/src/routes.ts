@@ -1,23 +1,24 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
-import { buildDispatchPlan, buildSprintReport, buildTaskSpec, computeSprintStats, discoverSkills, findTaskRefs, missingSkills, planDispatch, snapshotProject, taskCommitCounts } from '@jmrojas06/agentsprint-core'
+import { buildDispatchPlan, buildIdeaToMvpPrompt, buildReviewQueue, buildSprintReport, buildTaskSpec, computeSprintStats, discoverSkills, findTaskRefs, missingSkills, planDispatch, snapshotProject, taskCommitCounts } from '@jmrojas06/agentsprint-core'
 import type { ReviewVerdict } from '@jmrojas06/agentsprint-core'
 import type { ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
+import { BUILD_INFO } from './build.js'
 
 // ── git cache ────────────────────────────────────────────────────────────
 // In-memory per-process cache with TTL for git-heavy endpoints.
-// Invalidation: TTL-only (default 10s). No event-based invalidation on
-// POST/PUT/PATCH is needed because commits are created outside the board
-// via git; after TTL expiry the next request re-executes `git log`.
+// TTL: `gitCacheTtlMs` server option, else AGENTBOARD_GIT_CACHE_TTL_MS,
+// else 10s; 0 disables caching. Commits are created outside the board via
+// git, so after TTL expiry the next request re-executes `git log`.
 // Observability: every response carries `X-Cache: HIT | MISS`.
-// `clearGitCache()` is exported for tests to reset state deterministically.
 // Key = repo path + suffix (counts vs refs) + optional pattern/task id.
 export const GIT_CACHE_TTL_MS = 10_000
 
 type CacheEntry<T> = { value: T; expiresAt: number }
 const gitCache = new Map<string, CacheEntry<unknown>>()
 
+/** Manual invalidation: called by the board watcher on every board change. */
 export function clearGitCache(): void {
   gitCache.clear()
 }
@@ -32,8 +33,11 @@ function getCached<T>(key: string): T | undefined {
   return entry.value
 }
 
-function setCached<T>(key: string, value: T): void {
-  gitCache.set(key, { value, expiresAt: Date.now() + GIT_CACHE_TTL_MS })
+function setCached<T>(key: string, value: T, ttlMs: number): void {
+  const now = Date.now()
+  // Drop expired entries so distinct ?pattern= keys cannot grow the map forever.
+  for (const [k, entry] of gitCache) if (entry.expiresAt <= now) gitCache.delete(k)
+  gitCache.set(key, { value, expiresAt: now + ttlMs })
 }
 
 function sendError(reply: FastifyReply, status: number, message: string): void {
@@ -45,8 +49,8 @@ function projectName(req: FastifyRequest): string | undefined {
   return q || undefined
 }
 
-export async function registerApi(app: FastifyInstance, projects: ProjectManager): Promise<void> {
-  app.get('/api/health', async () => ({ ok: true, version: '0.1.0' }))
+export async function registerApi(app: FastifyInstance, projects: ProjectManager, gitCacheTtlMs = GIT_CACHE_TTL_MS): Promise<void> {
+  app.get('/api/health', async () => ({ ok: true, ...BUILD_INFO }))
 
   app.get('/api/projects', async () => projects.list())
 
@@ -197,7 +201,7 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
         return reply.send({ id, ...cached })
       }
       const refs = await findTaskRefs(h.store.rootDir, id, pattern ? { pattern } : {})
-      setCached(cacheKey, refs)
+      setCached(cacheKey, refs, gitCacheTtlMs)
       reply.header('X-Cache', 'MISS')
       return reply.send({ id, ...refs })
     } catch (err) {
@@ -307,7 +311,7 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
     }
     const ids = h.store.state.tasks.map((t) => t.id)
     const counts = await taskCommitCounts(h.store.rootDir, ids)
-    setCached(cacheKey, counts)
+    setCached(cacheKey, counts, gitCacheTtlMs)
     reply.header('X-Cache', 'MISS')
     return reply.send(counts)
   })
@@ -404,6 +408,26 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
       const message = (err as Error).message
       return sendError(reply, /not found/i.test(message) ? 404 : 400, message)
     }
+  })
+
+  // Same result as the MCP `review_queue` tool.
+  app.get('/api/review-queue', async (req, reply) => {
+    const q = req.query as Record<string, string>
+    const sprint = q.sprint ? Number(q.sprint) : undefined
+    if (q.sprint && (!Number.isInteger(sprint) || sprint! <= 0)) return sendError(reply, 400, 'sprint must be a positive integer')
+    const ids = q.ids ? q.ids.split(',').map((s) => s.trim()).filter(Boolean) : undefined
+    return reply.send(buildReviewQueue(projects.get(projectName(req)).store.state.tasks, { sprint, ids }))
+  })
+
+  // Same text as the MCP `idea-to-mvp` prompt, to paste into Claude Code as a message.
+  app.post('/api/prompts/idea-to-mvp', async (req, reply) => {
+    const { idea, stack, scope } = (req.body ?? {}) as { idea?: unknown; stack?: unknown; scope?: unknown }
+    if (typeof idea !== 'string' || !idea.trim()) return sendError(reply, 400, 'idea is required')
+    if (stack != null && typeof stack !== 'string') return sendError(reply, 400, 'stack must be a string')
+    if (scope != null && typeof scope !== 'string') return sendError(reply, 400, 'scope must be a string')
+    const { store } = projects.get(projectName(req))
+    const text = buildIdeaToMvpPrompt({ idea, stack: stack ?? undefined, scope: scope ?? undefined, projectName: store.getConfig().name || '', agents: store.listAgents(), hasBrand: Boolean(store.getBrand().name) })
+    return reply.send({ text })
   })
 
   // ── memory (learnings) ───────────────────────────────────────────────────

@@ -36,31 +36,22 @@ export function viewFromQuery(search: string, fallback: ViewMode = 'kanban'): Vi
   return isViewMode(value) ? value : fallback
 }
 
-export interface ReviewState {
-  verdict: 'approved' | 'changes'
-  by: string
-  at: string
+// Review-gate rules live in core (pure subpath, safe for the browser bundle).
+export { closableApproved, latestReview, reviewState } from '@jmrojas06/agentsprint-core/review'
+
+/** Findings typed one per line (bullets allowed), without blanks. */
+export function parseFindings(text: string): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean)
 }
 
-/**
- * The review-gate verdict that still applies to a task: the latest `review`
- * activity event, unless the task moved again after it (a newer status change
- * means the verdict was about older work). Null when never reviewed.
- */
-export function reviewState(task: Pick<Task, 'activity'>): ReviewState | null {
-  const events = task.activity ?? []
-  let idx = -1
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i]!.type === 'review') {
-      idx = i
-      break
-    }
-  }
-  if (idx === -1) return null
-  const review = events[idx]!
-  const movedLater = events.slice(idx + 1).some((e) => e.type === 'status' && e.at !== review.at)
-  if (movedLater) return null
-  return { verdict: review.detail.startsWith('approved') ? 'approved' : 'changes', by: review.actor, at: review.at }
+/** Short local date and time for a timestamp ("Oct 21, 14:02"); the raw value when it does not parse. */
+export function fmtWhen(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
@@ -207,4 +198,17 @@ export function lastNoteText(task: Pick<Task, 'notes'>): string | null {
   const last = entries[entries.length - 1]
   if (!last) return null
   return last.replace(/^-\s+(\[[^\]]+\]\s*)?(\([^)]+\)\s*)?/, '').replace(/\*\*/g, '').trim() || null
+}
+
+/**
+ * The server build as `v0.1.0 · c4b4338` (only the version when the build has
+ * no commit), with `builtAt` for a tooltip. Null for servers that predate it.
+ */
+export function buildInfo(health: { version?: string; commit?: string | null; builtAt?: string | null } | null): {
+  label: string
+  title?: string
+} | null {
+  if (!health?.version) return null
+  const label = health.commit ? `v${health.version} · ${health.commit}` : `v${health.version}`
+  return { label, title: health.builtAt ? `Server built ${health.builtAt}` : undefined }
 }

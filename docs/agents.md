@@ -8,7 +8,7 @@ it — several at once when the tasks are independent.
 ## The default team
 
 `agentboard init` (or `agentboard agents sync` on an existing board) writes
-nine profiles to `.agentboard/agents/`:
+ten profiles to `.agentboard/agents/`:
 
 | Agent | Role | Skills preloaded |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ nine profiles to `.agentboard/agents/`:
 | `ideator` | Divergent options fast, then a ranked shortlist and a recommendation | brainstorming |
 | `code-reviewer` | Review gate for code: diff vs. criteria, bugs, regressions; read-only | requesting-code-review, karpathy-guidelines, principios-codigo, verification-before-completion |
 | `ui-reviewer` | Review gate for UI: real screens at 375px and desktop, a11y, brand; read-only | web-design-guidelines, design-taste-frontend, playwright-cli |
+| `review-assistant` | Briefs the human on what waits in Review, grouped for batched questions; read-only, never decides | verification-before-completion |
 
 A profile is one Markdown file — the filename is the agent name, the body is
 its prompt:
@@ -83,8 +84,41 @@ or the running UI, then record a verdict with `task_review`:
 `sprint_dispatch` assigns the gate per task: `ui-reviewer` when the task or its
 assignee is tagged design, ui, ux, frontend, web, css or a11y; `code-reviewer`
 otherwise; none for decision-only agents (ideator, creative director). Tasks
-already in Review appear in a **Review gate** section of the plan. Humans can
+already in Review appear in a **Review gate** section of the plan, except those
+whose approving verdict is newer than their last change: the plan lists them as
+`already approved` and skips the gate (JSON: `review[].approvedBy`). Humans can
 record verdicts too, with `POST /api/tasks/:id/review`.
+
+## Human review in chat
+
+After the gate, the human moves work to Done, and can do it without leaving
+the chat. Run the `human-review` prompt (`/mcp__agentsprint__human-review`):
+
+1. The main session calls `review_queue`: every task in Review with its
+   criteria, latest verdict and a recommendation (`approve`, `look`,
+   `changes-pending`).
+2. For a long queue or items that need a closer look, it launches the
+   `review-assistant` subagent. Subagents cannot ask the user, so this one
+   only reads: it returns a short brief per task (what changed, verdict, risk,
+   recommendation), grouped into **approve in batch** and **look**, with the
+   questions to ask. It is tagged `human-review`, not `reviewer`, so it is
+   never a review gate. Its synced subagent is read-only by tools: the
+   generator always blocks file edits and every board-changing agentsprint
+   MCP tool for `human-review` agents, whatever their profile on disk says.
+3. The main session asks the human in batches (`AskUserQuestion` in Claude
+   Code): at most 4 questions per call, 2–4 options each, recommended option
+   first. One question per sprint for its `approve` items, even when the
+   same sprint also has items that need a look ("Approve these N" / "Leave in
+   Review", plus "Approve all and close Sprint N" only when nothing else in
+   that sprint stays open), and a separate one for anything odd, such as a
+   stale approval or a criterion that no longer applies.
+4. It records each answer with `review_decide` (`done`, or `changes` with
+   the human's findings) and calls `sprint_close` only for a sprint the human
+   chose to close once all its tasks are Done.
+
+Without MCP, the same decisions go through the CLI:
+`agentboard review --json`, `agentboard review --done TK-1,TK-2`,
+`agentboard review --changes TK-3 --finding "…"` and `agentboard close . <sprint>`.
 
 ## Real subagents in `.claude/agents/`
 
@@ -104,6 +138,13 @@ never touched (it is reported as skipped). Opt out with `subagents: false` in
 Claude Code loads new subagents at startup — restart it (or open `/agents`)
 after adding one.
 
+When the `agentsprint` MCP server is not connected, the protocol tells each
+subagent to run the same steps through the CLI instead —
+`agentboard task claim|check|note|status|release|review|show . <id> --agent <name>`
+(see the [CLI reference](/cli)) — and never to edit a task's frontmatter or
+`## Activity` by hand. The CLI calls the same store methods as the MCP tools,
+so locks, activity lines and notes come out identical either way.
+
 ## Task specs know their agent
 
 When a task's `assignee` is an agent name, `task_spec` (and
@@ -121,13 +162,26 @@ the **Run sprint** button all compute the same plan:
   after its latest dependency, so the tasks inside a wave can run in parallel;
 - each task gets its **subagent**: its specialized assignee, `developer` for
   workflow roles, `general-purpose` when no profile matches;
-- tasks that can never start (missing dependency, dependency outside the
-  sprint, cycle) are listed as **blocked** with the reason.
+- tasks that can never start (no acceptance criteria, missing dependency,
+  dependency outside the sprint, cycle) are listed as **blocked** with the
+  reason; their dependents wait on them.
 
 In Claude Code run the `run-sprint` prompt (`/mcp__agentsprint__run-sprint`)
 or paste the prompt copied from the board. The orchestrator launches every
 task of a wave in parallel with the Agent tool, verifies between waves, and
 re-dispatches until nothing is left — then you review what is in Review.
+
+### Parallel safety
+
+Tasks of one wave run at the same time, so the plan checks where each one
+works: its `files:` frontmatter (repo-relative paths or globs such as
+`packages/web/src/App.tsx` or `packages/web/**`, validated by `agentboard lint`),
+or, without it, the area of its package tags (`core`, `web`, `server`, `mcp`,
+`cli` → `packages/<tag>`, `docs` → `docs`). Two tasks of the same wave that share
+a file, a glob prefix or an area are flagged under their launch line —
+`⚠ shares packages/web with TK-50` — with the advice to launch them with
+`isolation: "worktree"` or run them in separate waves. The JSON plan lists the
+same pairs in `conflicts: [{ tasks: ["TK-49", "TK-50"], shared: "packages/web" }]`.
 
 ## Idea → MVP
 
@@ -136,6 +190,13 @@ walks the orchestrator through: ideator + creative-director to cut the MVP,
 brand kit, any missing specialist (`agent_upsert`), a sprint, one
 `task_create_batch` call with every task assigned and linked by dependencies,
 and finally `sprint_dispatch` to build it wave by wave.
+
+Start it from the board: **Start from an idea** (command palette, or the
+Overview when nothing is pending) renders the full prompt for your idea, stack
+and scope (`POST /api/prompts/idea-to-mvp`). Copy it and paste it into Claude
+Code as a message, or copy the `claude '…'` command line. Don't type the idea
+after the slash command: Claude Code splits slash-command arguments on spaces,
+so only the first word would arrive.
 
 `task_create_batch` creates up to 50 tasks at once; each item may carry a
 `ref` label and `dependsOn` (refs in the batch or existing ids). The whole

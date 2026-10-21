@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "agentsprint-board",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["packages/cli/dist/index.js", "serve", ".", "--no-open", "--port", "4390", "--no-fallback"],
+      "port": 4390
+    }
+  ]
+}

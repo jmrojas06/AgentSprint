@@ -59,13 +59,21 @@ export function ListView({ tasks, sortBy, sortDir, onSortBy, onSortDir, onOpen }
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody data-task-list="list">
           {sorted.map((task) => {
             const doneAc = task.acceptanceCriteria.filter(criterionChecked).length
             return (
               <tr
                 key={task.id}
                 onClick={() => onOpen(task)}
+                // Focusable so the keyboard can open it and TaskModal can give focus back to it.
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                  e.preventDefault()
+                  onOpen(task)
+                }}
+                data-task-id={task.id}
                 data-testid="list-row"
                 className={cx(
                   'cursor-pointer border-b border-zinc-900/80 transition-colors hover:bg-zinc-900/60',

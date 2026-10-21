@@ -50,10 +50,11 @@ npx @jmrojas06/agentsprint-cli serve     # the board at http://127.0.0.1:4310
 Then open Claude Code in the folder and approve the `agentsprint` MCP server. From now on every session starts with the project brief injected automatically. Try:
 
 ```text
-/mcp__agentsprint__idea-to-mvp   "a habit tracker for small teams"
 /mcp__agentsprint__run-sprint
 /mcp__agentsprint__resume
 ```
+
+To plan a new product, open the board and choose **Start from an idea** (in the command palette, or on the Overview when nothing is pending). Describe the idea, copy the prompt and paste it into Claude Code as a message. Claude Code splits slash-command arguments on spaces, so a multi-word idea typed after `/mcp__agentsprint__idea-to-mvp` reaches the prompt cut off.
 
 Prefer the short `agentboard` binary? `npm install -g @jmrojas06/agentsprint-cli`.
 
@@ -70,7 +71,7 @@ end     session_handoff  →  .agentboard/journal.md (done, next, blockers)
 
 ## Specialists and their skills
 
-`agentboard init` writes nine agent profiles to `.agentboard/agents/` and mirrors them to `.claude/agents/` as Claude Code subagents. Each one preloads the [skills](https://code.claude.com/docs/en/skills) that match its job:
+`agentboard init` writes ten agent profiles to `.agentboard/agents/` and mirrors them to `.claude/agents/` as Claude Code subagents. Each one preloads the [skills](https://code.claude.com/docs/en/skills) that match its job:
 
 | Agent | Job | Skills preloaded |
 | --- | --- | --- |
@@ -83,6 +84,7 @@ end     session_handoff  →  .agentboard/journal.md (done, next, blockers)
 | `ideator` | Divergent options, ranked shortlist | brainstorming |
 | `code-reviewer` | Review gate for code, read-only | requesting-code-review, karpathy-guidelines, principios-codigo, verification-before-completion |
 | `ui-reviewer` | Review gate for UI, read-only | web-design-guidelines, design-taste-frontend, playwright-cli |
+| `review-assistant` | Briefs you on what waits in Review, read-only | verification-before-completion |
 
 A skill that is not installed is skipped by Claude Code, so the defaults are safe anywhere. `agentboard skills` lists the skills on your machine and flags the ones an agent references but you do not have; the **Agents** tab lets you add any installed skill to any agent.
 
@@ -96,6 +98,8 @@ Work moves to Review, then a reviewer subagent checks it before a human does. `s
 
 - **approve** keeps the task in Review, with an "Approved" badge, for you to move to Done.
 - **changes** moves it back to In Progress with findings (file:line, failing scenario, fix) and the orchestrator re-launches the implementer.
+
+Then approve from the chat: the `human-review` prompt reads `review_queue`, asks you a few batched multiple-choice questions (with a `review-assistant` brief when something needs a look) and records your answers with `review_decide`.
 
 <p align="center">
   <img src="docs/public/screenshots/dispatch-dark.png" alt="Run sprint: waves of parallel tasks with the subagent and review gate for each" width="900">
@@ -150,7 +154,7 @@ Around 40 tools over stdio (`agentboard mcp`) and Streamable HTTP (`agentboard s
 | `task_create_batch` | Create a whole linked plan in one call |
 | `agent_upsert` / `agent_sync` / `skill_list` | Manage specialists and their skills |
 
-Prompts: `resume`, `idea-to-mvp`, `run-sprint`, `sprint-plan`, `execute-task`, `sprint-retro`. Full reference: [docs/mcp.md](https://jmrojas06.github.io/AgentSprint/mcp).
+Prompts: `resume`, `idea-to-mvp`, `run-sprint`, `human-review`, `sprint-plan`, `execute-task`, `sprint-retro`. Full reference: [docs/mcp.md](https://jmrojas06.github.io/AgentSprint/mcp).
 
 ## Docker
 
@@ -161,6 +165,8 @@ docker run -d --name board --restart unless-stopped -p 4310:4310 \
 ```
 
 The board is at `http://localhost:4310` and remote agents connect to `/mcp`. Add `--token <secret>` before exposing it beyond your machine.
+
+From a checkout, `pnpm docker:up` rebuilds the image from your code and restarts the container. A container keeps running the image it was built from, so after pulling or changing code run it again. `curl localhost:4310/api/health` and the side panel footer show the build's commit, so you can tell which build you are looking at. More in [docs/installation.md](docs/installation.md#which-agentsprint-am-i-talking-to).
 
 ## Documentation
 

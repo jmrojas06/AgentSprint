@@ -274,6 +274,15 @@ describe('auto-assignee by status', () => {
     expect(after.assignee).toBe('scrum-master')
   })
 
+  it('still maps the assignee when the update echoes the unchanged assignee (web task modal PUT)', () => {
+    const t = store.createTask({ title: 'Modal probe', status: 'To Do' })
+    expect(t.assignee).toBe('scrum-master')
+    store.updateTask(t.id, { status: 'In Progress', assignee: 'scrum-master', title: 'Modal probe', priority: t.priority })
+    const updated = store.state.tasks.find((x) => x.id === t.id)!
+    expect(updated.assignee).toBe('dev')
+    expect(updated.activity.some((e) => e.type === 'assignee' && e.detail === 'scrum-master → dev')).toBe(true)
+  })
+
   it('PUT-style updateTask with status triggers mapping', () => {
     const t = store.createTask({ title: 'PUT probe', status: 'To Do' })
     store.updateTask(t.id, { status: 'Review' })

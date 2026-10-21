@@ -1,4 +1,4 @@
-import { computeSprintStats } from './spec.js'
+import { computeSprintStats, learningsTail } from './spec.js'
 import type { SprintStats } from './spec.js'
 import { getTaskLock } from './types.js'
 import type { Sprint, Task, TaskPriority } from './types.js'
@@ -126,21 +126,6 @@ export function snapshotProject(
     recentlyDone,
     lastHandoff: input.journal[input.journal.length - 1] ?? null,
   }
-}
-
-/**
- * Keep the tail of the learnings file: recent lessons matter most and the
- * brief must stay short. Automatic sprint retros (`## Sprint N retro …`) are
- * report dumps, not rules, so they are skipped; the full file stays available
- * through `learnings_get`.
- */
-export function learningsTail(learnings: string, maxLines: number): string {
-  const sections = learnings.split(/^(?=## )/m).filter((sec) => !/^## .*\bretro\b/i.test(sec))
-  const lines = sections
-    .join('\n')
-    .split('\n')
-    .filter((l) => l.trim() && !l.startsWith('# '))
-  return (lines.length > maxLines ? ['…', ...lines.slice(-maxLines)] : lines).join('\n')
 }
 
 /**

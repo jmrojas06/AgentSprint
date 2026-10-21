@@ -99,6 +99,11 @@ export const Task = z.object({
   description: z.string().default(''),
   notes: z.string().default(''),
   activity: z.array(ActivityEvent).default([]),
+  /**
+   * Repo-relative paths or globs the task edits. Optional: dispatch uses them
+   * to flag parallel tasks that touch the same files (else it infers an area from the tags).
+   */
+  files: z.array(z.string()).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   /** Exclusive-lock holder (agent name). Absent/null when unlocked. */
@@ -145,6 +150,7 @@ export interface TaskInput {
   acceptanceCriteria?: string[]
   description?: string
   notes?: string
+  files?: string[]
   createdAt?: string
   lockedBy?: string | null
   lockedAt?: string | null

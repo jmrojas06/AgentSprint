@@ -2,6 +2,32 @@ import type { AgentProfile } from './agents.js'
 import type { Brand, Sprint, Task } from './types.js'
 import { hasBrand, DEFAULT_STATUSES } from './types.js'
 
+/** Lines of learnings a task spec carries; the brief keeps fewer. */
+const SPEC_LEARNINGS_LINES = 40
+
+/**
+ * Keep the tail of the learnings file: recent lessons matter most and
+ * prompts must stay short. Automatic sprint retros (`## Sprint N retro …`)
+ * are report dumps, not rules, so they are skipped; the full file stays
+ * available through `learnings_get`. Retros written before their body
+ * headings were nested also leave `## Tasks` / `## Retro` sections behind
+ * them; those go too.
+ */
+export function learningsTail(learnings: string, maxLines: number): string {
+  let inRetro = false
+  const sections = learnings.split(/^(?=## )/m).filter((sec) => {
+    const heading = sec.split('\n', 1)[0] ?? ''
+    if (/^## .*\bretro\b/i.test(heading)) inRetro = true
+    else if (!(inRetro && /^## Tasks\s*$/.test(heading))) inRetro = false
+    return !inRetro
+  })
+  const lines = sections
+    .join('\n')
+    .split('\n')
+    .filter((l) => l.trim() && !l.startsWith('# '))
+  return (lines.length > maxLines ? ['…', ...lines.slice(-maxLines)] : lines).join('\n')
+}
+
 /**
  * Render the specialized-agent profile block injected into task specs when
  * the task's assignee matches an agent in `.agentboard/agents/`. Returns
@@ -131,7 +157,7 @@ export function buildTaskSpec(task: Task, sprint: Sprint | null, projectName: st
     lines.push(brandSection)
   }
 
-  const learnings = options?.learnings?.trim()
+  const learnings = options?.learnings?.trim() ? learningsTail(options.learnings, SPEC_LEARNINGS_LINES) : ''
   if (learnings) {
     lines.push('## Learned principles')
     lines.push('')

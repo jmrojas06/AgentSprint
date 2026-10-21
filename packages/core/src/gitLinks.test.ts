@@ -68,6 +68,8 @@ describe('findTaskCommits', () => {
     expect(commits[0]!.message).toContain('done; also mentions TK-2')
     expect(commits[0]!.author).toBe('Test User')
     expect(commits[0]!.shortHash).toMatch(/^[0-9a-f]{7,}$/)
+    // Every full hash is clean, not just the first record's (no separator newline glued on).
+    for (const c of commits) expect(c.hash).toMatch(/^[0-9a-f]{40}$/)
     expect(commits[0]!.date).toBeTruthy()
     expect(commits.map((c) => c.message)).not.toContain('unrelated change')
 

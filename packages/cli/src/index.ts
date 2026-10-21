@@ -3,9 +3,11 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildDispatchPlan, planDispatch, discoverSkills, missingSkills, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
-import { isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
+import { ProjectStore, buildDispatchPlan, planDispatch, discoverSkills, missingSkills, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, runDoctor, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
+import { BUILD_INFO, isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
 import { main as runMcpStdio } from '@jmrojas06/agentsprint-mcp'
+import { buildReviewQueue } from '@jmrojas06/agentsprint-core'
+import { DEFAULT_STATUSES, isWorkflowAssignee, type ReviewVerdict, type TaskStatus } from '@jmrojas06/agentsprint-core'
 
 const VERSION = '0.1.0'
 
@@ -22,9 +24,15 @@ Commands:
    spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
    brand [dir]       Print the company/brand kit for the project
    lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
+   doctor [dir] [--url <url> ...] [--json]
+                     Check the environment: board, stale local build, server commits
+                     vs HEAD (default --url http://127.0.0.1:4310) and the MCP entry
     close [dir] [id]  Close a sprint (auto-appends a retro to learnings.md)
     task new [title] [dir]
                       Create a task, optionally from a template
+    task <claim|release|status|note|check|review|show> <dir> <id> ... [--agent <name>]
+                      Work a task without MCP: same locks, activity and errors as the
+                      task_* MCP tools (--agent is the actor; see Options (task) below)
     import todo <dir> <file>
                      Import bullets/checkboxes from a TODO/NOTES markdown file
     import github <dir> <owner/repo> [--label-tag l=t ...] [--milestone-sprint m=id ...]
@@ -35,6 +43,10 @@ Commands:
     agents sync [dir] Add missing default agents and regenerate .claude/agents/
     dispatch [dir] [--sprint <id>]
                      Print the subagent dispatch plan (waves of parallel tasks)
+    review [dir] [--sprint <id>] [--json]
+                     Print the human review queue: tasks in Review, latest verdict, recommendation
+    review [dir] [--done <ids>] [--changes <ids> --finding <text> ...]
+                     Move tasks in Review to Done, or send them back with findings (ids: TK-1,TK-2)
     context [dir]     Print where the project is: sprint, in progress, next, blockers,
                      last session handoff and learnings (start every session with it)
     handoff [dir] --summary <text> [--done <x>] [--next <x>] [--blocker <x>] [--author <name>]
@@ -70,6 +82,17 @@ Options (task new):
    --template <name> Create the task from .agentboard/templates/<name>.md
    --var <k=v>       Fill a template variable (repeatable)
 
+Options (task):
+   task claim <dir> <id> [--agent <name>] [--force]
+   task release <dir> <id> [--agent <name>] [--force]
+   task status <dir> <id> <Backlog|To Do|In Progress|Review|Done> [--agent <name>]
+   task note <dir> <id> <text> [--agent <name>]
+   task check <dir> <id> <index|text> [--uncheck] [--agent <name>]
+                     Criterion by 0-based index or by a substring of its text
+   task review <dir> <id> --agent <name> --verdict approve|changes [--finding <x> ...] [--summary <x>]
+   task show <dir> <id> [--json]
+                     The task spec (what task_spec returns), or the task as JSON
+
    --version         Print the version
 `)
 }
@@ -100,11 +123,88 @@ interface Args {
   allowedOrigins?: string[]
   /** `context --hook`: stay silent (exit 0) when there is no board, for SessionStart hooks. */
   hook?: boolean
+  /** `doctor --url` (repeatable); undefined uses the core default. */
+  urls?: string[]
+  json?: boolean
   handoff?: { summary: string; done: string[]; next: string[]; blockers: string[]; author: string }
+  /** `review --done/--changes/--finding`: the human's decisions on tasks in Review. */
+  review?: { done: string[]; changes: string[]; findings: string[] }
+  taskCmd?: TaskCommand
+}
+
+type TaskAction = 'claim' | 'release' | 'status' | 'note' | 'check' | 'review' | 'show'
+
+/** One `agentboard task <action>` call; mirrors the input of the matching task_* MCP tool. */
+export interface TaskCommand {
+  action: TaskAction
+  id: string
+  /** Actor of the activity, note or verdict (`--agent`); MCP's default "agent" when absent. */
+  agent?: string
+  force?: boolean
+  status?: TaskStatus
+  /** Note text, or the criterion to check: a 0-based index or a substring of its text. */
+  text?: string
+  uncheck?: boolean
+  verdict?: ReviewVerdict
+  summary?: string
+  findings?: string[]
+  json?: boolean
+}
+
+const TASK_USAGE: Record<TaskAction, string> = {
+  claim: 'claim <dir> <id> [--agent <name>] [--force]',
+  release: 'release <dir> <id> [--agent <name>] [--force]',
+  status: `status <dir> <id> <${DEFAULT_STATUSES.join('|')}> [--agent <name>]`,
+  note: 'note <dir> <id> <text> [--agent <name>]',
+  check: 'check <dir> <id> <index|text> [--uncheck] [--agent <name>]',
+  review: 'review <dir> <id> --agent <name> --verdict approve|changes [--finding <x> ...] [--summary <x>]',
+  show: 'show <dir> <id> [--json]',
+}
+
+function parseTaskCommand(action: TaskAction, argv: string[]): { dir: string; cmd: TaskCommand } {
+  const fail = (message?: string): never => {
+    if (message) console.error(message)
+    console.error(`Usage: agentboard task ${TASK_USAGE[action]}`)
+    process.exit(1)
+  }
+  const flags: string[] = TASK_USAGE[action].match(/--[a-z]+/g) ?? []
+  const cmd: TaskCommand = { action, id: '' }
+  const positional: string[] = []
+  const value = (i: number): string => {
+    const v = argv[i]
+    return v === undefined || v.startsWith('--') ? fail(`Missing value for ${argv[i - 1]}`) : v
+  }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!
+    if (!arg.startsWith('--')) positional.push(arg)
+    else if (!flags.includes(arg)) fail(`Unknown option for task ${action}: ${arg}`)
+    else if (arg === '--agent') cmd.agent = value(++i)
+    else if (arg === '--summary') cmd.summary = value(++i)
+    else if (arg === '--finding') cmd.findings = [...(cmd.findings ?? []), value(++i)]
+    else if (arg === '--verdict') {
+      const verdict = value(++i)
+      if (verdict !== 'approve' && verdict !== 'changes') fail(`Invalid verdict: ${verdict}`)
+      cmd.verdict = verdict as ReviewVerdict
+    } else if (arg === '--force') cmd.force = true
+    else if (arg === '--uncheck') cmd.uncheck = true
+    else if (arg === '--json') cmd.json = true
+  }
+  const [dir, id, extra] = positional
+  if (positional.length !== (['status', 'note', 'check'].includes(action) ? 3 : 2)) fail()
+  // The MCP tools take the same id shape; it also keeps the path inside .agentboard/tasks/.
+  if (!/^[A-Z]{2}-[0-9]+$/.test(id!)) fail(`Invalid task id: ${id}`)
+  cmd.id = id!
+  if (action === 'status') {
+    if (!(DEFAULT_STATUSES as readonly string[]).includes(extra!)) fail(`Invalid status: ${extra}`)
+    cmd.status = extra as TaskStatus
+  } else if (extra !== undefined) cmd.text = extra
+  if (action === 'review' && !cmd.verdict) fail('--verdict is required')
+  if (action === 'review' && !cmd.agent) fail('--agent is required (the reviewer)')
+  return { dir: path.resolve(dir!), cmd }
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'agents', 'dispatch', 'connect', 'mcp', 'context', 'handoff', 'skills', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'agents', 'dispatch', 'connect', 'mcp', 'context', 'handoff', 'skills', 'doctor', 'review', 'help'])
   const command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -128,8 +228,13 @@ export function parseArgs(argv: string[]): Args | null {
 
   if (command === 'task') {
     const sub = argv.shift()
+    if (sub && Object.keys(TASK_USAGE).includes(sub)) {
+      const { dir, cmd } = parseTaskCommand(sub as TaskAction, argv)
+      return { command: 'task-cmd', dir, taskCmd: cmd, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+    }
     if (sub !== 'new') {
       console.error('Usage: agentboard task new [title] [dir] [--template <name>] [--var <k=v>]')
+      console.error(`       agentboard task <${Object.keys(TASK_USAGE).join('|')}> <dir> <id> ... (see agentboard help)`)
       process.exit(1)
     }
     let template: string | undefined
@@ -207,6 +312,29 @@ export function parseArgs(argv: string[]): Args | null {
     return { command, dir: targetDir, hook, handoff, port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
+  if (command === 'doctor') {
+    const urls: string[] = []
+    let json = false
+    const positional: string[] = []
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!
+      if (arg === '--json') json = true
+      else if (arg === '--url') {
+        const url = argv[++i]
+        if (!url || url.startsWith('-')) {
+          console.error('Usage: --url <url>')
+          process.exit(1)
+        }
+        urls.push(url)
+      } else if (arg.startsWith('-')) {
+        console.error(`Unknown option: ${arg}`)
+        process.exit(1)
+      } else positional.push(arg)
+    }
+    const doctorDir = positional[0] ? path.resolve(positional[0]) : process.cwd()
+    return { command, dir: doctorDir, urls: urls.length ? urls : undefined, json, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+  }
+
   if (command === 'dispatch') {
     let dispatchSprint: number | undefined
     const positional: string[] = []
@@ -228,6 +356,52 @@ export function parseArgs(argv: string[]): Args | null {
     }
     const dispatchDir = positional[0] ? path.resolve(positional[0]) : process.cwd()
     return { command: 'dispatch', dir: dispatchDir, sprintId: dispatchSprint, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+  }
+
+  if (command === 'review') {
+    const review = { done: [] as string[], changes: [] as string[], findings: [] as string[] }
+    let reviewSprint: number | undefined
+    let json = false
+    const positional: string[] = []
+    const value = (flag: string, i: number): string => {
+      const v = argv[i]
+      if (v === undefined || v.startsWith('--')) {
+        console.error(`Usage: ${flag} <${flag === '--finding' ? 'text' : 'ids'}>`)
+        process.exit(1)
+      }
+      return v
+    }
+    const ids = (v: string): string[] => v.split(',').map((s) => s.trim()).filter(Boolean)
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!
+      if (arg === '--json') json = true
+      else if (arg === '--sprint') {
+        const id = Number(argv[++i])
+        if (!Number.isInteger(id) || id <= 0) {
+          console.error('Usage: --sprint <id>')
+          process.exit(1)
+        }
+        reviewSprint = id
+      } else if (arg === '--done') review.done.push(...ids(value(arg, ++i)))
+      else if (arg === '--changes') review.changes.push(...ids(value(arg, ++i)))
+      else if (arg === '--finding') review.findings.push(value(arg, ++i))
+      else if (arg.startsWith('-')) {
+        console.error(`Unknown option: ${arg}`)
+        process.exit(1)
+      } else positional.push(arg)
+    }
+    // Same id rule as the MCP tools and `agentboard task`: an id is never a path.
+    const badId = [...review.done, ...review.changes].find((id) => !/^[A-Z]{2}-[0-9]+$/.test(id))
+    if (badId !== undefined) {
+      console.error(`Not a task id: ${badId} (expected e.g. TK-12)`)
+      process.exit(1)
+    }
+    if (review.findings.length > 0 && review.changes.length === 0) {
+      console.error('--finding only goes with --changes <ids>')
+      process.exit(1)
+    }
+    const reviewDir = positional[0] ? path.resolve(positional[0]) : process.cwd()
+    return { command, dir: reviewDir, sprintId: reviewSprint, json, review, port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   if (command === 'export') {
@@ -474,6 +648,9 @@ async function cmdServe(args: Args): Promise<void> {
   })
 
   console.log(`\n  AgentSprint v${VERSION}`)
+  if (BUILD_INFO.commit || BUILD_INFO.builtAt) {
+    console.log(`  Build:   ${[BUILD_INFO.commit, BUILD_INFO.builtAt && `built ${BUILD_INFO.builtAt}`].filter(Boolean).join(' · ')}`)
+  }
   console.log(`  Board:   ${args.dir}`)
   console.log(`  Server:  ${url}`)
   if (args.mcp) {
@@ -490,7 +667,7 @@ async function cmdServe(args: Args): Promise<void> {
     console.warn(`  Warning: bound to ${args.host} without --allowed-host — Host header is not checked (DNS rebinding).`)
   }
   if (exposed && !hasToken) {
-    console.warn('  Warning: board reachable from the network without --token — anyone on it can edit tasks.')
+    console.warn('  Warning: listening on a non-loopback address without --token — if this port is reachable from other machines, anyone there can edit tasks. (In Docker, publish it as 127.0.0.1:<port> to keep it local.)')
   }
   console.log('  Press Ctrl+C to stop.\n')
 
@@ -651,6 +828,76 @@ export async function cmdTaskNew(
   console.log(`✔ Created ${task.id}: ${task.title}${template ? ` (from template "${template}")` : ''}`)
 }
 
+/**
+ * Run one `agentboard task <action>` with the same ProjectStore calls (and so
+ * the same locks, activity, actor sanitizing and error messages) as the task_*
+ * MCP tools. Returns the exit code.
+ */
+export function cmdTask(dir: string, cmd: TaskCommand): number {
+  const store = ProjectStore.open(dir)
+  const { id } = cmd
+  // An empty --agent would claim with an empty lockedBy (no real lock): treat it as missing.
+  const actor = cmd.agent?.trim() || 'agent'
+  try {
+    if (cmd.action === 'note' && !cmd.text?.trim()) throw new Error('Note text is empty')
+    let task
+    switch (cmd.action) {
+      case 'show': {
+        const state = store.state
+        task = state.tasks.find((t) => t.id === id)
+        if (!task) throw new Error(`Task not found: ${id}`)
+        if (cmd.json) {
+          console.log(JSON.stringify(task, null, 2))
+        } else {
+          const sprint = task.sprint != null ? state.sprints.find((s) => s.id === task!.sprint) ?? null : null
+          process.stdout.write(buildTaskSpec(task, sprint, store.getConfig().name || '', { brand: store.getBrand(), allTasks: state.tasks, learnings: store.getLearnings(), agent: store.agentForTask(task) }) + '\n')
+        }
+        return 0
+      }
+      case 'claim': {
+        // Same sequence as task_claim: dependency gate, lock, then status + assignee.
+        const blockers = store.getBlockers(id)
+        if (blockers.length > 0 && !cmd.force) throw new Error(`Task ${id} is blocked by ${blockers.join(', ')}`)
+        try {
+          store.lockTask(id, actor)
+        } catch (err) {
+          if (!cmd.force) throw err
+          store.unlockTask(id, { force: true })
+          store.lockTask(id, actor)
+        }
+        const current = store.state.tasks.find((t) => t.id === id)
+        const claimer = cmd.agent && store.listAgents().some((a) => a.name === cmd.agent) ? cmd.agent : null
+        const assignee = claimer ?? (current && !isWorkflowAssignee(current.assignee) ? current.assignee : 'dev')
+        task = store.updateTask(id, { status: 'In Progress', assignee }, { actor })
+        break
+      }
+      case 'release':
+        task = store.unlockTask(id, { agent: cmd.agent, force: cmd.force })
+        break
+      case 'status':
+        task = store.setTaskStatus(id, cmd.status!, { actor })
+        break
+      case 'note':
+        task = store.appendTaskNote(id, cmd.text!, actor)
+        break
+      case 'check': {
+        const index = /^\d+$/.test(cmd.text!) ? Number(cmd.text) : undefined
+        task = store.setTaskChecklist(id, { index, text: index === undefined ? cmd.text : undefined, completed: !cmd.uncheck }, { actor })
+        break
+      }
+      case 'review':
+        task = store.reviewTask(id, { reviewer: actor, verdict: cmd.verdict!, summary: cmd.summary, findings: cmd.findings })
+        break
+    }
+    const done = task.acceptanceCriteria.filter((c) => /^\[x\]/i.test(c)).length
+    console.log(`✔ ${task.id} ${cmd.action}: ${task.status} · ${task.assignee} · ${done}/${task.acceptanceCriteria.length} criteria${task.lockedBy ? ` · locked by ${task.lockedBy}` : ''}`)
+    return 0
+  } catch (err) {
+    console.error(`✖ ${(err as Error).message}`)
+    return 1
+  }
+}
+
 export async function cmdExport(
   dir: string,
   format: string,
@@ -674,6 +921,18 @@ export async function cmdExport(
   const target = path.join(dir, 'BOARD.md')
   fs.writeFileSync(target, markdown)
   console.log(`✔ Board exported to ${target}`)
+}
+
+/** Print `runDoctor` results (one line per check, or JSON); returns the exit code. */
+export async function cmdDoctor(dir: string, opts: { urls?: string[]; json?: boolean } = {}): Promise<number> {
+  const result = await runDoctor(dir, { urls: opts.urls, cliEntry: fileURLToPath(import.meta.url) })
+  if (opts.json) {
+    console.log(JSON.stringify(result, null, 2))
+  } else {
+    const icon = { ok: '✔', warn: '⚠', error: '✖' } as const
+    for (const c of result.checks) console.log(`${icon[c.level]} ${c.name}: ${c.message}${c.fix ? ` → ${c.fix}` : ''}`)
+  }
+  return result.ok ? 0 : 1
 }
 
 export async function cmdLint(dir: string): Promise<number> {
@@ -727,6 +986,46 @@ export async function cmdAgentsSync(dir: string): Promise<void> {
 export async function cmdDispatch(dir: string, sprintId?: number): Promise<void> {
   const store = ProjectStore.open(dir)
   process.stdout.write(buildDispatchPlan(planDispatch(store.state, { sprintId }), store.getConfig().name) + '\n')
+}
+
+/**
+ * Without decisions, print the human review queue (or JSON). With `done` /
+ * `changes`, apply them as the human (`user`); returns 1 when any failed.
+ */
+export async function cmdReview(
+  dir: string,
+  opts: { sprintId?: number; json?: boolean; done?: string[]; changes?: string[]; findings?: string[] },
+): Promise<number> {
+  const store = ProjectStore.open(dir)
+  const decisions = [
+    ...(opts.done ?? []).map((id) => ({ id, decision: 'done' as const })),
+    ...(opts.changes ?? []).map((id) => ({ id, decision: 'changes' as const })),
+  ]
+  if (decisions.length === 0) {
+    const queue = buildReviewQueue(store.state.tasks, { sprint: opts.sprintId })
+    if (opts.json) {
+      console.log(JSON.stringify(queue, null, 2))
+    } else if (queue.length === 0) {
+      console.log('Nothing is waiting in Review.')
+    } else {
+      for (const q of queue) {
+        console.log(`${q.id}  ${q.recommendation.padEnd(15)}  ${q.title}  (${q.criteria.done}/${q.criteria.total} criteria, ${q.assignee})`)
+        console.log(`        ${q.reason}`)
+      }
+    }
+    return 0
+  }
+  let code = 0
+  for (const d of decisions) {
+    try {
+      const task = store.decideReview(d.id, { decision: d.decision, findings: opts.findings })
+      console.log(`✔ ${task.id} → ${task.status}`)
+    } catch (err) {
+      console.error(`✖ ${d.id}: ${(err as Error).message}`)
+      code = 1
+    }
+  }
+  return code
 }
 
 export async function cmdContext(dir: string, opts: { hook?: boolean } = {}): Promise<void> {
@@ -784,7 +1083,9 @@ export function installContextHook(dir: string, entry: string): string {
       throw new Error(`${file} is not valid JSON — fix or remove it, then retry.`)
     }
   }
-  const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(entry)} ${CONTEXT_HOOK_FLAG} ${JSON.stringify(path.resolve(dir))} --hook`
+  // POSIX single quotes: nothing inside expands; an embedded ' becomes '\''.
+  const q = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+  const command = `${q(process.execPath)} ${q(entry)} ${CONTEXT_HOOK_FLAG} ${q(path.resolve(dir))} --hook`
   const isOurs = (c: string): boolean => c.includes(` ${CONTEXT_HOOK_FLAG} `) && c.endsWith(' --hook')
   const hooks = { ...(settings.hooks ?? {}) }
   const groups = (hooks.SessionStart ?? [])
@@ -845,10 +1146,14 @@ async function main(): Promise<void> {
   } else if (args.command === 'lint') {
     const code = await cmdLint(args.dir)
     process.exit(code)
+  } else if (args.command === 'doctor') {
+    process.exit(await cmdDoctor(args.dir, { urls: args.urls, json: args.json }))
   } else if (args.command === 'close') {
     await cmdClose(args.dir, args.sprintId, { retro: args.retro })
   } else if (args.command === 'task-new') {
     await cmdTaskNew(args.dir, args.title, args.template, args.vars)
+  } else if (args.command === 'task-cmd') {
+    process.exit(cmdTask(args.dir, args.taskCmd!))
   } else if (args.command === 'import') {
     await cmdImport(args.dir, args.importSource!, args.importTarget!, {
       labelTags: args.labelTags,
@@ -862,6 +1167,8 @@ async function main(): Promise<void> {
     await cmdAgentsSync(args.dir)
   } else if (args.command === 'dispatch') {
     await cmdDispatch(args.dir, args.sprintId)
+  } else if (args.command === 'review') {
+    process.exit(await cmdReview(args.dir, { sprintId: args.sprintId, json: args.json, ...args.review }))
   } else if (args.command === 'context') {
     await cmdContext(args.dir, { hook: args.hook })
   } else if (args.command === 'handoff') {

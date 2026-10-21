@@ -7,6 +7,7 @@ import {
   ProjectStore,
   buildDispatchPlan,
   buildProjectContext,
+  buildReviewQueue,
   discoverSkills,
   formatJournalEntry,
   missingSkills,
@@ -96,11 +97,23 @@ describe('review gate', () => {
     expect(reviewerFor({ assignee: 'developer', tags: [] }, [{ name: 'developer' }])).toBeNull()
   })
 
+  it('matches decision-agent tags without regard to case', () => {
+    const agents = [
+      { name: 'muse', tags: ['Creative'] },
+      { name: 'brain', tags: ['IDEAS'] },
+      { name: 'gate', tags: ['Reviewer'] },
+      { name: 'code-reviewer' },
+    ]
+    expect(reviewerFor({ assignee: 'muse', tags: [] }, agents)).toBeNull()
+    expect(reviewerFor({ assignee: 'brain', tags: [] }, agents)).toBeNull()
+    expect(reviewerFor({ assignee: 'gate', tags: [] }, agents)).toBeNull()
+  })
+
   it('dispatch plans name the reviewer and list a review gate for tasks in Review', () => {
     const sprint = store.createSprint('MVP')
     store.setSprintStatus(sprint.id, 'active')
     const [api, ui] = store.createTaskBatch([
-      { ref: 'api', title: 'API', sprint: sprint.id, assignee: 'developer' },
+      { ref: 'api', title: 'API', sprint: sprint.id, assignee: 'developer', acceptanceCriteria: ['GET /items works'] },
       { ref: 'ui', title: 'UI', sprint: sprint.id, assignee: 'designer' },
     ])
     store.setTaskStatus(ui!.id, 'Review')
@@ -137,11 +150,50 @@ describe('review gate', () => {
     expect(ProjectStore.open(dir).state.tasks.find((t) => t.id === task.id)?.notes).toContain('missing test for 404')
   })
 
+  it('keeps multi-line author and reviewer names on one line in notes and activity', () => {
+    const task = store.createTask({ title: 'API', assignee: 'developer', status: 'Review' })
+    store.appendTaskNote(task.id, 'progress', 'bot\n## x')
+    store.reviewTask(task.id, { reviewer: 'rev\n## y', verdict: 'changes', findings: ['fix it'] })
+    // A later rewrite must keep both activity lines (a split line is dropped as malformed).
+    store.setTaskStatus(task.id, 'Review')
+
+    const raw = fs.readFileSync(path.join(dir, '.agentboard', 'tasks', `${task.id}.md`), 'utf8')
+    expect(raw).not.toMatch(/^## [xy]/m)
+    const reloaded = ProjectStore.open(dir).state.tasks.find((t) => t.id === task.id)!
+    expect(reloaded.notes).toContain('(bot ## x) progress')
+    expect(reloaded.notes).toContain('(rev ## y) **Review: changes requested**')
+    expect(reloaded.activity.map((a) => [a.actor, a.type])).toEqual(
+      expect.arrayContaining([
+        ['bot ## x', 'note'],
+        ['rev ## y', 'review'],
+      ]),
+    )
+  })
+
   it('rejects verdicts on tasks not in Review and empty change requests', () => {
     const todo = store.createTask({ title: 'Later', status: 'To Do' })
     expect(() => store.reviewTask(todo.id, { reviewer: 'code-reviewer', verdict: 'approve' })).toThrow(/not "Review"/)
     const review = store.createTask({ title: 'Now', status: 'Review' })
     expect(() => store.reviewTask(review.id, { reviewer: 'code-reviewer', verdict: 'changes' })).toThrow(/finding/)
+  })
+
+  it('decideReview closes or sends back only work in Review, as the human', () => {
+    const a = store.createTask({ title: 'A', assignee: 'developer', status: 'Review' })
+    const b = store.createTask({ title: 'B', assignee: 'developer', status: 'Review' })
+    const todo = store.createTask({ title: 'Later', status: 'To Do' })
+    store.reviewTask(a.id, { reviewer: 'code-reviewer', verdict: 'approve' })
+    expect(buildReviewQueue(store.state.tasks).map((q) => [q.id, q.recommendation])).toEqual([[a.id, 'approve'], [b.id, 'look']])
+
+    const done = store.decideReview(a.id, { decision: 'done' })
+    expect(done.status).toBe('Done')
+    expect(done.activity.at(-1)).toMatchObject({ type: 'status', actor: 'user', detail: 'Review → Done' })
+
+    const back = store.decideReview(b.id, { decision: 'changes', by: 'maria', findings: ['button is off by one'] })
+    expect(back.status).toBe('In Progress')
+    expect(back.notes).toContain('(maria) **Review: changes requested**')
+    expect(() => store.decideReview(todo.id, { decision: 'done' })).toThrow(/not "Review"/)
+    expect(() => store.decideReview(a.id, { decision: 'changes', findings: ['x'] })).toThrow(/not "Review"/)
+    expect(store.state.tasks.find((t) => t.id === todo.id)?.status).toBe('To Do')
   })
 })
 
@@ -221,5 +273,45 @@ describe('learningsTail', () => {
     expect(tail).toContain('Always lint')
     expect(tail).toContain('One project, one board')
     expect(tail).not.toContain('AS-8')
+  })
+
+  it('drops the whole retro dump, including its own ## Tasks and ## Retro sections', async () => {
+    const { learningsTail } = await import('../src/index.js')
+    const retro = (n: number): string =>
+      `## Sprint ${n} retro — 2026-08-21\n\n# Sprint ${n} — Goal\n\n- **Status**: closed\n\n## Tasks\n\n### Backlog (0)\n\n_none_\n\n\n### Done (1)\n\n- [high] **AS-${n}** — Something (agent)\n\n## Retro\n\n_Pendiente: qué fue bien._`
+    const md = `- Always lint\n\n${retro(3)}\n\n${retro(4)}\n\n\n## Reglas de proceso\n\n- Un proyecto = un tablero`
+    const tail = learningsTail(md, 15)
+    expect(tail).toContain('Always lint')
+    expect(tail).toContain('## Reglas de proceso')
+    expect(tail).toContain('Un proyecto = un tablero')
+    expect(tail).not.toContain('## Tasks')
+    expect(tail).not.toContain('### Backlog (0)')
+    expect(tail).not.toContain('_none_')
+    expect(tail).not.toContain('AS-3')
+    expect(tail).not.toContain('Pendiente')
+  })
+})
+
+describe('appendLearningsSection', () => {
+  it('nests the body headings so the section stays a single ## block', () => {
+    store.appendLearning('Always lint')
+    store.appendLearningsSection('Sprint 9 retro — 2026-10-21', '# Sprint 9 — Goal\n\n## Tasks\n\n### Backlog (0)\n\n_none_\n\n## Retro\n\n_tbd_')
+    const md = store.getLearnings()
+    expect(md.match(/^#{1,2} .*$/gm)).toEqual(['## Sprint 9 retro — 2026-10-21'])
+    expect(md).toContain('### Sprint 9 — Goal')
+    expect(md).toContain('#### Tasks')
+    expect(md).toContain('##### Backlog (0)')
+    expect(md).toContain('#### Retro')
+  })
+
+  it('keeps a closed sprint retro out of the context brief', () => {
+    store.appendLearning('Always lint')
+    const sprint = store.createSprint('Ship MVP')
+    store.setSprintStatus(sprint.id, 'active')
+    store.setSprintStatus(sprint.id, 'closed')
+    const brief = buildProjectContext({ projectName: 'demo', tasks: [], activeSprint: null, journal: [], learnings: store.getLearnings() })
+    expect(brief).toContain('Always lint')
+    expect(brief).not.toContain('Backlog (0)')
+    expect(brief).not.toContain('_none_')
   })
 })

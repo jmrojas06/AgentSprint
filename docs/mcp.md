@@ -30,13 +30,15 @@ curl -i -H "Authorization: Bearer $AGENTBOARD_TOKEN" -H "Content-Type: applicati
 
 A failed call returns `isError: true` with a JSON body `{ "error": "<message>" }` (plus extra fields where useful, e.g. `blockers` from `task_claim`). Invalid arguments are rejected by the schema with a JSON-RPC `-32602` error.
 
+Tools that modify a task (`task_create`, `task_update`, `task_status`, `task_claim`, `task_checklist`, `task_note`, `task_review`, `review_decide`) return it compact: only the last 3 `activity` events plus `activityCount`; `task_get` and `task_list` return the full task. `learnings_append` returns `{ ok: true, entry }`.
+
 ## Multiple agents
 
 Each agent can run its own stdio server on the same board. Every tool call re-syncs with the files on disk first, ids are allocated under a board-wide lock and `task_claim` checks the lock against the on-disk state, so agents in different processes see each other's work and never get the same task id or the same claim.
 
 ## Tools
 
-40 tools are exposed (the three `project_*` tools only over the multi-project HTTP transport). The server also sends **instructions** at initialize that tell the agent to start with `project_context` and end with `session_handoff`.
+40 tools are exposed; `project_list`, `project_current` and `project_use` exist only over the multi-project HTTP transport, so a stdio server exposes 37. `project_context` works on every transport. The server also sends **instructions** at initialize that tell the agent to start with `project_context` and end with `session_handoff`.
 
 | Tool | Description |
 | --- | --- |
@@ -44,6 +46,8 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `session_handoff` | Append a handoff to `.agentboard/journal.md`: summary, done, next, blockers |
 | `session_journal` | The most recent handoffs, newest first |
 | `task_review` | Review-gate verdict on a task in Review: `approve`, or `changes` with findings (moves it back to In Progress) |
+| `review_queue` | Human review queue (`sprint`, `ids` filters): per task in Review its criteria done/total, latest verdict (who, when, summary, findings), `approvedSinceLastChange` and a recommendation (`approve` \| `look` \| `changes-pending`) with the reason |
+| `review_decide` | Record the human's decision on a task in Review: `{ id, decision: "done" \| "changes", findings?, by? }`. `done` moves it to Done, `changes` sends it back with the findings; `by` defaults to `user`. Refuses tasks not in Review |
 | `skill_list` | Installed Claude Code skills and the ones agents reference but are missing |
 | `board_summary` | Overview: active sprint, counts per status, completion % |
 | `task_list` | List tasks with filters (status, sprint, assignee, search) |
@@ -98,6 +102,7 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `sprint-retro` | Workflow prompt to analyze sprint velocity and capture learnings |
 | `run-sprint` | Orchestrate the active sprint: one subagent per task, wave by wave |
 | `idea-to-mvp` | Turn an idea into a scoped MVP sprint with assigned, linked tasks, then build it |
+| `human-review` | Approve from the chat: `review_queue`, an optional `review-assistant` brief, batched questions to the human, then `review_decide` (and `sprint_close` only if the human chose it) |
 
 ## Setup
 

@@ -82,6 +82,7 @@ describe('MCP tools', () => {
       'docs',
       'fixer',
       'ideator',
+      'review-assistant',
       'tester',
       'ui-reviewer',
     ])
@@ -111,8 +112,8 @@ describe('MCP tools', () => {
     await callTool('sprint_activate', { id: sprint.id })
     const batch = (await callTool('task_create_batch', {
       tasks: [
-        { ref: 'checkout', title: 'Checkout session', sprint: sprint.id, assignee: 'stripe-expert' },
-        { ref: 'qa', title: 'Payment tests', sprint: sprint.id, assignee: 'tester', dependsOn: ['checkout'] },
+        { ref: 'checkout', title: 'Checkout session', sprint: sprint.id, assignee: 'stripe-expert', acceptanceCriteria: ['Checkout works'] },
+        { ref: 'qa', title: 'Payment tests', sprint: sprint.id, assignee: 'tester', dependsOn: ['checkout'], acceptanceCriteria: ['Tests pass'] },
       ],
     })) as Array<{ ref: string; id: string; dependencies: string[] }>
     expect(batch[1]!.dependencies).toEqual([batch[0]!.id])
@@ -154,6 +155,15 @@ describe('MCP tools', () => {
     expect(text).toContain('A habit tracker for teams')
     expect(text).toContain('task_create_batch')
     expect(text).toContain('`designer`')
+  })
+
+  it('exposes the human-review prompt: queue, assistant, batched questions, decide', async () => {
+    const { prompts } = await client.listPrompts()
+    expect(prompts.map((p) => p.name)).toContain('human-review')
+    const res = await client.getPrompt({ name: 'human-review', arguments: {} })
+    const text = (res.messages[0]!.content as { text: string }).text
+    for (const needle of ['review_queue', 'review_decide', 'review-assistant', 'AskUserQuestion', 'sprint_close']) expect(text).toContain(needle)
+    expect(text).toMatch(/at most 4 questions/)
   })
 
   it('task_create and task_list accept a specialized agent assignee', async () => {
@@ -306,8 +316,8 @@ describe('MCP tools', () => {
   })
 
   it('learnings_append and learnings_get round-trip', async () => {
-    const app = (await callTool('learnings_append', { entry: 'Write tests first' })) as { ok: boolean }
-    expect(app.ok).toBe(true)
+    const app = await callTool('learnings_append', { entry: 'Write tests first' })
+    expect(app).toEqual({ ok: true, entry: 'Write tests first' })
 
     const fetched = (await callTool('learnings_get', {})) as { ok: boolean; content: string }
     expect(fetched.content).toBe('- Write tests first')
@@ -536,6 +546,53 @@ describe('session continuity & review gate', () => {
     expect(changed.status).toBe('In Progress')
     const err = await callToolError('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'approve' })
     expect(err.error).toMatch(/not "Review"/)
+  })
+
+  it('review_queue lists Review tasks and review_decide closes or sends them back as the human', async () => {
+    store.setTaskStatus('TK-1', 'Review')
+    store.setTaskStatus('TK-2', 'Review')
+    // `approve` needs every criterion ticked, not just an approving verdict.
+    store.state.tasks.find((t) => t.id === 'TK-1')!.acceptanceCriteria.forEach((_, index) => store.setTaskChecklist('TK-1', { index, completed: true }))
+    store.reviewTask('TK-1', { reviewer: 'code-reviewer', verdict: 'approve', summary: 'ok' })
+    const queue = (await callTool('review_queue', {})) as Array<{ id: string; recommendation: string; approvedSinceLastChange: boolean; review: { by: string } | null }>
+    expect(queue.map((q) => [q.id, q.recommendation, q.approvedSinceLastChange])).toEqual([['TK-1', 'approve', true], ['TK-2', 'look', false]])
+    expect(queue[0]?.review?.by).toBe('code-reviewer')
+    expect(((await callTool('review_queue', { ids: ['TK-2'] })) as unknown[]).length).toBe(1)
+
+    const done = (await callTool('review_decide', { id: 'TK-1', decision: 'done' })) as { status: string; activity: Array<{ actor: string; type: string; detail: string }>; activityCount: number }
+    expect(done.status).toBe('Done')
+    expect(done.activity).toContainEqual(expect.objectContaining({ actor: 'user', type: 'status', detail: 'Review → Done' }))
+    expect(done.activity.length).toBeLessThanOrEqual(3)
+    const back = (await callTool('review_decide', { id: 'TK-2', decision: 'changes', by: 'maria', findings: ['fix it'] })) as { status: string; notes: string }
+    expect(back.status).toBe('In Progress')
+    expect(back.notes).toContain('(maria) **Review: changes requested**')
+    const err = await callToolError('review_decide', { id: 'TK-3', decision: 'done' })
+    expect(err.error).toMatch(/not "Review"/)
+    expect(store.state.tasks.find((t) => t.id === 'TK-3')?.status).not.toBe('Done')
+  })
+
+  it('mutating task tools return a compact task: last 3 activity events plus activityCount', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ['task_update', { id: 'TK-1', title: 'Renamed' }],
+      ['task_note', { id: 'TK-1', note: 'n1' }],
+      ['task_checklist', { id: 'TK-1', index: 0, completed: true }],
+      ['task_status', { id: 'TK-1', status: 'Review' }],
+      ['task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'changes', findings: ['a.ts:1 — broken'] }],
+      ['task_claim', { id: 'TK-1', agent: 'developer', force: true }],
+      ['task_create', { title: 'Compact' }],
+    ]
+    for (const [name, args] of calls) {
+      const res = (await callTool(name, args)) as { id: string; activity: unknown[]; activityCount: number }
+      const full = (await callTool('task_get', { id: res.id })) as { activity: unknown[]; activityCount?: number }
+      expect(res.activityCount, name).toBe(full.activity.length)
+      expect(res.activity, name).toEqual(full.activity.slice(-3))
+      expect(full.activityCount).toBeUndefined()
+    }
+    const full = (await callTool('task_get', { id: 'TK-1' })) as { activity: unknown[] }
+    expect(full.activity.length).toBeGreaterThan(3)
+    const listed = (await callTool('task_list', { q: 'Renamed' })) as Array<{ activity: unknown[]; activityCount?: number }>
+    expect(listed[0]?.activity).toEqual(full.activity)
+    expect(listed[0]?.activityCount).toBeUndefined()
   })
 
   it('agent_upsert stores skills and skill_list reports missing ones', async () => {

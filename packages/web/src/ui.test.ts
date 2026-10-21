@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Task } from './types'
-import { lastNoteText, reviewState, sortTasks, viewFromQuery } from './ui'
+import { closableApproved, lastNoteText, latestReview, parseFindings, reviewState, sortTasks, viewFromQuery } from './ui'
 
 function makeTask(overrides: Partial<Task> & { id: string }): Task {
   return {
@@ -92,5 +92,42 @@ describe('lastNoteText', () => {
   it('strips the timestamp and author and skips sub-items', () => {
     expect(lastNoteText({ notes: '- [2026] (dev) first\n- [2026] (code-reviewer) **Review: approved**\n  - finding' })).toBe('Review: approved')
     expect(lastNoteText({ notes: '' })).toBeNull()
+  })
+})
+
+describe('latestReview and closableApproved', () => {
+  const ev = (type: string, detail: string, at: string, actor = 'code-reviewer') => ({ type, detail, at, actor }) as never
+  const notes = '- [t1] (dev) built it\n- [t2] (ui-reviewer) **Review: approved** — Looks right at 375px\n- [t3] (user) **Review: changes requested** — Two gaps\n  - Empty state\n  - Focus lost'
+
+  it('reads verdict, author, summary and findings from activity and the review note', () => {
+    const r = latestReview({ activity: [ev('review', 'changes requested (2 findings)', '3', 'user')], notes })
+    expect(r).toEqual({ verdict: 'changes', by: 'user', at: '3', summary: 'Two gaps', findings: ['Empty state', 'Focus lost'], current: true })
+    expect(latestReview({ activity: [], notes })).toBeNull()
+  })
+
+  it('marks a verdict stale after a change to the work, but not after a note or its own status move', () => {
+    const approved = ev('review', 'approved', '2')
+    expect(latestReview({ activity: [approved, ev('note', 'added a note', '5')], notes: '' })?.current).toBe(true)
+    expect(latestReview({ activity: [approved, ev('checklist', 'checked "x"', '5')], notes: '' })?.current).toBe(false)
+    expect(latestReview({ activity: [ev('status', 'Review → In Progress', '3'), ev('review', 'changes requested (1 finding)', '3')], notes: '' })?.current).toBe(true)
+  })
+
+  it('only closes tasks in Review whose latest verdict is a current approval', () => {
+    const t = (id: string, status: Task['status'], activity: never[]) => makeTask({ id, status, activity })
+    const tasks = [
+      t('TK-1', 'Review', [ev('review', 'approved', '2')]),
+      t('TK-2', 'Review', [ev('review', 'approved', '2'), ev('review', 'changes requested (1 finding)', '3')]),
+      t('TK-3', 'Review', [ev('review', 'approved', '2'), ev('update', 'updated title', '4')]),
+      t('TK-4', 'Review', []),
+      t('TK-5', 'Done', [ev('review', 'approved', '2')]),
+    ]
+    expect(closableApproved(tasks).map((x) => x.id)).toEqual(['TK-1'])
+  })
+})
+
+describe('parseFindings', () => {
+  it('keeps one finding per non-empty line without bullets', () => {
+    expect(parseFindings('- first\n\n  * second \n3. third\n   ')).toEqual(['first', 'second', 'third'])
+    expect(parseFindings('  \n')).toEqual([])
   })
 })

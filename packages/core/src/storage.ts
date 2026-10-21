@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { z } from 'zod'
 import { withFileLock } from './filelock.js'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
 import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, isWorkflowAssignee, TASK_LOCK_TTL_MINUTES, AgentProfile } from './types.js'
@@ -47,6 +48,7 @@ This project uses a git-native sprint board under \`.agentboard/\`.
 7. If \`.agentboard/brand.md\` exists and is configured, follow the brand guidelines when writing code, copy or UI.
 8. \`.agentboard/agents/\` holds specialized agent profiles (developer, designer, tester, …), mirrored to \`.claude/agents/\` as real Claude Code subagents with their skills preloaded. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask \`sprint_dispatch\` (or \`agentboard dispatch\`) which subagent takes which task and what can run in parallel.
 9. Work in Review passes a review gate first: \`code-reviewer\` (or \`ui-reviewer\` for UI work) records a verdict with \`task_review\`. \`changes\` sends the task back to In Progress with findings; \`approve\` leaves it for the human.
+10. The human can approve from the chat: run the \`human-review\` MCP prompt. The main session reads \`review_queue\`, may launch the read-only \`review-assistant\` subagent for a decision brief per task (subagents cannot ask the user), asks the human in batches of at most 4 multiple-choice questions, records each answer with \`review_decide\` (or \`agentboard review --done …\`), and closes a sprint only when the human chose to.
 `
 
 const BRAND_TEMPLATE = `---
@@ -93,7 +95,7 @@ export class ProjectStore extends EventEmitter {
   private warnings: string[] = []
   private agents: AgentProfileType[] = []
   /** Per task file: change stamp (inode + mtime + size) and the parsed id, or null when unparseable. */
-  private fileStamps = new Map<string, { stamp: string; id: string | null }>()
+  private fileStamps = new Map<string, { stamp: string; id: string | null; error?: string }>()
 
   private constructor(rootDir: string) {
     super()
@@ -216,16 +218,20 @@ export class ProjectStore extends EventEmitter {
       if (prev?.stamp === stamp) continue
       changed = true
       if (prev?.id) this.tasks.delete(prev.id)
-      const task = this._parseTaskFile(full)
-      this.fileStamps.set(file, { stamp, id: task?.id ?? null })
-      if (!task) {
-        console.warn(`[agentboard] ${unparseableTaskWarning(file)}`)
+      const parsed = this._parseTaskFile(full)
+      if ('error' in parsed) {
+        this.fileStamps.set(file, { stamp, id: null, error: parsed.error })
+        console.warn(`[agentboard] ${unparseableTaskWarning(file, parsed.error)}`)
         continue
       }
+      const { task } = parsed
+      this.fileStamps.set(file, { stamp, id: task.id })
       this.tasks.set(task.id, task)
       this._bumpTaskMax(task.id)
     }
-    this.warnings = [...this.fileStamps].filter(([, e]) => e.id == null).map(([file]) => unparseableTaskWarning(file))
+    this.warnings = [...this.fileStamps]
+      .filter(([, e]) => e.id == null)
+      .map(([file, e]) => unparseableTaskWarning(file, e.error))
     return changed
   }
 
@@ -244,13 +250,13 @@ export class ProjectStore extends EventEmitter {
     return changed
   }
 
-  private _parseTaskFile(file: string): TaskType | null {
+  private _parseTaskFile(file: string): { task: TaskType } | { error: string } {
     try {
       const { data, body } = parseFrontmatter(fs.readFileSync(file, 'utf8'), Task)
       const { description, acceptanceCriteria, notes, activity } = parseTaskBody(body)
-      return { ...data, description, acceptanceCriteria, notes, activity }
-    } catch {
-      return null
+      return { task: { ...data, description, acceptanceCriteria, notes, activity } }
+    } catch (err) {
+      return { error: describeParseError(err) }
     }
   }
 
@@ -276,10 +282,10 @@ export class ProjectStore extends EventEmitter {
       throw new Error(`Task not found: ${id}`)
     }
     const fresh = this._parseTaskFile(file)
-    if (fresh) {
-      this.tasks.set(id, fresh)
+    if ('task' in fresh) {
+      this.tasks.set(id, fresh.task)
       this._bumpTaskMax(id)
-      return fresh
+      return fresh.task
     }
     const known = this.tasks.get(id)
     if (!known) throw new Error(`Task not found: ${id}`)
@@ -400,13 +406,15 @@ export class ProjectStore extends EventEmitter {
 
   /**
    * Append a multi-line section (e.g. an automatic sprint retro) to the
-   * learnings file, preceded by a `## header` line.
+   * learnings file, preceded by a `## header` line. Body headings are nested
+   * two levels down (`#` → `###`, `##` → `####`) so the section stays a
+   * single `##` block for readers that split the file on `## `.
    */
   appendLearningsSection(header: string, body: string): string {
     // Read-modify-write under the file lock (see appendLearning).
     return withFileLock(this.learningsPath(), () => {
       const existing = this.getLearnings()
-      const section = `## ${header.trim()}\n\n${body.trim()}`
+      const section = `## ${header.trim()}\n\n${body.trim().replace(/^#{1,4} /gm, '##$&')}`
       const next = existing ? `${existing}\n\n${section}` : section
       this._writeLearnings(next)
       return next
@@ -515,8 +523,20 @@ export class ProjectStore extends EventEmitter {
     return path.join(this.boardDir, 'task-ids')
   }
 
+  /** Board-wide lock serializing sprint id allocation and every sprint write across processes. */
+  private sprintLockPath(): string {
+    return path.join(this.boardDir, 'sprints')
+  }
+
+  /** Next free sprint id. Caller must hold the sprint lock: it also counts files it could not parse. */
   private _nextSprintId(): number {
     const ids = [...this.sprints.keys()]
+    if (fs.existsSync(this.sprintsDir())) {
+      for (const file of fs.readdirSync(this.sprintsDir())) {
+        const m = /^sprint-(\d+)\.md$/.exec(file)
+        if (m) ids.push(Number(m[1]))
+      }
+    }
     return ids.length === 0 ? 1 : Math.max(...ids) + 1
   }
 
@@ -704,13 +724,14 @@ export class ProjectStore extends EventEmitter {
     return withFileLock(this.taskPath(id), () => {
       const task = this._freshTask(id)
       const timestamp = nowIso()
-      const prefix = author ? `[${timestamp}] (${author})` : `[${timestamp}]`
+      const who = sanitizeActor(author, '')
+      const prefix = who ? `[${timestamp}] (${who})` : `[${timestamp}]`
       const entry = `- ${prefix} ${note.trim()}`
       const updatedNotes = task.notes && task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
       return this._updateTaskUnlocked(
         id,
         { notes: updatedNotes },
-        { actor: author ?? 'user', noteEvent: note.trim() },
+        { actor: who, noteEvent: note.trim() },
       )
     })
   }
@@ -736,14 +757,30 @@ export class ProjectStore extends EventEmitter {
       }
       const label = input.verdict === 'approve' ? 'approved' : 'changes requested'
       const summary = (input.summary ?? '').trim().replace(/\n+/g, ' ')
-      const head = `- [${nowIso()}] (${input.reviewer}) **Review: ${label}**${summary ? ` — ${summary}` : ''}`
+      const reviewer = sanitizeActor(input.reviewer)
+      const head = `- [${nowIso()}] (${reviewer}) **Review: ${label}**${summary ? ` — ${summary}` : ''}`
       const entry = [head, ...findings.map((f) => `  - ${f}`)].join('\n')
       const notes = task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
       return this._updateTaskUnlocked(
         id,
         { notes, ...(input.verdict === 'changes' ? { status: 'In Progress' as TaskStatus } : {}) },
-        { actor: input.reviewer, reviewEvent: `${label}${findings.length ? ` (${findings.length} finding${findings.length === 1 ? '' : 's'})` : ''}` },
+        { actor: reviewer, reviewEvent: `${label}${findings.length ? ` (${findings.length} finding${findings.length === 1 ? '' : 's'})` : ''}` },
       )
+    })
+  }
+
+  /**
+   * The human's decision on a task in Review: `done` moves it to Done,
+   * `changes` records a changes verdict (via reviewTask) with `by` as the
+   * reviewer. `by` defaults to `user`. Throws for tasks not in Review.
+   */
+  decideReview(id: string, input: { decision: 'done' | 'changes'; by?: string; findings?: string[] }): TaskType {
+    const by = input.by?.trim() || 'user'
+    if (input.decision === 'changes') return this.reviewTask(id, { reviewer: by, verdict: 'changes', findings: input.findings })
+    return withFileLock(this.taskPath(id), () => {
+      const task = this._freshTask(id)
+      if (task.status !== 'Review') throw new Error(`Task ${id} is "${task.status}", not "Review" — only work waiting for review can be closed here`)
+      return this._updateTaskUnlocked(id, { status: 'Done' }, { actor: by })
     })
   }
 
@@ -890,7 +927,7 @@ export class ProjectStore extends EventEmitter {
       activity: [
         {
           at: createdAt,
-          actor: opts.actor ?? 'user',
+          actor: sanitizeActor(opts.actor),
           type: 'created',
           detail: `task created (${title})`,
         },
@@ -928,17 +965,20 @@ export class ProjectStore extends EventEmitter {
     // Auto-map assignee before persist — distinguish generic status change from explicit assignee (task_claim).
     // A task assigned to a specialized agent (designer, tester, …) keeps that
     // assignee across status changes; only workflow roles follow the map.
+    // Echoing the current assignee (the web task modal sends every field) is
+    // not an explicit choice, so it does not block the mapping.
     if (
       patch.status !== undefined &&
       patch.status !== current.status &&
-      patch.assignee === undefined &&
+      (patch.assignee === undefined || patch.assignee === current.assignee) &&
       isWorkflowAssignee(current.assignee)
     ) {
       const mapped = STATUS_ASSIGNEE_MAP[patch.status as TaskStatus]
       if (mapped) patch = { ...patch, assignee: mapped }
     }
     const now = nowIso()
-    const actor = opts.actor ?? 'user'
+    // Every mutation (lock/unlock, checklist, notes, reviews…) lands here: one choke point.
+    const actor = sanitizeActor(opts.actor)
     const next = Task.parse({
       ...current,
       ...patch,
@@ -1061,27 +1101,39 @@ export class ProjectStore extends EventEmitter {
 
   // ── sprint mutations ─────────────────────────────────────────────────
 
+  // Sprint writes run under the board-wide sprint lock against a fresh read of
+  // `.agentboard/sprints/`, so two processes never pick the same id or write
+  // back each other's stale copies.
+
   createSprint(goal: string): SprintType {
-    const sprint: SprintType = {
-      id: this._nextSprintId(),
-      goal,
-      status: 'planned',
-      startedAt: null,
-      endedAt: null,
-    }
-    this.sprints.set(sprint.id, sprint)
-    this._writeSprint(sprint)
+    const sprint = withFileLock(this.sprintLockPath(), () => {
+      this._syncSprints()
+      const sprint: SprintType = {
+        id: this._nextSprintId(),
+        goal,
+        status: 'planned',
+        startedAt: null,
+        endedAt: null,
+      }
+      this.sprints.set(sprint.id, sprint)
+      this._writeSprint(sprint)
+      return sprint
+    })
     this.emit('change')
     return sprint
   }
 
   updateSprint(id: number, patch: Partial<Pick<SprintType, 'goal' | 'status'>>): SprintType {
-    const sprint = this._requireSprint(id)
-    const updated: SprintType = { ...sprint, ...patch }
-    if (patch.status === 'active') updated.startedAt = updated.startedAt ?? nowIso()
-    if (patch.status === 'closed') updated.endedAt = nowIso()
-    this.sprints.set(id, updated)
-    this._writeSprint(updated)
+    const updated = withFileLock(this.sprintLockPath(), () => {
+      this._syncSprints()
+      const sprint = this._requireSprint(id)
+      const updated: SprintType = { ...sprint, ...patch }
+      if (patch.status === 'active') updated.startedAt = updated.startedAt ?? nowIso()
+      if (patch.status === 'closed') updated.endedAt = nowIso()
+      this.sprints.set(id, updated)
+      this._writeSprint(updated)
+      return updated
+    })
     this.emit('change')
     return updated
   }
@@ -1091,22 +1143,25 @@ export class ProjectStore extends EventEmitter {
    * an automatic retrospective is appended to `.agentboard/learnings.md`.
    */
   setSprintStatus(id: number, status: SprintStatus, opts: { retro?: boolean } = {}): SprintType {
-    const sprint = this._requireSprint(id)
-    const updated: SprintType = { ...sprint, status }
-    if (status === 'active') {
-      for (const other of this.sprints.values()) {
-        if (other.id !== id && other.status === 'active') {
-          this.sprints.set(other.id, { ...other, status: 'planned', startedAt: null })
-          this._writeSprint(this.sprints.get(other.id)!)
+    const { updated, closing } = withFileLock(this.sprintLockPath(), () => {
+      this._syncSprints()
+      const sprint = this._requireSprint(id)
+      const updated: SprintType = { ...sprint, status }
+      if (status === 'active') {
+        for (const other of this.sprints.values()) {
+          if (other.id !== id && other.status === 'active') {
+            this.sprints.set(other.id, { ...other, status: 'planned', startedAt: null })
+            this._writeSprint(this.sprints.get(other.id)!)
+          }
         }
+        updated.startedAt = updated.startedAt ?? nowIso()
+      } else if (status === 'closed') {
+        updated.endedAt = nowIso()
       }
-      updated.startedAt = updated.startedAt ?? nowIso()
-    } else if (status === 'closed') {
-      updated.endedAt = nowIso()
-    }
-    this.sprints.set(id, updated)
-    this._writeSprint(updated)
-    const closing = sprint.status !== 'closed' && status === 'closed'
+      this.sprints.set(id, updated)
+      this._writeSprint(updated)
+      return { updated, closing: sprint.status !== 'closed' && status === 'closed' }
+    })
     if (closing && opts.retro !== false) {
       this.appendLearningsSection(
         `Sprint ${id} retro — ${nowIso().slice(0, 10)}`,
@@ -1161,6 +1216,8 @@ export class ProjectStore extends EventEmitter {
   }
 
   private _requireSprint(id: number): SprintType {
+    // A miss may be a sprint created by another process since we loaded.
+    if (!this.sprints.has(id)) this._syncSprints()
     const sprint = this.sprints.get(id)
     if (!sprint) throw new Error(`Sprint not found: ${id}`)
     return sprint
@@ -1247,10 +1304,34 @@ function fileStamp(file: string): string | null {
   }
 }
 
-function unparseableTaskWarning(file: string): string {
-  return `Task file not parseable (skipped): .agentboard/tasks/${file}. Check the YAML frontmatter — e.g. quote titles containing ": " like  title: "Web: foo".`
+function unparseableTaskWarning(file: string, reason = 'invalid frontmatter'): string {
+  return `Task file not parseable (skipped): .agentboard/tasks/${file} — ${reason}`
 }
 
+/**
+ * Say why a task file was rejected. A schema failure names the field: on a
+ * hand-edited file it is a typo, but a file written by a newer AgentSprint
+ * (a new assignee, status or field) fails the same way on an older server,
+ * so the message says so instead of blaming the YAML.
+ */
+function describeParseError(err: unknown): string {
+  if (err instanceof z.ZodError) {
+    const issue = err.issues[0]
+    const field = issue?.path.length ? issue.path.join('.') : 'frontmatter'
+    return `field \`${field}\`: ${issue?.message ?? 'invalid value'}. If another AgentSprint wrote this file, this one may be older than it — upgrade or rebuild it.`
+  }
+  const first = ((err as Error)?.message ?? String(err)).split('\n')[0]
+  return `YAML error: ${first}. Quote values that contain ": " — e.g. title: "Web: foo".`
+}
+
+/**
+ * The single sanitizer for every actor that reaches a note or activity line:
+ * one line, `|` (the activity field separator) replaced, trimmed. A blank name
+ * becomes `fallback`, since an empty actor field makes the line unparseable.
+ */
+// `|` splits activity lines and parentheses close the `(author)` of a note, so neither survives.
+const sanitizeActor = (name: string | undefined, fallback = 'user'): string =>
+  (name ?? '').replace(/\|/g, '/').replace(/[()]/g, '').replace(/\s+/g, ' ').trim() || fallback
 const isCheckedCriterion = (c?: string): boolean => !!c && /^\[[xX]\]\s*/.test(c)
 const criterionTextOf = (c?: string): string => (c ?? '').replace(/^\s*\[[xX]?\]\s*/, '').trim()
 

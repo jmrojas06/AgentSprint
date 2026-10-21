@@ -11,6 +11,9 @@ coverage/
 !.env.example
 .idea/
 .agentboard/metrics/
+# transient write sidecars (per-file locks and atomic-write temp files)
+.agentboard/**/*.lock
+.agentboard/**/*.tmp
 docker-compose.override.yml
 
 # local Claude Code state (subagents in .claude/agents/ are tracked)
