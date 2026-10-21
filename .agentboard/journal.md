@@ -42,3 +42,22 @@
 
 **Blockers:**
 - The stdio agentsprint MCP server disconnected at 19:32Z (exit 0, cause unknown); only the user can reconnect it
+
+## 2026-10-21T22:00:52.761Z — claude
+
+**Summary:** Sprint 8 ran end to end on AgentSprint itself: 7 tasks (TK-48..54) built by specialist subagents, every one through the code/UI review gate, findings fixed and re-reviewed, committed (fb2519e, 8af2484) and pushed to PR #9; the Docker board at :4310 rebuilt from the clean commit.
+
+**Done:**
+- TK-48 agentboard doctor (lint, orphaned locks, foreign-owned files, stale dist, server commit vs HEAD, .mcp.json)
+- TK-49 approve from the UI: Mark done, Request changes, Close approved (N)
+- TK-50 refused saves keep edits with an inline message; focus returns to the opener card/row
+- TK-51 sprint writes under a board-wide lock; one actor sanitizer (no |, (, ), newlines)
+- TK-52 MCP stdio logs why it exits; the 2026-10-21 drop was a SIGINT from Claude Code, not a crash
+- TK-53 Start from an idea: full prompt from a shared core builder (Claude Code splits slash-command args on spaces)
+- TK-54 task/new-task modals are real dialogs; palette is a modal combobox; opening another task in place no longer saves the first task's fields over it
+
+**Next:**
+- Human: review Sprints 6, 7 and 8 in Review and move them to Done (Close approved (N) on the Overview does it in one go); close TK-32 with TK-35; close Sprint 6 and activate the next
+- Merge PR #9 once CI is green (Auto-fix is on)
+- Reconnect the agentsprint MCP server in Claude Code after pnpm build (it only loads dist at start); agentboard doctor shows what is stale
+- Follow-ups: Delete in TaskModal has no confirmation; PID-namespace edge case in file locks (TK-35 note)
