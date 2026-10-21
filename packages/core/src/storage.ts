@@ -48,6 +48,7 @@ This project uses a git-native sprint board under \`.agentboard/\`.
 7. If \`.agentboard/brand.md\` exists and is configured, follow the brand guidelines when writing code, copy or UI.
 8. \`.agentboard/agents/\` holds specialized agent profiles (developer, designer, tester, …), mirrored to \`.claude/agents/\` as real Claude Code subagents with their skills preloaded. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask \`sprint_dispatch\` (or \`agentboard dispatch\`) which subagent takes which task and what can run in parallel.
 9. Work in Review passes a review gate first: \`code-reviewer\` (or \`ui-reviewer\` for UI work) records a verdict with \`task_review\`. \`changes\` sends the task back to In Progress with findings; \`approve\` leaves it for the human.
+10. The human can approve from the chat: run the \`human-review\` MCP prompt. The main session reads \`review_queue\`, may launch the read-only \`review-assistant\` subagent for a decision brief per task (subagents cannot ask the user), asks the human in batches of at most 4 multiple-choice questions, records each answer with \`review_decide\` (or \`agentboard review --done …\`), and closes a sprint only when the human chose to.
 `
 
 const BRAND_TEMPLATE = `---
@@ -765,6 +766,21 @@ export class ProjectStore extends EventEmitter {
         { notes, ...(input.verdict === 'changes' ? { status: 'In Progress' as TaskStatus } : {}) },
         { actor: reviewer, reviewEvent: `${label}${findings.length ? ` (${findings.length} finding${findings.length === 1 ? '' : 's'})` : ''}` },
       )
+    })
+  }
+
+  /**
+   * The human's decision on a task in Review: `done` moves it to Done,
+   * `changes` records a changes verdict (via reviewTask) with `by` as the
+   * reviewer. `by` defaults to `user`. Throws for tasks not in Review.
+   */
+  decideReview(id: string, input: { decision: 'done' | 'changes'; by?: string; findings?: string[] }): TaskType {
+    const by = input.by?.trim() || 'user'
+    if (input.decision === 'changes') return this.reviewTask(id, { reviewer: by, verdict: 'changes', findings: input.findings })
+    return withFileLock(this.taskPath(id), () => {
+      const task = this._freshTask(id)
+      if (task.status !== 'Review') throw new Error(`Task ${id} is "${task.status}", not "Review" — only work waiting for review can be closed here`)
+      return this._updateTaskUnlocked(id, { status: 'Done' }, { actor: by })
     })
   }
 

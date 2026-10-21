@@ -67,6 +67,7 @@ Liveness probe. Returns `{ "ok": true, "version": "0.1.0" }`. When `--token-all`
 | `GET /api/tasks/:id/activity` | Activity log for the task |
 | `GET /api/tasks/:id/commits` | Git commits referencing the task |
 | `POST /api/tasks/:id/review` | Review-gate verdict on a task in `Review`: `{ verdict: "approve" \| "changes", reviewer?, summary?, findings?: string[] }` (`reviewer` defaults to `user`). Records a note plus a `review` activity event; `changes` moves the task back to `In Progress`, `approve` leaves it in `Review` for a human. Returns the updated task. `400` when the verdict is invalid, the task is not in `Review` or `changes` has no findings; `404` when the task does not exist |
+| `GET /api/review-queue` | Human review queue, same result as the `review_queue` MCP tool: per task in `Review` `{ id, title, sprint, assignee, criteria: { done, total }, review: { verdict, by, at, summary, findings } \| null, approvedSinceLastChange, recommendation: "approve" \| "look" \| "changes-pending", reason }`. `?sprint=<id>` and `?ids=TK-1,TK-2` filter it; `400` for a bad sprint |
 | `GET /api/templates` | Task templates |
 | `POST /api/tasks/batch` | Create several tasks: `{ tasks: [{ ref?, title, dependsOn?, ... }] }`, validated before any write |
 

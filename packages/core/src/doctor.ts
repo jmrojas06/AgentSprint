@@ -4,6 +4,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { lintProject } from './lint.js'
 import { FILE_LOCK_STALE_MS } from './filelock.js'
+import { SUBAGENT_SCHEMA, claudeAgentsDir, subagentSchema } from './subagents.js'
 
 export type DoctorLevel = 'ok' | 'warn' | 'error'
 
@@ -183,6 +184,21 @@ function checkMcp(root: string): DoctorCheck {
   return { name: 'mcp', level: 'ok', message: `agentsprint → ${parts.join(' ')}` }
 }
 
+function checkSubagents(root: string): DoctorCheck | null {
+  const dir = claudeAgentsDir(root)
+  if (!fs.existsSync(dir)) return null
+  const newer = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.md') && (subagentSchema(fs.readFileSync(path.join(dir, f), 'utf8')) ?? 0) > SUBAGENT_SCHEMA)
+  if (newer.length === 0) return { name: 'subagents', level: 'ok', message: `no generated subagent is newer than schema ${SUBAGENT_SCHEMA}` }
+  return {
+    name: 'subagents',
+    level: 'warn',
+    message: `this AgentSprint (subagent schema ${SUBAGENT_SCHEMA}) is older than the one that generated your subagents — upgrade it: ${newer.join(', ')}`,
+    fix: 'upgrade AgentSprint (pnpm build, pnpm docker:up, or a newer @jmrojas06/agentsprint-cli)',
+  }
+}
+
 /**
  * Check the environment an AgentSprint board runs in: board integrity and
  * stray files, whether a source checkout's dist is behind its src, which
@@ -203,5 +219,7 @@ export async function runDoctor(dir: string, opts: DoctorOptions = {}): Promise<
   checks.push(checkBuild(checkout))
   checks.push(...(await Promise.all(urls.map((u) => checkServer(u, head, fetchJson)))))
   checks.push(checkMcp(root))
+  const subagents = checkSubagents(root)
+  if (subagents) checks.push(subagents)
   return { checks, ok: checks.every((c) => c.level !== 'error') }
 }

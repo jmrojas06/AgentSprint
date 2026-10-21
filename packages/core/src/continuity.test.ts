@@ -7,6 +7,7 @@ import {
   ProjectStore,
   buildDispatchPlan,
   buildProjectContext,
+  buildReviewQueue,
   discoverSkills,
   formatJournalEntry,
   missingSkills,
@@ -174,6 +175,25 @@ describe('review gate', () => {
     expect(() => store.reviewTask(todo.id, { reviewer: 'code-reviewer', verdict: 'approve' })).toThrow(/not "Review"/)
     const review = store.createTask({ title: 'Now', status: 'Review' })
     expect(() => store.reviewTask(review.id, { reviewer: 'code-reviewer', verdict: 'changes' })).toThrow(/finding/)
+  })
+
+  it('decideReview closes or sends back only work in Review, as the human', () => {
+    const a = store.createTask({ title: 'A', assignee: 'developer', status: 'Review' })
+    const b = store.createTask({ title: 'B', assignee: 'developer', status: 'Review' })
+    const todo = store.createTask({ title: 'Later', status: 'To Do' })
+    store.reviewTask(a.id, { reviewer: 'code-reviewer', verdict: 'approve' })
+    expect(buildReviewQueue(store.state.tasks).map((q) => [q.id, q.recommendation])).toEqual([[a.id, 'approve'], [b.id, 'look']])
+
+    const done = store.decideReview(a.id, { decision: 'done' })
+    expect(done.status).toBe('Done')
+    expect(done.activity.at(-1)).toMatchObject({ type: 'status', actor: 'user', detail: 'Review → Done' })
+
+    const back = store.decideReview(b.id, { decision: 'changes', by: 'maria', findings: ['button is off by one'] })
+    expect(back.status).toBe('In Progress')
+    expect(back.notes).toContain('(maria) **Review: changes requested**')
+    expect(() => store.decideReview(todo.id, { decision: 'done' })).toThrow(/not "Review"/)
+    expect(() => store.decideReview(a.id, { decision: 'changes', findings: ['x'] })).toThrow(/not "Review"/)
+    expect(store.state.tasks.find((t) => t.id === todo.id)?.status).toBe('To Do')
   })
 })
 

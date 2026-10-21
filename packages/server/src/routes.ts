@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
-import { buildDispatchPlan, buildIdeaToMvpPrompt, buildSprintReport, buildTaskSpec, computeSprintStats, discoverSkills, findTaskRefs, missingSkills, planDispatch, snapshotProject, taskCommitCounts } from '@jmrojas06/agentsprint-core'
+import { buildDispatchPlan, buildIdeaToMvpPrompt, buildReviewQueue, buildSprintReport, buildTaskSpec, computeSprintStats, discoverSkills, findTaskRefs, missingSkills, planDispatch, snapshotProject, taskCommitCounts } from '@jmrojas06/agentsprint-core'
 import type { ReviewVerdict } from '@jmrojas06/agentsprint-core'
 import type { ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
@@ -408,6 +408,15 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
       const message = (err as Error).message
       return sendError(reply, /not found/i.test(message) ? 404 : 400, message)
     }
+  })
+
+  // Same result as the MCP `review_queue` tool.
+  app.get('/api/review-queue', async (req, reply) => {
+    const q = req.query as Record<string, string>
+    const sprint = q.sprint ? Number(q.sprint) : undefined
+    if (q.sprint && (!Number.isInteger(sprint) || sprint! <= 0)) return sendError(reply, 400, 'sprint must be a positive integer')
+    const ids = q.ids ? q.ids.split(',').map((s) => s.trim()).filter(Boolean) : undefined
+    return reply.send(buildReviewQueue(projects.get(projectName(req)).store.state.tasks, { sprint, ids }))
   })
 
   // Same text as the MCP `idea-to-mvp` prompt, to paste into Claude Code as a message.

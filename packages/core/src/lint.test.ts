@@ -22,6 +22,23 @@ describe('lintProject', () => {
     expect(result.issues).toEqual([])
   })
 
+  it('accepts relative files and globs, rejects absolute paths and ".."', () => {
+    const tasksDir = path.join(dir, '.agentboard', 'tasks')
+    const task = (id: string, files: string) =>
+      `---\nid: ${id}\ntitle: files\nstatus: Done\npriority: medium\nassignee: scrum-master\nsprint: 1\nfiles: ${files}\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n`
+    fs.writeFileSync(path.join(tasksDir, 'TK-80.md'), task('TK-80', '["packages/web/**", "docs/agents.md"]'), 'utf8')
+    expect(lintProject(dir).issues).toEqual([])
+    fs.writeFileSync(path.join(tasksDir, 'TK-81.md'), task('TK-81', '["/etc/passwd", "../other/x.ts", "packages/../../x", ""]'), 'utf8')
+    const result = lintProject(dir)
+    expect(result.ok).toBe(false)
+    expect(result.issues.filter((i) => i.code === 'INVALID_FILES').map((i) => i.message)).toEqual([
+      `Task 'TK-81' files entry "/etc/passwd" must be a repo-relative path or glob without ".."`,
+      `Task 'TK-81' files entry "../other/x.ts" must be a repo-relative path or glob without ".."`,
+      `Task 'TK-81' files entry "packages/../../x" must be a repo-relative path or glob without ".."`,
+      `Task 'TK-81' files entry "" must be a repo-relative path or glob without ".."`,
+    ])
+  })
+
   it('reports when no board exists', () => {
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-lint-empty-'))
     try {

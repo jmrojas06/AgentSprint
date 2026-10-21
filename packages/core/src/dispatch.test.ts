@@ -135,6 +135,82 @@ describe('buildDispatchPlan', () => {
   })
 })
 
+describe('parallel conflicts', () => {
+  it('flags tasks of one wave whose package tags overlap', () => {
+    const sprint = store.createSprint('S')
+    store.setSprintStatus(sprint.id, 'active')
+    const a = store.createTask({ title: 'board', sprint: sprint.id, acceptanceCriteria: AC, tags: ['web'] })
+    const b = store.createTask({ title: 'dialog', sprint: sprint.id, acceptanceCriteria: AC, tags: ['web', 'ux'] })
+    const c = store.createTask({ title: 'storage', sprint: sprint.id, acceptanceCriteria: AC, tags: ['core'] })
+    const plan = planDispatch(store.state)
+    expect(plan.waves[0]!.map((t) => t.id)).toEqual([a.id, b.id, c.id])
+    expect(plan.conflicts).toEqual([{ tasks: [a.id, b.id], shared: 'packages/web' }])
+    const md = buildDispatchPlan(plan, 'demo')
+    expect(md).toContain(`⚠ shares packages/web with ${b.id}`)
+    expect(md).toContain(`⚠ shares packages/web with ${a.id}`)
+    expect(md).toContain('isolation: "worktree"')
+    expect(md).not.toContain(`shares packages/core`)
+  })
+
+  it('uses declared files over tags and matches globs by prefix', () => {
+    const sprint = store.createSprint('S')
+    store.setSprintStatus(sprint.id, 'active')
+    const app = store.createTask({ title: 'app', sprint: sprint.id, acceptanceCriteria: AC, tags: ['web'], files: ['packages/web/src/App.tsx'] })
+    const src = store.createTask({ title: 'src', sprint: sprint.id, acceptanceCriteria: AC, files: ['packages/web/src/**'] })
+    const docs = store.createTask({ title: 'docs', sprint: sprint.id, acceptanceCriteria: AC, tags: ['web'], files: ['docs/web.md'] })
+    const web2 = store.createTask({ title: 'web2', sprint: sprint.id, acceptanceCriteria: AC, files: ['packages/webhooks/index.ts'] })
+    const later = store.createTask({ title: 'later', sprint: sprint.id, acceptanceCriteria: AC, files: ['packages/web/src/App.tsx'], dependencies: [app.id] })
+    const plan = planDispatch(store.state)
+    expect(plan.waves.map((w) => w.map((t) => t.id))).toEqual([[app.id, src.id, docs.id, web2.id], [later.id]])
+    expect(plan.conflicts).toEqual([{ tasks: [app.id, src.id], shared: 'packages/web/src/App.tsx' }])
+    expect(buildDispatchPlan(plan, 'demo')).toContain(`⚠ shares packages/web/src/App.tsx with ${src.id}`)
+  })
+
+  it('reports no conflicts when nothing overlaps', () => {
+    const sprint = store.createSprint('S')
+    store.setSprintStatus(sprint.id, 'active')
+    store.createTask({ title: 'a', sprint: sprint.id, acceptanceCriteria: AC, tags: ['cli'] })
+    store.createTask({ title: 'b', sprint: sprint.id, acceptanceCriteria: AC })
+    const plan = planDispatch(store.state)
+    expect(plan.conflicts).toEqual([])
+    expect(buildDispatchPlan(plan, 'demo')).not.toContain('⚠')
+  })
+
+  it('keeps files in the frontmatter and leaves tasks without them unchanged', () => {
+    const withFiles = store.createTask({ title: 'f', files: ['packages/core/src/dispatch.ts'] })
+    const plain = store.createTask({ title: 'p' })
+    const reopened = ProjectStore.open(dir).state.tasks
+    expect(reopened.find((t) => t.id === withFiles.id)?.files).toEqual(['packages/core/src/dispatch.ts'])
+    expect(reopened.find((t) => t.id === plain.id)).not.toHaveProperty('files')
+    expect(fs.readFileSync(path.join(dir, '.agentboard', 'tasks', `${plain.id}.md`), 'utf8')).not.toContain('files:')
+  })
+})
+
+describe('review gate in the plan', () => {
+  it('skips tasks whose approving verdict still applies and lists them as already approved', () => {
+    const sprint = store.createSprint('S')
+    store.setSprintStatus(sprint.id, 'active')
+    const fresh = store.createTask({ title: 'fresh', sprint: sprint.id, assignee: 'developer', status: 'Review' })
+    const approved = store.createTask({ title: 'approved', sprint: sprint.id, assignee: 'developer', status: 'Review' })
+    const stale = store.createTask({ title: 'stale', sprint: sprint.id, assignee: 'developer', status: 'Review' })
+    store.reviewTask(approved.id, { reviewer: 'code-reviewer', verdict: 'approve', summary: 'Fine.' })
+    store.reviewTask(stale.id, { reviewer: 'code-reviewer', verdict: 'approve', summary: 'Fine.' })
+    store.updateTask(stale.id, { title: 'stale, edited after the verdict' })
+    const plan = planDispatch(store.state)
+    expect(plan.review.map((r) => [r.id, r.approvedBy])).toEqual([
+      [fresh.id, null],
+      [approved.id, 'code-reviewer'],
+      [stale.id, null],
+    ])
+    const md = buildDispatchPlan(plan, 'demo')
+    expect(md).toContain(`**${fresh.id} → \`code-reviewer\`:**`)
+    expect(md).toContain(`**${stale.id} → \`code-reviewer\`:**`)
+    expect(md).not.toContain(`**${approved.id} → \`code-reviewer\`:**`)
+    expect(md).toContain(`- ${approved.id} — approved — already approved by code-reviewer; skip the gate`)
+    expect(md).not.toContain('Skip a task whose notes')
+  })
+})
+
 describe('createTaskBatch', () => {
   it('resolves refs and existing ids into dependencies', () => {
     const existing = store.createTask({ title: 'existing' })

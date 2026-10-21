@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ProjectStore, runDoctor, type DoctorCheck, type DoctorOptions } from '../src/index.js'
+import { ProjectStore, SUBAGENT_SCHEMA, claudeAgentsDir, runDoctor, type DoctorCheck, type DoctorOptions } from '../src/index.js'
 
 let dir: string
 
@@ -244,5 +244,22 @@ describe('runDoctor — MCP', () => {
   it('fails on invalid JSON', async () => {
     fs.writeFileSync(path.join(dir, '.mcp.json'), '{nope')
     expect(check((await runDoctor(dir, offline)).checks, 'mcp').level).toBe('error')
+  })
+})
+
+describe('runDoctor — subagents', () => {
+  it('is ok when every generated subagent comes from this schema or an older one', async () => {
+    expect(check((await runDoctor(dir, offline)).checks, 'subagents').level).toBe('ok')
+  })
+
+  it('warns when .claude/agents holds files from a newer schema than this binary', async () => {
+    const file = path.join(claudeAgentsDir(dir), 'developer.md')
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`schema=${SUBAGENT_SCHEMA}`, `schema=${SUBAGENT_SCHEMA + 1}`), 'utf8')
+    const result = await runDoctor(dir, offline)
+    const subagents = check(result.checks, 'subagents')
+    expect(subagents.level).toBe('warn')
+    expect(subagents.message).toContain('developer.md')
+    expect(subagents.message).toMatch(/older than the one that generated your subagents/)
+    expect(result.ok).toBe(true)
   })
 })

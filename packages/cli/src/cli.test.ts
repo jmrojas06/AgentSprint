@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
 import { startServer } from '@jmrojas06/agentsprint-server'
+import { cmdReview } from './index.js'
 
 let dir: string
 
@@ -321,7 +322,7 @@ describe('agents, dispatch and connect', () => {
     log.mockRestore()
     expect(out).toContain('Added default agents: docs')
     expect(out).toMatch(/designer\s+Designer/)
-    expect(out).toContain('9 agent(s)')
+    expect(out).toContain('10 agent(s)')
   })
 
   it('dispatch prints the plan for the active sprint', async () => {
@@ -421,6 +422,60 @@ describe('session continuity commands', () => {
     const out = execFileSync('/bin/sh', ['-c', command], { cwd: dir, encoding: 'utf8' })
     expect(JSON.parse(out)).toEqual([entry, 'context', project, '--hook'])
     expect(fs.existsSync(path.join(dir, 'PWNED'))).toBe(false)
+  })
+})
+
+describe('review', () => {
+  it('parses the queue and the decisions', () => {
+    expect(parseArgs(['review', '/tmp/x', '--sprint', '2', '--json'])).toMatchObject({ command: 'review', dir: '/tmp/x', sprintId: 2, json: true })
+    expect(parseArgs(['review', '--done', 'TK-1,TK-2', '--changes', 'TK-3', '--finding', 'a', '--finding', 'b'])).toMatchObject({
+      command: 'review',
+      dir: process.cwd(),
+      review: { done: ['TK-1', 'TK-2'], changes: ['TK-3'], findings: ['a', 'b'] },
+    })
+  })
+
+  it('refuses ids that are not task ids and findings without --changes', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('exit')
+    }) as never)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(() => parseArgs(['review', '/tmp/x', '--done', '../evil'])).toThrow('exit')
+    expect(() => parseArgs(['review', '/tmp/x', '--changes', 'TK-1/../TK-2', '--finding', 'x'])).toThrow('exit')
+    expect(() => parseArgs(['review', '/tmp/x', '--finding', 'lost'])).toThrow('exit')
+    exit.mockRestore()
+    err.mockRestore()
+  })
+
+  it('prints the queue, closes approved work and sends work back, refusing tasks not in Review', async () => {
+    const store = ProjectStore.init(dir, { sample: true })
+    store.setTaskStatus('TK-1', 'Review')
+    store.setTaskStatus('TK-2', 'Review')
+    // `approve` needs every criterion ticked, not just an approving verdict.
+    const criteria = store.state.tasks.find((t) => t.id === 'TK-1')!.acceptanceCriteria
+    criteria.forEach((_, index) => store.setTaskChecklist('TK-1', { index, completed: true }))
+    store.reviewTask('TK-1', { reviewer: 'code-reviewer', verdict: 'approve' })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await cmdReview(dir, {})).toBe(0)
+    const out = log.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(out).toMatch(/TK-1\s+approve/)
+    expect(out).toContain('Approved by code-reviewer; no change since.')
+    expect(out).toMatch(/TK-2\s+look/)
+    log.mockClear()
+    expect(await cmdReview(dir, { json: true })).toBe(0)
+    expect(JSON.parse(String(log.mock.calls[0]?.[0])).map((q: { id: string }) => q.id)).toEqual(['TK-1', 'TK-2'])
+
+    expect(await cmdReview(dir, { done: ['TK-1', 'TK-3'], changes: ['TK-2'], findings: ['fix the header'] })).toBe(1)
+    const errors = err.mock.calls.map((c) => String(c[0])).join('\n')
+    log.mockRestore()
+    err.mockRestore()
+    expect(errors).toMatch(/TK-3.*not "Review"/)
+    const after = ProjectStore.open(dir).state.tasks
+    expect(after.find((t) => t.id === 'TK-1')?.status).toBe('Done')
+    expect(after.find((t) => t.id === 'TK-2')).toMatchObject({ status: 'In Progress' })
+    expect(after.find((t) => t.id === 'TK-2')?.notes).toContain('(user) **Review: changes requested**')
+    expect(after.find((t) => t.id === 'TK-3')?.status).not.toBe('Done')
   })
 })
 

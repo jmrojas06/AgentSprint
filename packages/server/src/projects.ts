@@ -117,11 +117,21 @@ export class ProjectManager {
   }
 }
 
+/** Skip warnings already logged, per project root — the watcher re-syncs on every change. */
+const loggedSkips = new Map<string, Set<string>>()
+
 /** Regenerate Claude Code subagents without ever taking the server down. */
 function syncSubagentsSafely(store: ProjectStore): void {
   try {
     const result = store.syncSubagents()
-    for (const skip of result?.skipped ?? []) console.warn(`[agentboard] subagent "${skip.name}" not synced: ${skip.reason}`)
+    const logged = loggedSkips.get(store.rootDir)
+    const current = new Set<string>()
+    for (const skip of result?.skipped ?? []) {
+      const line = `[agentboard] subagent "${skip.name}" not synced: ${skip.reason}`
+      current.add(line)
+      if (!logged?.has(line)) console.warn(line)
+    }
+    loggedSkips.set(store.rootDir, current)
   } catch (err) {
     console.error(`[agentboard] subagent sync failed: ${(err as Error).message}`)
   }

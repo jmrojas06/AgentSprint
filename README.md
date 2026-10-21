@@ -71,7 +71,7 @@ end     session_handoff  →  .agentboard/journal.md (done, next, blockers)
 
 ## Specialists and their skills
 
-`agentboard init` writes nine agent profiles to `.agentboard/agents/` and mirrors them to `.claude/agents/` as Claude Code subagents. Each one preloads the [skills](https://code.claude.com/docs/en/skills) that match its job:
+`agentboard init` writes ten agent profiles to `.agentboard/agents/` and mirrors them to `.claude/agents/` as Claude Code subagents. Each one preloads the [skills](https://code.claude.com/docs/en/skills) that match its job:
 
 | Agent | Job | Skills preloaded |
 | --- | --- | --- |
@@ -84,6 +84,7 @@ end     session_handoff  →  .agentboard/journal.md (done, next, blockers)
 | `ideator` | Divergent options, ranked shortlist | brainstorming |
 | `code-reviewer` | Review gate for code, read-only | requesting-code-review, karpathy-guidelines, principios-codigo, verification-before-completion |
 | `ui-reviewer` | Review gate for UI, read-only | web-design-guidelines, design-taste-frontend, playwright-cli |
+| `review-assistant` | Briefs you on what waits in Review, read-only | verification-before-completion |
 
 A skill that is not installed is skipped by Claude Code, so the defaults are safe anywhere. `agentboard skills` lists the skills on your machine and flags the ones an agent references but you do not have; the **Agents** tab lets you add any installed skill to any agent.
 
@@ -97,6 +98,8 @@ Work moves to Review, then a reviewer subagent checks it before a human does. `s
 
 - **approve** keeps the task in Review, with an "Approved" badge, for you to move to Done.
 - **changes** moves it back to In Progress with findings (file:line, failing scenario, fix) and the orchestrator re-launches the implementer.
+
+Then approve from the chat: the `human-review` prompt reads `review_queue`, asks you a few batched multiple-choice questions (with a `review-assistant` brief when something needs a look) and records your answers with `review_decide`.
 
 <p align="center">
   <img src="docs/public/screenshots/dispatch-dark.png" alt="Run sprint: waves of parallel tasks with the subagent and review gate for each" width="900">
@@ -151,7 +154,7 @@ Around 40 tools over stdio (`agentboard mcp`) and Streamable HTTP (`agentboard s
 | `task_create_batch` | Create a whole linked plan in one call |
 | `agent_upsert` / `agent_sync` / `skill_list` | Manage specialists and their skills |
 
-Prompts: `resume`, `idea-to-mvp`, `run-sprint`, `sprint-plan`, `execute-task`, `sprint-retro`. Full reference: [docs/mcp.md](https://jmrojas06.github.io/AgentSprint/mcp).
+Prompts: `resume`, `idea-to-mvp`, `run-sprint`, `human-review`, `sprint-plan`, `execute-task`, `sprint-retro`. Full reference: [docs/mcp.md](https://jmrojas06.github.io/AgentSprint/mcp).
 
 ## Docker
 

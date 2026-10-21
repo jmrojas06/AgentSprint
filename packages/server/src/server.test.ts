@@ -558,6 +558,7 @@ describe('server API', () => {
         'docs',
         'fixer',
         'ideator',
+        'review-assistant',
         'tester',
         'ui-reviewer',
       ])
@@ -789,9 +790,11 @@ describe('MCP over HTTP', () => {
       })
       expect(list.statusCode).toBe(200)
       const tools = (parseMcpRes(list.body) as { result: { tools: Array<{ name: string }> } }).result.tools
-      expect(tools.length).toBe(40)
+      expect(tools.length).toBe(42)
       const names = tools.map((t) => t.name)
       expect(names).toContain('project_list')
+      expect(names).toContain('review_queue')
+      expect(names).toContain('review_decide')
       expect(names).toContain('export_board')
       expect(names).toContain('task_release')
       expect(names).toContain('template_list')
@@ -1018,6 +1021,21 @@ describe('session continuity API', () => {
     expect(missing.status).toBe(404)
   })
 
+  it('GET /api/review-queue lists Review tasks with their recommendation', async () => {
+    await api('patch', '/api/tasks/TK-1/status', { status: 'Review' })
+    await api('patch', '/api/tasks/TK-2/status', { status: 'Review' })
+    // `approve` needs every criterion ticked, not just an approving verdict.
+    const criteria = (await api('get', '/api/tasks/TK-1')).json().acceptanceCriteria as string[]
+    for (let index = 0; index < criteria.length; index++) await api('patch', '/api/tasks/TK-1/checklist', { index, completed: true })
+    await api('post', '/api/tasks/TK-1/review', { reviewer: 'code-reviewer', verdict: 'approve' })
+    const { status, json } = await api('get', '/api/review-queue')
+    expect(status).toBe(200)
+    expect(json().map((q: { id: string; recommendation: string }) => [q.id, q.recommendation])).toEqual([['TK-1', 'approve'], ['TK-2', 'look']])
+    expect((await api('get', '/api/review-queue?ids=TK-2,TK-3')).json().map((q: { id: string }) => q.id)).toEqual(['TK-2'])
+    expect((await api('get', '/api/review-queue?sprint=999')).json()).toEqual([])
+    expect((await api('get', '/api/review-queue?sprint=x')).status).toBe(400)
+  })
+
   it('GET /api/skills lists skills and missing references', async () => {
     const { status, json } = await api('get', '/api/skills')
     expect(status).toBe(200)
@@ -1043,5 +1061,25 @@ describe('session continuity API', () => {
     // A non-string stack or scope is a client error too, not a 500.
     expect((await api('post', '/api/prompts/idea-to-mvp', { idea: 'x', stack: 42 })).status).toBe(400)
     expect((await api('post', '/api/prompts/idea-to-mvp', { idea: 'x', scope: ['a'] })).status).toBe(400)
+  })
+})
+
+describe('subagent sync logging', () => {
+  it('warns about a skipped subagent once, not on every sync', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-skiplog-'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      ProjectStore.init(root, { sample: true })
+      fs.writeFileSync(path.join(root, '.claude', 'agents', 'developer.md'), '---\nname: developer\ndescription: mine\n---\nHand-written', 'utf8')
+      const { ProjectManager } = await import('./projects.js')
+      const first = await ProjectManager.discover(root)
+      const second = await ProjectManager.discover(root)
+      await first.closeAll()
+      await second.closeAll()
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('"developer"'))).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })

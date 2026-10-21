@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import matter from 'gray-matter'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ProjectStore, SUBAGENT_MARKER, claudeAgentsDir, nearestClaudeColor, renderClaudeSubagent, syncClaudeSubagents } from '../src/index.js'
+import { ProjectStore, SUBAGENT_MARKER, SUBAGENT_SCHEMA, claudeAgentsDir, nearestClaudeColor, renderClaudeSubagent, syncClaudeSubagents } from '../src/index.js'
 import type { AgentProfile } from '../src/index.js'
 
 let dir: string
@@ -60,6 +60,17 @@ describe('renderClaudeSubagent', () => {
     expect(out.content).toContain('task_claim { id, agent: "designer" }')
   })
 
+  it('falls back to the agentboard task CLI, never to hand edits, without the MCP tools', () => {
+    const builder = renderClaudeSubagent(agent(), 'demo')
+    expect(builder).toContain('agentboard task claim . <id> --agent designer')
+    expect(builder).toContain('agentboard task status . <id> Review --agent designer')
+    expect(builder).toMatch(/never edit the frontmatter or the `## Activity` section by hand/i)
+    expect(builder).not.toContain('edit `.agentboard/tasks/<id>.md` directly')
+    const reviewer = renderClaudeSubagent(agent({ name: 'code-reviewer', tags: ['reviewer'] }), 'demo')
+    expect(reviewer).toContain('agentboard task review . <id> --agent code-reviewer --verdict')
+    expect(reviewer).toMatch(/never edit the frontmatter or the `## Activity` section by hand/i)
+  })
+
   it('omits tools and model when inherited', () => {
     const out = matter(renderClaudeSubagent(agent(), 'demo'))
     expect(out.data.tools).toBeUndefined()
@@ -95,6 +106,39 @@ describe('syncClaudeSubagents', () => {
     expect(fs.existsSync(path.join(claudeAgentsDir(dir), 'tester.md'))).toBe(false)
   })
 
+  it('stamps the protocol schema into the marker', () => {
+    expect(SUBAGENT_SCHEMA).toBeGreaterThanOrEqual(1)
+    expect(renderClaudeSubagent(agent(), 'demo')).toContain(`${SUBAGENT_MARKER} schema=${SUBAGENT_SCHEMA}`)
+  })
+
+  it('an older generator never degrades a file from a newer schema, nor removes it', () => {
+    syncClaudeSubagents(dir, [agent(), agent({ name: 'tester' })], 'demo')
+    const newer = (name: string): string => {
+      const file = path.join(claudeAgentsDir(dir), `${name}.md`)
+      const content = fs.readFileSync(file, 'utf8').replace(`schema=${SUBAGENT_SCHEMA}`, `schema=${SUBAGENT_SCHEMA + 1}`) + 'newer protocol\n'
+      fs.writeFileSync(file, content, 'utf8')
+      return content
+    }
+    const designer = newer('designer')
+    const tester = newer('tester')
+    const result = syncClaudeSubagents(dir, [agent()], 'demo')
+    expect(result.written).toEqual([])
+    expect(result.removed).toEqual([])
+    expect(result.skipped.map((s) => s.name).sort()).toEqual(['designer', 'tester'])
+    expect(result.skipped[0]!.reason).toMatch(/newer generator/)
+    expect(fs.readFileSync(path.join(claudeAgentsDir(dir), 'designer.md'), 'utf8')).toBe(designer)
+    expect(fs.readFileSync(path.join(claudeAgentsDir(dir), 'tester.md'), 'utf8')).toBe(tester)
+  })
+
+  it('treats a generated file without a schema as schema 0 and updates it', () => {
+    const file = path.join(claudeAgentsDir(dir), 'designer.md')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, `---\nname: designer\n---\n<!-- ${SUBAGENT_MARKER} — edit .agentboard/agents/designer.md instead; this file is regenerated. -->\nOld protocol: edit .agentboard/tasks/<id>.md directly`, 'utf8')
+    const result = syncClaudeSubagents(dir, [agent()], 'demo')
+    expect(result.written).toEqual(['designer'])
+    expect(fs.readFileSync(file, 'utf8')).toBe(renderClaudeSubagent(agent(), 'demo'))
+  })
+
   it('does not create .claude/ when there is nothing to write', () => {
     syncClaudeSubagents(dir, [], 'demo')
     expect(fs.existsSync(path.join(dir, '.claude'))).toBe(false)
@@ -105,7 +149,22 @@ describe('store integration', () => {
   it('init generates one Claude Code subagent per default agent', () => {
     ProjectStore.init(dir, { sample: true })
     const files = fs.readdirSync(claudeAgentsDir(dir)).sort()
-    expect(files).toEqual(['code-reviewer.md', 'creative-director.md', 'designer.md', 'developer.md', 'docs.md', 'fixer.md', 'ideator.md', 'tester.md', 'ui-reviewer.md'])
+    expect(files).toEqual(['code-reviewer.md', 'creative-director.md', 'designer.md', 'developer.md', 'docs.md', 'fixer.md', 'ideator.md', 'review-assistant.md', 'tester.md', 'ui-reviewer.md'])
+  })
+
+  it('syncs review-assistant as a read-only briefing subagent that never touches the board', () => {
+    ProjectStore.init(dir, { sample: true })
+    const out = matter(fs.readFileSync(path.join(claudeAgentsDir(dir), 'review-assistant.md'), 'utf8'))
+    // Read-only by tools, not only by instructions: no file edits and no board-changing MCP tool.
+    const blocked = String(out.data.disallowedTools).split(', ')
+    for (const tool of ['Edit', 'Write', 'NotebookEdit', 'mcp__agentsprint__task_claim', 'mcp__agentsprint__task_status', 'mcp__agentsprint__review_decide', 'mcp__agentsprint__sprint_close']) {
+      expect(blocked).toContain(tool)
+    }
+    expect(out.data.description).toContain('human-review')
+    expect(out.content).toContain('review_queue')
+    expect(out.content).toContain('agentboard review . --json')
+    expect(out.content).not.toContain('task_claim')
+    expect(out.content).not.toContain('agentboard task status')
   })
 
   it('saveAgent creates a profile, exposes it in state and syncs its subagent', () => {
@@ -162,7 +221,7 @@ describe('store integration', () => {
 
   it('installDefaultAgents adds only the missing defaults', () => {
     const store = ProjectStore.init(dir, { sample: false })
-    expect(store.installDefaultAgents()).toHaveLength(9)
+    expect(store.installDefaultAgents()).toHaveLength(10)
     store.deleteAgent('docs')
     expect(store.installDefaultAgents()).toEqual(['docs'])
     expect(store.installDefaultAgents()).toEqual([])

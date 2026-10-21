@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
 import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats, learningsTail } from '@jmrojas06/agentsprint-core'
-import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, buildIdeaToMvpPrompt, discoverSkills, isWorkflowAssignee, missingSkills, planDispatch } from '@jmrojas06/agentsprint-core'
+import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, buildIdeaToMvpPrompt, buildReviewQueue, discoverSkills, isWorkflowAssignee, missingSkills, planDispatch } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
 import type { SprintStatus, Task, TaskInput } from '@jmrojas06/agentsprint-core'
 
@@ -544,6 +544,36 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         return errorResponse((err as Error).message)
       }
     },
+  )
+
+  server.registerTool(
+    'review_queue',
+    {
+      title: 'Human review queue',
+      description:
+        'Tasks waiting in Review for the human, each with criteria done/total, its latest verdict (who, when, summary, findings), `approvedSinceLastChange` and a recommendation (`approve` only when the latest approval still applies and every criterion is ticked; `look` | `changes-pending` otherwise) with the reason. Ask the human about each one, then record the answer with review_decide.',
+      inputSchema: z.object({
+        sprint: z.number().int().positive().optional(),
+        ids: z.array(z.string().regex(/^[A-Z]{2}-[0-9]+$/)).optional(),
+      }),
+    },
+    async ({ sprint, ids }) => textResponse(buildReviewQueue(getStore().state.tasks, { sprint, ids })),
+  )
+
+  server.registerTool(
+    'review_decide',
+    {
+      title: 'Record the human review decision',
+      description:
+        'Record what the human decided about a task in Review: `done` moves it to Done; `changes` sends it back to In Progress with the findings. `by` is the human (default `user`). Only for an explicit human decision, never your own; tasks not in Review are refused.',
+      inputSchema: z.object({
+        id: z.string().regex(/^[A-Z]{2}-[0-9]+$/),
+        decision: z.enum(['done', 'changes']),
+        findings: z.array(z.string()).optional().describe('Required for `changes`: what the human wants fixed, one item each.'),
+        by: z.string().min(1).optional(),
+      }),
+    },
+    async ({ id, ...input }) => textResponse(compactTask(getStore().decideReview(id, input))),
   )
 
   server.registerTool(
@@ -1277,6 +1307,39 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       const text = buildIdeaToMvpPrompt({ idea, stack, projectName: getProjectName(), agents: store.listAgents(), hasBrand: Boolean(store.getBrand().name) })
       return { messages: [{ role: 'user', content: { type: 'text', text } }] }
     },
+  )
+
+  server.registerPrompt(
+    'human-review',
+    {
+      title: 'Human review in chat',
+      description: 'Walk the human through the Review column in chat: review_queue, an optional review-assistant brief, batched multiple-choice questions, then review_decide and close the sprint only if they chose it.',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: [
+              'Run the human review of what waits in Review. You are the main session: only you can ask the human, so never delegate the decision and never decide for them.',
+              '',
+              '1. Call review_queue (pass `sprint` or `ids` when the human named them). If it is empty, say so and stop.',
+              '2. Group the items by sprint. When the queue is long or an item needs a closer look (recommendation `look` or `changes-pending`, criteria not all ticked, an approval older than the last change), launch the read-only `review-assistant` subagent with those ids: it returns a short decision brief per task and proposed questions. It records nothing.',
+              '3. Ask with AskUserQuestion (without it, numbered questions in chat), at most 4 questions per call, 2–4 options each, your recommended option first:',
+              '   - one question per sprint for its `approve` items, even when the same sprint also has odd items: "Approve these N" / "Leave in Review" (offer "Approve all and close Sprint N" only when, with them, nothing else in that sprint stays open);',
+              '   - one separate question per odd item (stale approval, changes pending, unticked or obsolete criterion, no verdict), with its one-line brief: "Approve" / "Send back with changes" / "Leave in Review".',
+              '   Ask the next batch only after the previous one is answered.',
+              '4. Apply exactly what was chosen: review_decide { id, decision: "done" } for each approved task; review_decide { id, decision: "changes", findings: [...] } with the human\'s own words as findings. Leave everything else in Review.',
+              '5. Call sprint_close only for a sprint the human chose to close, and only after task_list for that sprint shows every task Done.',
+              '6. Finish with a summary: moved to Done, sent back, left in Review, sprints closed.',
+              '',
+              'Without the MCP tools: `agentboard review --json`, `agentboard review --done TK-1,TK-2`, `agentboard review --changes TK-3 --finding "…"`, `agentboard close . <sprint>`.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
   )
 
   server.registerPrompt(

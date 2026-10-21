@@ -31,7 +31,13 @@ const ISSUE = {
   INVALID_AGENT: 'INVALID_AGENT',
   UNKNOWN_ASSIGNEE: 'UNKNOWN_ASSIGNEE',
   NO_ACCEPTANCE_CRITERIA: 'NO_ACCEPTANCE_CRITERIA',
+  INVALID_FILES: 'INVALID_FILES',
 } as const
+
+/** A `files:` entry must stay inside the repo: relative, no `..` segment. */
+function isRepoRelative(entry: string): boolean {
+  return entry.trim() !== '' && !path.isAbsolute(entry) && !/^[a-zA-Z]:/.test(entry) && !entry.split(/[\\/]/).includes('..')
+}
 
 function rel(rootDir: string, absPath: string): string {
   return path.relative(rootDir, absPath)
@@ -227,6 +233,17 @@ export function lintProject(rootDir: string): LintResult {
           severity: 'error',
           code: ISSUE.INVALID_DEPENDENCY,
           message: `Task '${task.id}' depends on non-existent task '${dep}'`,
+        })
+      }
+    }
+
+    for (const entry of task.files ?? []) {
+      if (!isRepoRelative(entry)) {
+        issues.push({
+          file: rel(root, path.join(tasksDir, `${task.id}.md`)),
+          severity: 'error',
+          code: ISSUE.INVALID_FILES,
+          message: `Task '${task.id}' files entry "${entry}" must be a repo-relative path or glob without ".."`,
         })
       }
     }

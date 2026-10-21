@@ -99,7 +99,9 @@ describe('Overview', () => {
 
   describe('human review decisions', () => {
     const approved = (at = '2026-10-21T10:00:00Z') => ({ at, actor: 'ui-reviewer', type: 'review', detail: 'approved' }) as const
-    const inReview = (id: string, activity: Task['activity']) => task({ id, title: `Work ${id}`, status: 'Review', activity })
+    // Finished work: every criterion ticked, so a current approval makes it closable.
+    const inReview = (id: string, activity: Task['activity']) =>
+      task({ id, title: `Work ${id}`, status: 'Review', acceptanceCriteria: ['[x] one', '[x] two'], activity })
 
     it('marks a task in review done from its row without opening it', async () => {
       apiMock.context.mockResolvedValueOnce(context()).mockResolvedValue(context({ review: [] }))

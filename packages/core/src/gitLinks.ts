@@ -96,9 +96,10 @@ export async function findTaskCommits(rootDir: string, id: string, opts: GitLink
   try {
     out = await runGit(
       rootDir,
-      // Records end with a NUL (%x00) so multi-line bodies (%b) cannot break
-      // the record splitting.
-      ['log', '--all', `--max-count=${LOG_COMMIT_LIMIT}`, `--pretty=format:%H${RECORD_SEPARATOR}%h${RECORD_SEPARATOR}%an${RECORD_SEPARATOR}%cI${RECORD_SEPARATOR}%s${RECORD_SEPARATOR}%b%x00`],
+      // -z separates records with a NUL (instead of a newline that would end up
+      // glued to the next record's hash), so multi-line bodies (%b) cannot
+      // break the record splitting either.
+      ['log', '-z', '--all', `--max-count=${LOG_COMMIT_LIMIT}`, `--pretty=format:%H${RECORD_SEPARATOR}%h${RECORD_SEPARATOR}%an${RECORD_SEPARATOR}%cI${RECORD_SEPARATOR}%s${RECORD_SEPARATOR}%b`],
     )
   } catch (err) {
     warnGitFailure(`git log scan for ${id}`, err)
@@ -162,11 +163,11 @@ export async function taskCommitCounts(
   const known = new Set(taskIds)
   let out: string
   try {
-    // Each record ends with a NUL (%x00) so multi-line bodies (%b) cannot
-    // break the record splitting.
+    // -z separates records with a NUL so multi-line bodies (%b) cannot break
+    // the record splitting.
     out = await runGit(
       rootDir,
-      ['log', '--all', `--max-count=${LOG_COMMIT_LIMIT}`, `--pretty=format:%H${RECORD_SEPARATOR}%s${RECORD_SEPARATOR}%b%x00`],
+      ['log', '-z', '--all', `--max-count=${LOG_COMMIT_LIMIT}`, `--pretty=format:%H${RECORD_SEPARATOR}%s${RECORD_SEPARATOR}%b`],
     )
   } catch (err) {
     warnGitFailure('git log commit-count scan', err)
