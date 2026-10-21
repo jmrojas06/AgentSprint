@@ -16,6 +16,7 @@ import { ThemeToggle } from './components/ThemeToggle'
 import { AgentsPanel } from './components/AgentsPanel'
 import { DispatchModal } from './components/DispatchModal'
 import { Overview } from './components/Overview'
+import { IdeaDialog } from './components/IdeaDialog'
 import { TokenPrompt } from './components/TokenPrompt'
 import { SideDrawer } from './components/SideDrawer'
 import { useMediaQuery } from './hooks/useMediaQuery'
@@ -59,6 +60,9 @@ export default function App() {
   const [project, setProjectState] = useState<BoardState | null>(null)
   const [projects, setProjects] = useState<Array<{ name: string; rootDir: string; configName: string }>>([])
   const [error, setError] = useState<string | null>(null)
+  // A new key per message, so the same text said twice is spoken twice.
+  const [announcement, setAnnouncement] = useState<{ text: string; n: number } | null>(null)
+  const announce = useCallback((text: string) => setAnnouncement((prev) => ({ text, n: (prev?.n ?? 0) + 1 })), [])
   const [query, setQuery] = useState('')
   const [sprintFilter, setSprintFilter] = useState<SprintFilter>('all')
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | ''>('')
@@ -70,6 +74,7 @@ export default function App() {
   const [editing, setEditing] = useState<Task | null>(null)
   const [creating, setCreating] = useState(false)
   const [dispatching, setDispatching] = useState(false)
+  const [startingIdea, setStartingIdea] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [sideTab, setSideTab] = useState<SideTab>('sprints')
   const [panelOpen, setPanelOpen] = useState(initialPanel)
@@ -320,9 +325,11 @@ export default function App() {
   }
 
   const saveTask = async (id: string, patch: Partial<Task>) => {
+    // A rejection (token prompt dismissed) reaches TaskModal, which keeps the edits.
     await api.updateTask(id, patch)
-    setEditing(null)
+    // Reload first so the modal closes onto the re-rendered card and can hand it focus.
     await reload()
+    setEditing(null)
   }
 
   const deleteTask = async (id: string) => {
@@ -685,7 +692,8 @@ export default function App() {
       </header>
 
       <div className={cx('grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4', panelOpen && 'lg:grid-cols-[minmax(0,1fr)_300px]')}>
-        <div className={cx(view === 'overview' ? 'overflow-y-auto' : 'overflow-x-auto')}>
+        {/* tabIndex -1: last-resort focus target when a closed task surface has nothing left to return to. */}
+        <main tabIndex={-1} className={cx('outline-none', view === 'overview' ? 'overflow-y-auto' : 'overflow-x-auto')}>
           {view === 'overview' ? (
             <Overview
               version={project}
@@ -694,6 +702,7 @@ export default function App() {
                 if (task) setEditing(task)
               }}
               onOpenSprints={() => openPanel('sprints')}
+              onStartIdea={() => setStartingIdea(true)}
             />
           ) : view === 'kanban' ? (
             <Board
@@ -718,7 +727,7 @@ export default function App() {
               onOpen={setEditing}
             />
           )}
-        </div>
+        </main>
         {isWide && panelOpen && <div className="overflow-y-auto">{sidePanel()}</div>}
       </div>
 
@@ -726,6 +735,10 @@ export default function App() {
 
       {editing && (
         <TaskModal
+          // Remount per task: its form state is seeded from `task` once, so
+          // opening another task in place (from the palette) must start fresh
+          // instead of saving the first task's fields over the second.
+          key={editing.id}
           task={editing}
           allTasks={project.tasks}
           sprints={project.sprints}
@@ -733,6 +746,13 @@ export default function App() {
           onSave={saveTask}
           onDelete={deleteTask}
           onClose={() => setEditing(null)}
+          onReviewed={async (updated) => {
+            // Same wording as the Overview rows. The modal closes onto the reloaded
+            // board, and its focus return picks the next task in the list.
+            announce(updated.status === 'Done' ? `${updated.id} moved to Done.` : `${updated.id} went back to ${updated.status} with your findings.`)
+            await reload()
+            setEditing(null)
+          }}
         />
       )}
 
@@ -744,6 +764,19 @@ export default function App() {
             const task = project.tasks.find((t) => t.id === id)
             if (!task) return
             setDispatching(false)
+            setEditing(task)
+          }}
+        />
+      )}
+
+      {startingIdea && (
+        <IdeaDialog
+          tasks={project.tasks}
+          onClose={() => setStartingIdea(false)}
+          onOpenTask={(id) => {
+            const task = project.tasks.find((t) => t.id === id)
+            if (!task) return
+            setStartingIdea(false)
             setEditing(task)
           }}
         />
@@ -770,10 +803,15 @@ export default function App() {
         }}
         onClearFilters={clearFilters}
         onRunSprint={() => setDispatching(true)}
+        onStartIdea={() => setStartingIdea(true)}
         onOpenPanel={openPanel}
         build={build}
       />
       {tokenPrompt}
+      {/* Polite announcements for results whose surface is gone (a review decision closes TaskModal). */}
+      <p role="status" className="sr-only" data-testid="app-announcement">
+        {announcement && <span key={announcement.n}>{announcement.text}</span>}
+      </p>
     </div>
     </AgentsContext.Provider>
   )

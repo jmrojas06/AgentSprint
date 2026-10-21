@@ -37,6 +37,7 @@ vi.mock('./api', async () => ({
     project: vi.fn().mockResolvedValue(boardState),
     gitCommitCounts: vi.fn().mockResolvedValue({}),
     templates: vi.fn().mockResolvedValue([]),
+    getTaskCommits: vi.fn().mockResolvedValue({ id: '', gitAvailable: false, commits: [], branches: [] }),
     setTaskStatus: vi.fn().mockResolvedValue({}),
     updateTask: vi.fn().mockResolvedValue({}),
     deleteTask: vi.fn().mockResolvedValue(undefined),
@@ -115,6 +116,81 @@ describe('App refused mutations', () => {
       expect(screen.queryByText('Could not load the board')).toBeNull()
       expect(screen.getByTestId('view-toggle')).toBeTruthy()
       expect(screen.getByRole('alert').textContent).toMatch(/Unauthorized/)
+    } finally {
+      vi.mocked(api.project).mockResolvedValue(boardState as never)
+      window.history.replaceState(null, '', '/')
+    }
+  })
+})
+
+describe('App review decisions from TaskModal', () => {
+  it('announces the result and gives focus to the next card in the Review column', async () => {
+    const { api } = await import('./api')
+    const inReview = (id: string) => ({
+      id,
+      title: `Work ${id}`,
+      description: '',
+      status: 'Review',
+      priority: 'medium',
+      assignee: 'designer',
+      sprint: null,
+      estimate: 1,
+      tags: [],
+      dependencies: [],
+      acceptanceCriteria: [],
+      notes: '',
+      activity: [],
+      createdAt: '2026-10-21T00:00:00Z',
+      updatedAt: '2026-10-21T00:00:00Z',
+    })
+    const before = [inReview('TK-29'), inReview('TK-30')]
+    const after = [{ ...before[0]!, status: 'Done' }, before[1]!]
+    vi.mocked(api.project).mockResolvedValue({ ...boardState, tasks: before } as never)
+    vi.mocked(api.setTaskStatus).mockImplementationOnce(async () => {
+      vi.mocked(api.project).mockResolvedValue({ ...boardState, tasks: after } as never)
+      return after[0] as never
+    })
+    window.history.replaceState(null, '', '/?view=kanban')
+    try {
+      render(<App />)
+      await act(async () => {})
+      const column = (status: string) => document.querySelector(`[data-task-list="column:${status}"]`) as HTMLElement
+      const card = column('Review').querySelector('[data-task-id="TK-29"]') as HTMLElement
+      card.focus()
+      await act(async () => {
+        fireEvent.click(card)
+      })
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('mark-done'))
+      })
+      expect(screen.queryByPlaceholderText('Task title')).toBeNull()
+      expect(screen.getByTestId('app-announcement').textContent).toBe('TK-29 moved to Done.')
+      expect(column('Done').querySelector('[data-task-id="TK-29"]')).not.toBeNull()
+      expect(document.activeElement).toBe(column('Review').querySelector('[data-task-id="TK-30"]'))
+    } finally {
+      vi.mocked(api.project).mockResolvedValue(boardState as never)
+      window.history.replaceState(null, '', '/')
+    }
+  })
+
+  it('opening another task while one is open shows the new task, not the old form', async () => {
+    const { api } = await import('./api')
+    const task = (id: string) => ({
+      id, title: `Work ${id}`, description: '', status: 'To Do', priority: 'medium', assignee: 'developer',
+      sprint: null, estimate: 1, tags: [], dependencies: [], acceptanceCriteria: [], notes: '', activity: [],
+      createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z',
+    })
+    vi.mocked(api.project).mockResolvedValue({ ...boardState, tasks: [task('TK-1'), task('TK-2')] } as never)
+    window.history.replaceState(null, '', '/?view=kanban')
+    try {
+      render(<App />)
+      await act(async () => {})
+      const card = (id: string) => document.querySelector(`[data-task-id="${id}"]`) as HTMLElement
+      await act(async () => fireEvent.click(card('TK-1')))
+      fireEvent.change(screen.getByPlaceholderText('Task title'), { target: { value: 'Edited TK-1' } })
+      // e.g. the command palette opening TK-2 in place, without closing the modal first
+      await act(async () => fireEvent.click(card('TK-2')))
+      expect((screen.getByPlaceholderText('Task title') as HTMLInputElement).value).toBe('Work TK-2')
     } finally {
       vi.mocked(api.project).mockResolvedValue(boardState as never)
       window.history.replaceState(null, '', '/')

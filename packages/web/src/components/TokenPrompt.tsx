@@ -99,7 +99,7 @@ function TokenDialog({ attempt, onClose }: { attempt: Pending['attempt']; onClos
           data-testid="token-input"
         />
         {error && (
-          <p id="token-prompt-error" role="alert" className="mt-1.5 text-xs text-red-400">
+          <p id="token-prompt-error" role="alert" className="mt-1.5 text-xs text-red-300">
             {error}
           </p>
         )}

@@ -117,6 +117,18 @@ describe('ListView', () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'TK-2' }))
   })
 
+  it('rows are focusable and open with Enter or Space', () => {
+    const onOpen = vi.fn()
+    renderList({ onOpen })
+    const row = screen.getAllByTestId('list-row')[0]!
+    expect(row.tabIndex).toBe(0)
+    expect(row.getAttribute('data-task-id')).toBe('TK-1')
+    fireEvent.keyDown(row, { key: 'Enter' })
+    fireEvent.keyDown(row, { key: ' ' })
+    expect(onOpen).toHaveBeenCalledTimes(2)
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'TK-1' }))
+  })
+
   it('shows an empty state when no tasks match filters', () => {
     renderList({ tasks: [] })
     expect(screen.getByTestId('list-empty')).toBeTruthy()

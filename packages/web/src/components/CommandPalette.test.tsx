@@ -129,6 +129,22 @@ describe('CommandPalette', () => {
     expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'TK-2' }))
   })
 
+  it('is a modal combobox: Tab and Shift+Tab keep focus in the search input', () => {
+    renderPalette()
+    const input = screen.getByRole('combobox', { name: 'Search tasks and commands' })
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy()
+    input.focus()
+    const tab = fireEvent.keyDown(input, { key: 'Tab' })
+    const shiftTab = fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })
+    // fireEvent returns false when the default (moving focus) was prevented
+    expect(tab).toBe(false)
+    expect(shiftTab).toBe(false)
+    expect(document.activeElement).toBe(input)
+    // options are reached with the arrows, not with Tab
+    expect(items().every((el) => el.getAttribute('tabindex') === '-1')).toBe(true)
+    expect(input.getAttribute('aria-activedescendant')).toBe('command-option-0')
+  })
+
   it('closes on Escape without running anything', () => {
     const onClose = vi.fn()
     const onCreateTask = vi.fn()

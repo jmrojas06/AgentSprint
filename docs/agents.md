@@ -138,6 +138,13 @@ brand kit, any missing specialist (`agent_upsert`), a sprint, one
 `task_create_batch` call with every task assigned and linked by dependencies,
 and finally `sprint_dispatch` to build it wave by wave.
 
+Start it from the board: **Start from an idea** (command palette, or the
+Overview when nothing is pending) renders the full prompt for your idea, stack
+and scope (`POST /api/prompts/idea-to-mvp`). Copy it and paste it into Claude
+Code as a message, or copy the `claude '…'` command line. Don't type the idea
+after the slash command: Claude Code splits slash-command arguments on spaces,
+so only the first word would arrive.
+
 `task_create_batch` creates up to 50 tasks at once; each item may carry a
 `ref` label and `dependsOn` (refs in the batch or existing ids). The whole
 batch is validated before anything is written.

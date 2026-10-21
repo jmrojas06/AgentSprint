@@ -1,25 +1,42 @@
-import { useEffect, useState } from 'react'
-import { CheckSquare, ClipboardCopy, GitCommitHorizontal, GitBranch, Lock, Plus, Save, Square, Trash2, X } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { CheckSquare, CircleAlert, ClipboardCopy, GitCommitHorizontal, GitBranch, Lock, Plus, Save, Square, Trash2, X } from 'lucide-react'
 import type { GitCommit, Sprint, Task, TaskPriority, TaskStatus } from '../types'
 import { api } from '../api'
 import { ActivityTimeline } from './ActivityTimeline'
 import { cx, criterionChecked, criterionText, getTaskLock } from '../ui'
 import { AssigneeOptions, agentRole, useAgents } from '../agents'
-import { useEscapeLayer } from '../hooks/useDialogFocus'
+import { useDialogFocus } from '../hooks/useDialogFocus'
+import { useReturnFocus } from '../hooks/useReturnFocus'
+import { RequestChangesDialog, ReviewPanel } from './ReviewControls'
 
 interface Props {
   task: Task
   allTasks: Task[]
   sprints: Sprint[]
   statuses: string[]
-  onSave: (id: string, patch: Partial<Task>) => void
-  onDelete: (id: string) => void
+  /** May reject (a dismissed token prompt, a refused write): the modal then stays open with the edits. */
+  onSave: (id: string, patch: Partial<Task>) => void | Promise<void>
+  onDelete: (id: string) => void | Promise<void>
   onClose: () => void
+  /** After Mark done or Request changes succeeded; defaults to closing the modal. */
+  onReviewed?: (task: Task) => void | Promise<void>
 }
 
 const PRIORITY_ORDER: TaskPriority[] = ['low', 'medium', 'high', 'critical']
 
-export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete, onClose }: Props) {
+/**
+ * One line for a write the board refused, e.g. "Not saved: the board needs a
+ * token." A 401 at this point means the token prompt was dismissed.
+ */
+export function writeErrorMessage(error: unknown, failed: string): string {
+  const err = error as { status?: number; message?: string } | null
+  if (err?.status === 401) return `${failed}: the board needs a token.`
+  if (error instanceof TypeError) return `${failed}: could not reach the server.`
+  const reason = err?.message?.trim().replace(/\.+$/, '')
+  return reason ? `${failed}: ${reason}.` : `${failed}.`
+}
+
+export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete, onClose, onReviewed }: Props) {
   const lock = getTaskLock(task)
   const [title, setTitle] = useState(task.title)
   const [description, setDescription] = useState(task.description)
@@ -39,8 +56,47 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   const [, setGitAvailable] = useState(true)
   const [, setCommitsLoading] = useState(false)
   const [tab, setTab] = useState<'details' | 'activity'>('details')
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [requesting, setRequesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [writeError, setWriteError] = useState<string | null>(null)
 
-  useEscapeLayer(onClose)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLInputElement>(null)
+  const uid = useId()
+  const fieldId = (name: string) => `${uid}-${name}`
+
+  // A real dialog: focus moves to the title on open and Tab stays inside.
+  // The token prompt and the request-changes dialog join the same surface
+  // stack, so Escape closes them first; the palette swallows its own Escape.
+  // Focus-on-close belongs to useReturnFocus alone (restoreFocus: false).
+  useDialogFocus(dialogRef, onClose, titleRef, { restoreFocus: false })
+  // The opening focus puts the caret at the start, so a long title shows its
+  // beginning instead of scrolling to its tail. Later focuses behave as usual.
+  const openingFocus = useRef(true)
+
+  // However the modal closes (Escape, X, Cancel, Save, a review decision),
+  // focus goes back to the card or row that opened it, or to its neighbour
+  // when the task left that list.
+  useReturnFocus(task.id)
+
+  const reviewed = async (updated: Task) => {
+    if (onReviewed) await onReviewed(updated)
+    else onClose()
+  }
+
+  const markDone = async () => {
+    setReviewBusy(true)
+    setReviewError(null)
+    try {
+      const updated = await api.setTaskStatus(task.id, 'Done')
+      await reviewed(updated)
+    } catch (e) {
+      setReviewError(`Could not move ${task.id}: ${(e as Error).message}`)
+      setReviewBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -108,18 +164,38 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
     }
   }
 
-  const save = () => {
-    onSave(task.id, {
-      title,
-      description,
-      status,
-      priority,
-      assignee,
-      sprint,
-      estimate,
-      tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
-      acceptanceCriteria: criteria,
-    })
+  // Save stays focusable while busy (aria-disabled, not disabled): a token
+  // prompt opened by the save gives focus back to it when it closes.
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    setWriteError(null)
+    try {
+      await onSave(task.id, {
+        title,
+        description,
+        status,
+        priority,
+        assignee,
+        sprint,
+        estimate,
+        tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+        acceptanceCriteria: criteria,
+      })
+    } catch (e) {
+      setWriteError(`${writeErrorMessage(e, 'Not saved')} Your edits are still here.`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async () => {
+    setWriteError(null)
+    try {
+      await onDelete(task.id)
+    } catch (e) {
+      setWriteError(writeErrorMessage(e, 'Not deleted'))
+    }
   }
 
   const field = 'w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500'
@@ -128,8 +204,14 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${task.id}: ${task.title}`}
+        tabIndex={-1}
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
+        data-testid="task-modal"
       >
         <div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-3">
           <span className="font-mono text-xs text-zinc-500">{task.id}</span>
@@ -144,20 +226,41 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
             </span>
           )}
           <input
+            ref={titleRef}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            onFocus={(e) => {
+              if (!openingFocus.current) return
+              openingFocus.current = false
+              e.currentTarget.setSelectionRange(0, 0)
+              e.currentTarget.scrollLeft = 0
+            }}
             placeholder="Task title"
-            className="flex-1 bg-transparent text-base font-semibold text-zinc-100 outline-none placeholder:text-zinc-500"
+            aria-label="Task title"
+            className="min-w-0 flex-1 rounded-md bg-transparent px-1.5 py-0.5 text-base font-semibold text-zinc-100 outline-none ring-indigo-500/60 placeholder:text-zinc-500 focus-visible:ring-2"
           />
-          <button onClick={onClose} aria-label="Close task" title="Close" className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
+          <button type="button" onClick={onClose} aria-label="Close task" title="Close" className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {task.status === 'Review' && (
+          <ReviewPanel
+            task={task}
+            busy={reviewBusy}
+            error={reviewError}
+            lockedReason={dirty ? 'Save or cancel your edits first.' : null}
+            onMarkDone={() => void markDone()}
+            onRequestChanges={() => setRequesting(true)}
+          />
+        )}
 
         <div className="flex items-center gap-1 border-b border-zinc-800 px-4 py-1.5">
           {(['details', 'activity'] as const).map((t) => (
             <button
               key={t}
+              type="button"
+              aria-pressed={tab === t}
               onClick={() => setTab(t)}
               className={cx(
                 'rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors',
@@ -169,14 +272,15 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           ))}
         </div>
 
-        <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 sm:grid-cols-2">
+        <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto overscroll-contain p-4 sm:grid-cols-2">
           {tab === 'activity' ? (
             <ActivityTimeline taskId={task.id} />
           ) : (
           <>
           <div className="sm:col-span-2">
-            <label className={label}>Description</label>
+            <label htmlFor={fieldId('description')} className={label}>Description</label>
             <textarea
+              id={fieldId('description')}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={4}
@@ -186,8 +290,8 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           </div>
 
           <div>
-            <label className={label}>Status</label>
-            <select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)} className={field}>
+            <label htmlFor={fieldId('status')} className={label}>Status</label>
+            <select id={fieldId('status')} value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)} className={field}>
               {statuses.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -197,8 +301,8 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           </div>
 
           <div>
-            <label className={label}>Priority</label>
-            <select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)} className={field}>
+            <label htmlFor={fieldId('priority')} className={label}>Priority</label>
+            <select id={fieldId('priority')} value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)} className={field}>
               {PRIORITY_ORDER.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -208,8 +312,8 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           </div>
 
           <div>
-            <label className={label}>Assignee</label>
-            <select value={assignee} onChange={(e) => setAssignee(e.target.value)} className={field}>
+            <label htmlFor={fieldId('assignee')} className={label}>Assignee</label>
+            <select id={fieldId('assignee')} value={assignee} onChange={(e) => setAssignee(e.target.value)} className={field}>
               <AssigneeOptions agents={agents} current={assignee} />
             </select>
             {assignedAgent && (
@@ -220,8 +324,9 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           </div>
 
           <div>
-            <label className={label}>Sprint</label>
+            <label htmlFor={fieldId('sprint')} className={label}>Sprint</label>
             <select
+              id={fieldId('sprint')}
               value={sprint ?? ''}
               onChange={(e) => setSprint(e.target.value === '' ? null : Number(e.target.value))}
               className={field}
@@ -236,8 +341,9 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           </div>
 
           <div>
-            <label className={label}>Estimate (points)</label>
+            <label htmlFor={fieldId('estimate')} className={label}>Estimate (points)</label>
             <input
+              id={fieldId('estimate')}
               type="number"
               min={0}
               max={100}
@@ -248,13 +354,13 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           </div>
 
           <div>
-            <label className={label}>Tags (comma separated)</label>
-            <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="api, bug, docs" className={field} />
+            <label htmlFor={fieldId('tags')} className={label}>Tags (comma separated)</label>
+            <input id={fieldId('tags')} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="api, bug, docs" className={field} />
           </div>
 
           {task.dependencies.length > 0 && (
             <div className="sm:col-span-2">
-              <label className={label}>Dependencies</label>
+              <p className={label}>Dependencies</p>
               <ul className="mb-2 space-y-1">
                 {task.dependencies.map((depId) => {
                   const dep = allTasks.find((t) => t.id === depId)
@@ -281,7 +387,7 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
 
           {(commits.length > 0 || branches.length > 0) && (
             <div className="sm:col-span-2">
-              <label className={label}>Linked commits</label>
+              <p className={label}>Linked commits</p>
               {branches.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-1">
                   {branches.map((b) => (
@@ -309,8 +415,8 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           )}
 
           <div className="sm:col-span-2">
-            <label className={label}>Acceptance criteria</label>
-            <ul className="mb-2 space-y-1">
+            <p id={fieldId('criteria')} className={label}>Acceptance criteria</p>
+            <ul className="mb-2 space-y-1" aria-labelledby={fieldId('criteria')}>
               {criteria.map((c, i) => {
                 const checked = criterionChecked(c)
                 const text = criterionText(c)
@@ -326,11 +432,14 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
                           : 'border-zinc-600 text-transparent hover:border-zinc-500',
                       )}
                       title={checked ? 'Mark incomplete' : 'Mark complete'}
+                      aria-label={text}
+                      aria-pressed={checked}
                     >
                       {checked ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
                     </button>
                     <span className={cx('text-xs', checked ? 'line-through text-zinc-500' : 'text-zinc-300')}>{text}</span>
                     <button
+                      type="button"
                       onClick={() => setCriteria(criteria.filter((_, j) => j !== i))}
                       className="ml-auto rounded p-0.5 text-zinc-500 hover:text-red-400"
                       title="Remove criterion"
@@ -353,10 +462,11 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
                   }
                 }}
                 placeholder="Add an acceptance criterion…"
+                aria-label="New acceptance criterion"
                 className={field}
               />
-              <button onClick={addCriterion} className="rounded-md bg-zinc-800 px-2 text-zinc-300 hover:bg-zinc-700">
-                <Plus className="h-4 w-4" />
+              <button type="button" onClick={addCriterion} aria-label="Add criterion" title="Add criterion" className="shrink-0 rounded-md bg-zinc-800 px-2 text-zinc-300 hover:bg-zinc-700">
+                <Plus className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -364,35 +474,69 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
           )}
         </div>
 
-        <div className="flex items-center gap-2 border-t border-zinc-800 px-4 py-3">
-          <button
-            onClick={() => onDelete(task.id)}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-950/40"
+        {writeError && (
+          <p
+            role="alert"
+            className="flex items-start gap-1.5 border-t border-zinc-800 bg-red-950/30 px-4 py-2 text-xs leading-relaxed text-red-300"
+            data-testid="save-error"
           >
-            <Trash2 className="h-3.5 w-3.5" /> Delete
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>{writeError}</span>
+          </p>
+        )}
+
+        {/* One line from 360px up: buttons never wrap, and Delete drops its label below sm (the icon keeps an accessible name). */}
+        <div className="flex items-center gap-1.5 border-t border-zinc-800 px-3 py-3 sm:gap-2 sm:px-4">
+          <button
+            type="button"
+            onClick={() => void remove()}
+            aria-label="Delete task"
+            title="Delete task"
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-xs font-medium text-red-400 hover:bg-red-950/40 sm:px-2.5"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Delete</span>
           </button>
           <button
+            type="button"
             onClick={copySpec}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 sm:px-2.5"
             title="Copy a ready-made agent prompt for this task"
+            data-testid="copy-spec"
           >
-            {copied ? <ClipboardCopy className="h-3.5 w-3.5 text-emerald-400" /> : <ClipboardCopy className="h-3.5 w-3.5" />}
-            {copied ? 'Copied!' : 'Copy spec'}
+            <ClipboardCopy className={cx('h-3.5 w-3.5', copied && 'text-emerald-400')} aria-hidden="true" />
+            <span aria-live="polite">{copied ? 'Copied!' : 'Copy spec'}</span>
           </button>
-          <div className="ml-auto flex items-center gap-2">
-            <button onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <button type="button" onClick={onClose} className="whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
               Cancel
             </button>
             <button
-              onClick={save}
+              type="button"
+              onClick={() => void save()}
               disabled={!dirty || !title.trim()}
-              className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-disabled={saving || undefined}
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-wait"
+              data-testid="save-task"
             >
-              <Save className="h-3.5 w-3.5" /> Save
+              <Save className="h-3.5 w-3.5" aria-hidden="true" /> {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </div>
       </div>
+      {requesting && (
+        // Inside the backdrop, whose click closes the modal: keep the dialog's clicks here.
+        <div onClick={(e) => e.stopPropagation()}>
+          <RequestChangesDialog
+            task={task}
+            onClose={() => setRequesting(false)}
+            onDone={async (updated) => {
+              setRequesting(false)
+              await reviewed(updated)
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }

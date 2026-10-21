@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { TaskInput, TaskStatus } from '@jmrojas06/agentsprint-core'
-import { buildDispatchPlan, buildSprintReport, buildTaskSpec, computeSprintStats, discoverSkills, findTaskRefs, missingSkills, planDispatch, snapshotProject, taskCommitCounts } from '@jmrojas06/agentsprint-core'
+import { buildDispatchPlan, buildIdeaToMvpPrompt, buildSprintReport, buildTaskSpec, computeSprintStats, discoverSkills, findTaskRefs, missingSkills, planDispatch, snapshotProject, taskCommitCounts } from '@jmrojas06/agentsprint-core'
 import type { ReviewVerdict } from '@jmrojas06/agentsprint-core'
 import type { ProjectManager } from './projects.js'
 import { readBurndown } from './metrics.js'
@@ -408,6 +408,17 @@ export async function registerApi(app: FastifyInstance, projects: ProjectManager
       const message = (err as Error).message
       return sendError(reply, /not found/i.test(message) ? 404 : 400, message)
     }
+  })
+
+  // Same text as the MCP `idea-to-mvp` prompt, to paste into Claude Code as a message.
+  app.post('/api/prompts/idea-to-mvp', async (req, reply) => {
+    const { idea, stack, scope } = (req.body ?? {}) as { idea?: unknown; stack?: unknown; scope?: unknown }
+    if (typeof idea !== 'string' || !idea.trim()) return sendError(reply, 400, 'idea is required')
+    if (stack != null && typeof stack !== 'string') return sendError(reply, 400, 'stack must be a string')
+    if (scope != null && typeof scope !== 'string') return sendError(reply, 400, 'scope must be a string')
+    const { store } = projects.get(projectName(req))
+    const text = buildIdeaToMvpPrompt({ idea, stack: stack ?? undefined, scope: scope ?? undefined, projectName: store.getConfig().name || '', agents: store.listAgents(), hasBrand: Boolean(store.getBrand().name) })
+    return reply.send({ text })
   })
 
   // ── memory (learnings) ───────────────────────────────────────────────────

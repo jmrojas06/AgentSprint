@@ -1024,4 +1024,24 @@ describe('session continuity API', () => {
     expect(Array.isArray(json().skills)).toBe(true)
     expect(Array.isArray(json().missing)).toBe(true)
   })
+
+  it('POST /api/prompts/idea-to-mvp renders the full prompt with the idea verbatim', async () => {
+    const idea = 'A shared "shopping" list\nfor flatmates who don\'t talk: $5 `stripe`'
+    const { status, json } = await api('post', '/api/prompts/idea-to-mvp', { idea, stack: 'Vite + React', scope: 'one list, no accounts' })
+    expect(status).toBe(200)
+    const { text } = json()
+    expect(text).toContain(`## The idea\n\n${idea}\n`)
+    expect(text).toContain('**Preferred stack:** Vite + React')
+    expect(text).toContain('**Scope:** one list, no accounts')
+    expect(text).toContain('task_create_batch')
+    expect(fs.existsSync(path.join(dir, '.agentboard', 'tasks', 'TK-4.md'))).toBe(false)
+  })
+
+  it('POST /api/prompts/idea-to-mvp rejects an empty idea', async () => {
+    expect((await api('post', '/api/prompts/idea-to-mvp', { idea: '   ' })).status).toBe(400)
+    expect((await api('post', '/api/prompts/idea-to-mvp', {})).status).toBe(400)
+    // A non-string stack or scope is a client error too, not a 500.
+    expect((await api('post', '/api/prompts/idea-to-mvp', { idea: 'x', stack: 42 })).status).toBe(400)
+    expect((await api('post', '/api/prompts/idea-to-mvp', { idea: 'x', scope: ['a'] })).status).toBe(400)
+  })
 })

@@ -50,10 +50,11 @@ npx @jmrojas06/agentsprint-cli serve     # the board at http://127.0.0.1:4310
 Then open Claude Code in the folder and approve the `agentsprint` MCP server. From now on every session starts with the project brief injected automatically. Try:
 
 ```text
-/mcp__agentsprint__idea-to-mvp   "a habit tracker for small teams"
 /mcp__agentsprint__run-sprint
 /mcp__agentsprint__resume
 ```
+
+To plan a new product, open the board and choose **Start from an idea** (in the command palette, or on the Overview when nothing is pending). Describe the idea, copy the prompt and paste it into Claude Code as a message. Claude Code splits slash-command arguments on spaces, so a multi-word idea typed after `/mcp__agentsprint__idea-to-mvp` reaches the prompt cut off.
 
 Prefer the short `agentboard` binary? `npm install -g @jmrojas06/agentsprint-cli`.
 

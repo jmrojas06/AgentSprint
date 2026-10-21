@@ -179,6 +179,8 @@ export const api = {
   reviewTask: (id: string, input: { reviewer?: string; verdict: 'approve' | 'changes'; summary?: string; findings?: string[] }) =>
     request<Task>(`/api/tasks/${id}/review`, { method: 'POST', body: JSON.stringify(input) }),
   skills: () => request<{ skills: SkillInfo[]; missing: Array<{ agent: string; skill: string }> }>('/api/skills'),
+  ideaPrompt: (input: { idea: string; stack?: string; scope?: string }) =>
+    request<{ text: string }>('/api/prompts/idea-to-mvp', { method: 'POST', body: JSON.stringify(input) }),
 
   getBrand: () => request<Brand>('/api/brand'),
   updateBrand: (patch: Partial<Brand>) =>

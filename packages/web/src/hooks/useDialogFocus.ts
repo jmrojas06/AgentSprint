@@ -47,11 +47,16 @@ export function useEscapeLayer(onClose: () => void) {
  *
  * `initialFocus` picks the element that receives focus on open; without it
  * the first focusable element (or the container) gets it.
+ *
+ * `restoreFocus: false` leaves focus-on-close to the caller, for a surface
+ * that already has an owner for it (TaskModal and useReturnFocus): two hooks
+ * moving focus on the same close would fight over where it lands.
  */
 export function useDialogFocus(
   containerRef: RefObject<HTMLElement | null>,
   onClose: () => void,
   initialFocus?: RefObject<HTMLElement | null>,
+  { restoreFocus = true }: { restoreFocus?: boolean } = {},
 ) {
   const closeRef = useRef(onClose)
   closeRef.current = onClose
@@ -84,6 +89,9 @@ export function useDialogFocus(
       const last = items[items.length - 1]!
       const active = document.activeElement as HTMLElement | null
       const inside = active ? root.contains(active) : false
+      // Focus sits in something rendered after this surface: a layer opened
+      // over it that is not on the stack (the command palette). Leave it there.
+      if (!inside && active && active !== document.body && root.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_FOLLOWING) return
       if (e.shiftKey && (!inside || active === first || active === root)) {
         e.preventDefault()
         last.focus()
@@ -98,6 +106,7 @@ export function useDialogFocus(
       stack.splice(stack.indexOf(containerRef), 1)
       cancelAnimationFrame(frame)
       window.removeEventListener('keydown', onKeyDown)
+      if (!restoreFocus) return
       const lost = !prevFocus || !prevFocus.isConnected || prevFocus === document.body
       ;(lost ? stack[stack.length - 1]?.current : prevFocus)?.focus?.()
     }

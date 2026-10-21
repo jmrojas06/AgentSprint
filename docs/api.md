@@ -80,6 +80,7 @@ Liveness probe. Returns `{ "ok": true, "version": "0.1.0" }`. When `--token-all`
 | `POST /api/agents/sync` | Regenerate `.claude/agents/`; `{ installDefaults: true }` adds missing defaults |
 | `GET /api/skills` | Claude Code skills agents can preload: `{ skills: [{ name, description, source: "project" \| "user" }], missing: [{ agent, skill }] }`. `skills` comes from `.claude/skills/` and `~/.claude/skills/` (the project wins on a name clash); `missing` lists skills an agent references that are not installed |
 | `GET /api/dispatch` | Subagent dispatch plan (`plan` JSON + `markdown`); `?sprint=<id>` for a specific sprint |
+| `POST /api/prompts/idea-to-mvp` | Render the `idea-to-mvp` prompt for this project: `{ idea, stack?, scope? }` → `{ text }`, the same text the MCP prompt returns (plus a `Scope` line), to paste into Claude Code as a message. Writes nothing. `400` when `idea` is empty |
 
 ## Sprints
 

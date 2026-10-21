@@ -60,7 +60,10 @@ export function Board({ statuses, tasks, allTasks, commitCounts, sortBy, sortDir
           >
              <div className="flex items-center gap-1 px-3 py-2.5">
               <span className={cx('h-2 w-2 rounded-full', statusAccent[status] ?? 'bg-zinc-600')} />
-              <h2 className="ml-1 text-[13px] font-medium text-zinc-200">{status}</h2>
+              {/* Focus target when a task left an otherwise empty column (see useReturnFocus). */}
+              <h2 tabIndex={-1} data-task-list-heading={`column:${status}`} className="ml-1 text-[13px] font-medium text-zinc-200">
+                {status}
+              </h2>
               <span className="tabular ml-1.5 mr-auto text-xs text-zinc-500">
                 {column.length}
               </span>
@@ -82,7 +85,7 @@ export function Board({ statuses, tasks, allTasks, commitCounts, sortBy, sortDir
                 {sortDir === 'desc' ? <SortDesc className="h-3 w-3" /> : <SortAsc className="h-3 w-3" />}
               </button>
             </div>
-            <div className="flex flex-1 flex-col gap-2 px-2 pb-2">
+            <div className="flex flex-1 flex-col gap-2 px-2 pb-2" data-task-list={`column:${status}`}>
               {column.map((task) => (
                 <div
                   key={task.id}

@@ -63,6 +63,89 @@ export function reviewState(task: Pick<Task, 'activity'>): ReviewState | null {
   return { verdict: review.detail.startsWith('approved') ? 'approved' : 'changes', by: review.actor, at: review.at }
 }
 
+/** Activity that changes the work itself; notes and reviews only talk about it. */
+const WORK_CHANGES = new Set(['status', 'update', 'checklist', 'assignee'])
+
+export interface ReviewVerdict extends ReviewState {
+  /** One-line summary the reviewer gave, from the review note. */
+  summary: string
+  /** Findings listed under the review note (for `changes`). */
+  findings: string[]
+  /** False when the work changed after the verdict, so it was about older work. */
+  current: boolean
+}
+
+const REVIEW_NOTE = /^- \[[^\]]*\] \(([^)]*)\) \*\*Review: (approved|changes requested)\*\*(?:\s+[—-]\s+(.*))?$/
+
+/** The last `**Review: …**` note of a task: summary and findings (core's reviewTask writes them). */
+function lastReviewNote(notes: string): { by: string; summary: string; findings: string[] } | null {
+  const rows = notes.split('\n')
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const m = REVIEW_NOTE.exec(rows[i]!.trimEnd())
+    if (!m) continue
+    const findings: string[] = []
+    for (let j = i + 1; j < rows.length && /^\s+-\s+/.test(rows[j]!); j++) findings.push(rows[j]!.replace(/^\s+-\s+/, '').trim())
+    return { by: m[1]!, summary: (m[3] ?? '').trim(), findings }
+  }
+  return null
+}
+
+/**
+ * The latest review verdict on a task, whether or not it still applies:
+ * who gave it, when, its summary and findings. `current` is false when the
+ * work changed afterwards (status, fields, checklist or assignee; a note does
+ * not count). Null when the task was never reviewed.
+ */
+export function latestReview(task: Pick<Task, 'activity' | 'notes'>): ReviewVerdict | null {
+  const events = task.activity ?? []
+  let idx = -1
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]!.type === 'review') {
+      idx = i
+      break
+    }
+  }
+  if (idx === -1) return null
+  const review = events[idx]!
+  const current = !events.slice(idx + 1).some((e) => WORK_CHANGES.has(e.type) && e.at !== review.at)
+  const note = lastReviewNote(task.notes ?? '')
+  return {
+    verdict: review.detail.startsWith('approved') ? 'approved' : 'changes',
+    by: review.actor,
+    at: review.at,
+    summary: note?.summary ?? '',
+    findings: note?.findings ?? [],
+    current,
+  }
+}
+
+/**
+ * Tasks a human can close in one go: in Review, and their latest review event
+ * is `approved` with no change to the work after it.
+ */
+export function closableApproved<T extends Pick<Task, 'status' | 'activity' | 'notes'>>(tasks: T[]): T[] {
+  return tasks.filter((t) => {
+    if (t.status !== 'Review') return false
+    const r = latestReview(t)
+    return r !== null && r.verdict === 'approved' && r.current
+  })
+}
+
+/** Findings typed one per line (bullets allowed), without blanks. */
+export function parseFindings(text: string): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean)
+}
+
+/** Short local date and time for a timestamp ("Oct 21, 14:02"); the raw value when it does not parse. */
+export function fmtWhen(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ')
 }

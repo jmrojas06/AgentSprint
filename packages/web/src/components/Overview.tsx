@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpenText, Check, CircleAlert, ClipboardCopy, Hourglass, NotebookPen, PlayCircle, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { BookOpenText, Check, CheckCheck, CircleAlert, ClipboardCopy, Lightbulb, NotebookPen, PlayCircle, Sparkles, Undo2, X } from 'lucide-react'
 import type { JournalEntry, ProjectContext, Task } from '../types'
 import { api } from '../api'
 import { AssigneeChip } from '../agents'
-import { cx, criterionChecked, lastNoteText, priorityDot, reviewState, statusAccent } from '../ui'
+import { closableApproved, cx, criterionChecked, lastNoteText, latestReview, priorityDot, reviewState, statusAccent } from '../ui'
+import { CloseApprovedDialog, RequestChangesDialog, ReviewBadge, markDoneClass, requestChangesClass } from './ReviewControls'
 
 interface Props {
   /** Changes whenever the board changes, so the brief is refetched. */
@@ -11,6 +12,8 @@ interface Props {
   onOpenTask: (id: string) => void
   /** Opens the Sprints side panel (a drawer below 1024px). */
   onOpenSprints?: () => void
+  /** Opens the Idea → MVP dialog; offered when no sprint is active or nothing is pending. */
+  onStartIdea?: () => void
 }
 
 const AUTHOR_KEY = 'agentsprint.author'
@@ -31,7 +34,7 @@ function when(iso: string): string {
 
 const lines = (text: string): string[] => text.split('\n').map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean)
 
-export function Overview({ version, onOpenTask, onOpenSprints }: Props) {
+export function Overview({ version, onOpenTask, onOpenSprints, onStartIdea }: Props) {
   const [ctx, setCtx] = useState<ProjectContext | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -74,6 +77,8 @@ export function Overview({ version, onOpenTask, onOpenSprints }: Props) {
   const { snapshot: snap, journal } = ctx
   const stats = snap.stats
   const handoff = journal[0] ?? null
+  const nothingPending = snap.inProgress.length + snap.review.length + snap.next.length + snap.blocked.length === 0
+  const offerIdea = Boolean(onStartIdea) && (!snap.sprint || nothingPending)
 
   return (
     <div className="mx-auto flex max-w-[1180px] flex-col gap-4 pb-8" data-testid="overview">
@@ -172,6 +177,35 @@ export function Overview({ version, onOpenTask, onOpenSprints }: Props) {
         </section>
       </div>
 
+      {offerIdea && (
+        <section
+          className="flex flex-col gap-3 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/40 p-4 sm:flex-row sm:items-center sm:gap-4"
+          aria-labelledby="ov-idea"
+          data-testid="overview-idea"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-950 text-indigo-300" aria-hidden="true">
+            <Lightbulb className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 id="ov-idea" className="text-sm font-semibold text-zinc-100">
+              {snap.sprint ? 'Nothing left to start' : 'Turn an idea into a sprint'}
+            </h2>
+            <p className="mt-0.5 max-w-[65ch] text-pretty text-xs leading-relaxed text-zinc-400">
+              Describe an idea and get a prompt for Claude Code that plans it as linked tasks on this board.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onStartIdea}
+            aria-haspopup="dialog"
+            className="flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-indigo-500/50 px-3 py-2 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-950 active:translate-y-px"
+            data-testid="overview-start-idea"
+          >
+            <Lightbulb className="h-3.5 w-3.5" aria-hidden="true" /> Start from an idea
+          </button>
+        </section>
+      )}
+
       {writing && (
         <HandoffForm
           onCancel={() => {
@@ -194,12 +228,7 @@ export function Overview({ version, onOpenTask, onOpenSprints }: Props) {
             onOpen={onOpenTask}
             detail={(t) => lastNoteText(t)}
           />
-          <TaskSection
-            title="Waiting for review"
-            empty="No work is waiting for review."
-            tasks={snap.review}
-            onOpen={onOpenTask}
-          />
+          <ReviewSection tasks={snap.review} onOpen={onOpenTask} onChanged={load} />
           <TaskSection
             title="Ready next"
             hint="Unblocked, highest priority first"
@@ -350,14 +379,16 @@ function TaskSection({
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/70" aria-label={title}>
       <header className="flex items-baseline gap-2 border-b border-zinc-800 px-4 py-3">
-        <h2 className="text-sm font-semibold text-zinc-100">{title}</h2>
+        <h2 tabIndex={-1} data-task-list-heading={`overview:${title}`} className="text-sm font-semibold text-zinc-100">
+          {title}
+        </h2>
         <span className="tabular text-xs text-zinc-500">{tasks.length}</span>
         {hint && <span className="ml-auto hidden text-[11px] text-zinc-500 sm:inline">{hint}</span>}
       </header>
       {tasks.length === 0 ? (
         <p className="px-4 py-4 text-xs text-zinc-500">{empty}</p>
       ) : (
-        <ul className="p-1.5">
+        <ul className="p-1.5" data-task-list={`overview:${title}`}>
           {shown.map((t) => (
             <li key={t.id}>
               <TaskRow task={t} onOpen={onOpen} detail={detail?.(t) ?? null} />
@@ -376,51 +407,190 @@ function TaskSection({
   )
 }
 
-function TaskRow({ task, onOpen, detail }: { task: Task; onOpen: (id: string) => void; detail: string | null }) {
+function TaskRow({ task, onOpen, detail, actions }: { task: Task; onOpen: (id: string) => void; detail: string | null; actions?: ReactNode }) {
   const total = task.acceptanceCriteria.length
   const done = task.acceptanceCriteria.filter(criterionChecked).length
-  const review = reviewState(task)
+  // In Review the badge follows the same rule as Close approved: a verdict
+  // stops counting once the work changes after it.
+  const latest = task.status === 'Review' ? latestReview(task) : null
+  const review = task.status === 'Review' ? (latest?.current ? latest : null) : reviewState(task)
   // Sized by its own column, not the viewport: next to the side panel the
-  // Overview columns are narrow even on a wide screen.
+  // Overview columns are narrow even on a wide screen. A row with actions
+  // needs more room before the meta and the actions move beside the title.
+  const layout = actions
+    ? { row: '@xl:flex-row @xl:items-start', grid: '@3xl:grid-cols-[auto_minmax(0,1fr)_auto]', title: '@3xl:line-clamp-1', meta: '@3xl:col-start-3 @3xl:row-start-1 @3xl:pt-0.5', actions: '@xl:py-1 @xl:pl-0 @xl:pr-1.5' }
+    : { row: '@md:flex-row @md:items-start', grid: '@md:grid-cols-[auto_minmax(0,1fr)_auto]', title: '@md:line-clamp-1', meta: '@md:col-start-3 @md:row-start-1 @md:pt-0.5', actions: '' }
   return (
     <div className="@container">
-      <button
-        type="button"
-        onClick={() => onOpen(task.id)}
-        className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-zinc-800/70 @md:grid-cols-[auto_minmax(0,1fr)_auto]"
-      >
-        <span className="flex items-center gap-1.5 pt-0.5">
-          <span className={cx('h-1.5 w-1.5 rounded-full', priorityDot[task.priority])} title={`${task.priority} priority`} />
-          <span className="font-mono text-[11px] text-zinc-500" translate="no">{task.id}</span>
-        </span>
-        <span className="min-w-0">
-          <span className="line-clamp-2 break-words text-sm text-zinc-100 @md:line-clamp-1">{task.title}</span>
-          {detail && <span className="mt-0.5 block truncate text-xs text-zinc-500">{detail}</span>}
-        </span>
-        {/* In a narrow row the meta drops under the title so the title keeps the full width. */}
-        <span className="col-start-2 flex flex-wrap items-center gap-2 @md:col-start-3 @md:row-start-1 @md:pt-0.5">
-          {review && <ReviewBadge verdict={review.verdict} by={review.by} />}
-          {total > 0 && (
-            <span className="tabular text-[11px] text-zinc-500" title="Acceptance criteria done">
-              {done}/{total}
-            </span>
-          )}
-          <AssigneeChip assignee={task.assignee} />
-        </span>
-      </button>
+      <div className={cx('flex flex-col rounded-lg transition-colors hover:bg-zinc-800/70', layout.row)}>
+        <button
+          type="button"
+          onClick={() => onOpen(task.id)}
+          data-task-id={task.id}
+          className={cx('grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 rounded-lg px-2.5 py-2 text-left', layout.grid)}
+        >
+          <span className="flex items-center gap-1.5 pt-0.5">
+            <span className={cx('h-1.5 w-1.5 rounded-full', priorityDot[task.priority])} title={`${task.priority} priority`} />
+            <span className="font-mono text-[11px] text-zinc-500" translate="no">{task.id}</span>
+          </span>
+          <span className="min-w-0">
+            <span className={cx('line-clamp-2 break-words text-sm text-zinc-100', layout.title)}>{task.title}</span>
+            {detail && <span className="mt-0.5 block truncate text-xs text-zinc-500">{detail}</span>}
+          </span>
+          {/* In a narrow row the meta drops under the title so the title keeps the full width. */}
+          <span className={cx('col-start-2 flex flex-wrap items-center gap-2', layout.meta)}>
+            {review && <ReviewBadge verdict={review.verdict} by={review.by} />}
+            {total > 0 && (
+              <span className="tabular text-[11px] text-zinc-500" title="Acceptance criteria done">
+                {done}/{total}
+              </span>
+            )}
+            <AssigneeChip assignee={task.assignee} />
+          </span>
+        </button>
+        {actions && <div className={cx('flex flex-wrap items-center gap-1 px-1.5 pb-1.5', layout.actions)}>{actions}</div>}
+      </div>
     </div>
   )
 }
 
-export function ReviewBadge({ verdict, by }: { verdict: 'approved' | 'changes'; by: string }) {
-  return verdict === 'approved' ? (
-    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300" title={`Approved by ${by}`} data-testid="review-badge">
-      <ShieldCheck className="h-3 w-3" /> Approved
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300" title={`Changes requested by ${by}`} data-testid="review-badge">
-      <Hourglass className="h-3 w-3" /> Changes
-    </span>
+/**
+ * Waiting for review, with the human's decisions on each row (Mark done,
+ * Request changes) and Close approved for every task the review gate
+ * approved since its last change.
+ */
+function ReviewSection({ tasks, onOpen, onChanged }: { tasks: Task[]; onOpen: (id: string) => void; onChanged: () => Promise<void> }) {
+  const limit = 8
+  const [all, setAll] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  const [requesting, setRequesting] = useState<Task | null>(null)
+  const [confirming, setConfirming] = useState<Task[] | null>(null)
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const approved = closableApproved(tasks)
+  const shown = all ? tasks : tasks.slice(0, limit)
+
+  // The row the user acted on is gone after a refresh: keep focus in the section.
+  const refocus = () => requestAnimationFrame(() => headingRef.current?.focus())
+
+  const markDone = async (t: Task) => {
+    setBusyId(t.id)
+    setMessage(null)
+    try {
+      await api.setTaskStatus(t.id, 'Done')
+      setMessage({ tone: 'ok', text: `${t.id} moved to Done.` })
+      await onChanged()
+      refocus()
+    } catch (e) {
+      setMessage({ tone: 'error', text: `Could not move ${t.id}: ${(e as Error).message}` })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/70" aria-label="Waiting for review" data-testid="review-section">
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-800 px-4 py-2.5">
+        <h2 ref={headingRef} tabIndex={-1} data-task-list-heading="overview:review" className="text-sm font-semibold text-zinc-100">
+          Waiting for review
+        </h2>
+        <span className="tabular text-xs text-zinc-500">{tasks.length}</span>
+        {approved.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setConfirming(approved)}
+            aria-haspopup="dialog"
+            title="Move every task whose latest review approved it, with no change since, to Done"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-indigo-500 active:translate-y-px"
+            data-testid="close-approved"
+          >
+            <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>
+              Close approved <span className="tabular">({approved.length})</span>
+            </span>
+          </button>
+        )}
+      </header>
+      <p
+        role="status"
+        className={cx('px-4 text-xs', message && 'pt-2.5', message?.tone === 'error' ? 'text-red-300' : 'text-emerald-300')}
+        data-testid="review-message"
+      >
+        {message?.text}
+      </p>
+      {tasks.length === 0 ? (
+        <p className="px-4 py-4 text-xs text-zinc-500">No work is waiting for review.</p>
+      ) : (
+        <ul className="p-1.5" data-task-list="overview:review">
+          {shown.map((t) => (
+            <li key={t.id}>
+              <TaskRow
+                task={t}
+                onOpen={onOpen}
+                detail={null}
+                actions={
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setRequesting(t)}
+                      disabled={busyId !== null}
+                      aria-haspopup="dialog"
+                      aria-label={`Request changes: ${t.id}`}
+                      className={requestChangesClass('sm')}
+                      data-testid={`request-changes-${t.id}`}
+                    >
+                      <Undo2 className="h-3.5 w-3.5" aria-hidden="true" /> Request changes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void markDone(t)}
+                      disabled={busyId !== null}
+                      aria-label={`Mark done: ${t.id}`}
+                      className={markDoneClass('sm')}
+                      data-testid={`mark-done-${t.id}`}
+                    >
+                      <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" /> {busyId === t.id ? 'Moving…' : 'Mark done'}
+                    </button>
+                  </>
+                }
+              />
+            </li>
+          ))}
+          {tasks.length > limit && (
+            <li>
+              <button type="button" onClick={() => setAll((v) => !v)} className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-zinc-400 hover:bg-zinc-800/70 hover:text-zinc-200">
+                {all ? 'Show less' : `Show ${tasks.length - limit} more`}
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+
+      {requesting && (
+        <RequestChangesDialog
+          task={requesting}
+          onClose={() => setRequesting(null)}
+          onDone={async (updated) => {
+            setRequesting(null)
+            setMessage({ tone: 'ok', text: `${updated.id} went back to ${updated.status} with your findings.` })
+            await onChanged()
+            refocus()
+          }}
+        />
+      )}
+      {confirming && (
+        <CloseApprovedDialog
+          tasks={confirming}
+          onClose={() => setConfirming(null)}
+          onClosed={async (ids, closing) => {
+            if (ids.length > 0) setMessage({ tone: 'ok', text: `${ids.length} ${ids.length === 1 ? 'task' : 'tasks'} moved to Done.` })
+            await onChanged()
+            // A partial failure keeps the dialog open on Retry: focus stays in it.
+            if (ids.length > 0 && closing) refocus()
+          }}
+        />
+      )}
+    </section>
   )
 }
 
