@@ -11,6 +11,8 @@ Commands:
   spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
   brand [dir]       Print the company/brand kit for the project
   lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
+  doctor [dir] [--url <url> ...] [--json]
+                    Check board, local build, server commits and the MCP entry
   close [dir] [id]  Close a sprint (auto-appends a retro to learnings.md)
   task new [title] [dir]
                     Create a task, optionally from a template
@@ -106,6 +108,25 @@ Useful as a CI step:
 ```yaml
 - run: npx @jmrojas06/agentsprint-cli lint .
 ```
+
+### `doctor [dir] [--url <url> ...] [--json]`
+
+Tells you which AgentSprint you are actually talking to and what is out of date. One line per check (`✔` ok, `⚠` warning, `✖` error) with the fix after `→`; exits non-zero only when a check is an error.
+
+| Check | Looks at | Typical fix |
+| --- | --- | --- |
+| `board` | `lint` errors and warnings | `agentboard lint` |
+| `board files` | `.lock` / `.tmp` files left by a crashed writer, and `.agentboard/` paths owned by another user (e.g. root, written by a container) | delete them / `sudo chown -R` |
+| `build` | when the CLI runs from a source checkout: any `packages/*/src` newer than its `dist` (tests ignored) | `pnpm build` |
+| `server <url>` | `GET <url>/api/health` for each `--url` (repeatable, default `http://127.0.0.1:4310`): its `commit` vs the checkout's `HEAD`. A `-dirty` commit means it was built from a modified tree; no commit means an image older than build stamping | `pnpm docker:up` |
+| `mcp` | the `agentsprint` entry of the project's `.mcp.json` points at files that exist | `pnpm build` or `agentboard connect` |
+
+```bash
+agentboard doctor .
+agentboard doctor . --url http://127.0.0.1:4310 --url http://127.0.0.1:5173 --json
+```
+
+`--json` prints `{ ok, checks: [{ name, level, message, fix? }] }`.
 
 ### `close [dir] [id]`
 

@@ -522,8 +522,20 @@ export class ProjectStore extends EventEmitter {
     return path.join(this.boardDir, 'task-ids')
   }
 
+  /** Board-wide lock serializing sprint id allocation and every sprint write across processes. */
+  private sprintLockPath(): string {
+    return path.join(this.boardDir, 'sprints')
+  }
+
+  /** Next free sprint id. Caller must hold the sprint lock: it also counts files it could not parse. */
   private _nextSprintId(): number {
     const ids = [...this.sprints.keys()]
+    if (fs.existsSync(this.sprintsDir())) {
+      for (const file of fs.readdirSync(this.sprintsDir())) {
+        const m = /^sprint-(\d+)\.md$/.exec(file)
+        if (m) ids.push(Number(m[1]))
+      }
+    }
     return ids.length === 0 ? 1 : Math.max(...ids) + 1
   }
 
@@ -711,14 +723,14 @@ export class ProjectStore extends EventEmitter {
     return withFileLock(this.taskPath(id), () => {
       const task = this._freshTask(id)
       const timestamp = nowIso()
-      const who = author === undefined ? undefined : oneLine(author)
+      const who = sanitizeActor(author, '')
       const prefix = who ? `[${timestamp}] (${who})` : `[${timestamp}]`
       const entry = `- ${prefix} ${note.trim()}`
       const updatedNotes = task.notes && task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
       return this._updateTaskUnlocked(
         id,
         { notes: updatedNotes },
-        { actor: who ?? 'user', noteEvent: note.trim() },
+        { actor: who, noteEvent: note.trim() },
       )
     })
   }
@@ -744,7 +756,7 @@ export class ProjectStore extends EventEmitter {
       }
       const label = input.verdict === 'approve' ? 'approved' : 'changes requested'
       const summary = (input.summary ?? '').trim().replace(/\n+/g, ' ')
-      const reviewer = oneLine(input.reviewer)
+      const reviewer = sanitizeActor(input.reviewer)
       const head = `- [${nowIso()}] (${reviewer}) **Review: ${label}**${summary ? ` — ${summary}` : ''}`
       const entry = [head, ...findings.map((f) => `  - ${f}`)].join('\n')
       const notes = task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
@@ -899,7 +911,7 @@ export class ProjectStore extends EventEmitter {
       activity: [
         {
           at: createdAt,
-          actor: opts.actor ?? 'user',
+          actor: sanitizeActor(opts.actor),
           type: 'created',
           detail: `task created (${title})`,
         },
@@ -949,7 +961,8 @@ export class ProjectStore extends EventEmitter {
       if (mapped) patch = { ...patch, assignee: mapped }
     }
     const now = nowIso()
-    const actor = opts.actor ?? 'user'
+    // Every mutation (lock/unlock, checklist, notes, reviews…) lands here: one choke point.
+    const actor = sanitizeActor(opts.actor)
     const next = Task.parse({
       ...current,
       ...patch,
@@ -1072,27 +1085,39 @@ export class ProjectStore extends EventEmitter {
 
   // ── sprint mutations ─────────────────────────────────────────────────
 
+  // Sprint writes run under the board-wide sprint lock against a fresh read of
+  // `.agentboard/sprints/`, so two processes never pick the same id or write
+  // back each other's stale copies.
+
   createSprint(goal: string): SprintType {
-    const sprint: SprintType = {
-      id: this._nextSprintId(),
-      goal,
-      status: 'planned',
-      startedAt: null,
-      endedAt: null,
-    }
-    this.sprints.set(sprint.id, sprint)
-    this._writeSprint(sprint)
+    const sprint = withFileLock(this.sprintLockPath(), () => {
+      this._syncSprints()
+      const sprint: SprintType = {
+        id: this._nextSprintId(),
+        goal,
+        status: 'planned',
+        startedAt: null,
+        endedAt: null,
+      }
+      this.sprints.set(sprint.id, sprint)
+      this._writeSprint(sprint)
+      return sprint
+    })
     this.emit('change')
     return sprint
   }
 
   updateSprint(id: number, patch: Partial<Pick<SprintType, 'goal' | 'status'>>): SprintType {
-    const sprint = this._requireSprint(id)
-    const updated: SprintType = { ...sprint, ...patch }
-    if (patch.status === 'active') updated.startedAt = updated.startedAt ?? nowIso()
-    if (patch.status === 'closed') updated.endedAt = nowIso()
-    this.sprints.set(id, updated)
-    this._writeSprint(updated)
+    const updated = withFileLock(this.sprintLockPath(), () => {
+      this._syncSprints()
+      const sprint = this._requireSprint(id)
+      const updated: SprintType = { ...sprint, ...patch }
+      if (patch.status === 'active') updated.startedAt = updated.startedAt ?? nowIso()
+      if (patch.status === 'closed') updated.endedAt = nowIso()
+      this.sprints.set(id, updated)
+      this._writeSprint(updated)
+      return updated
+    })
     this.emit('change')
     return updated
   }
@@ -1102,22 +1127,25 @@ export class ProjectStore extends EventEmitter {
    * an automatic retrospective is appended to `.agentboard/learnings.md`.
    */
   setSprintStatus(id: number, status: SprintStatus, opts: { retro?: boolean } = {}): SprintType {
-    const sprint = this._requireSprint(id)
-    const updated: SprintType = { ...sprint, status }
-    if (status === 'active') {
-      for (const other of this.sprints.values()) {
-        if (other.id !== id && other.status === 'active') {
-          this.sprints.set(other.id, { ...other, status: 'planned', startedAt: null })
-          this._writeSprint(this.sprints.get(other.id)!)
+    const { updated, closing } = withFileLock(this.sprintLockPath(), () => {
+      this._syncSprints()
+      const sprint = this._requireSprint(id)
+      const updated: SprintType = { ...sprint, status }
+      if (status === 'active') {
+        for (const other of this.sprints.values()) {
+          if (other.id !== id && other.status === 'active') {
+            this.sprints.set(other.id, { ...other, status: 'planned', startedAt: null })
+            this._writeSprint(this.sprints.get(other.id)!)
+          }
         }
+        updated.startedAt = updated.startedAt ?? nowIso()
+      } else if (status === 'closed') {
+        updated.endedAt = nowIso()
       }
-      updated.startedAt = updated.startedAt ?? nowIso()
-    } else if (status === 'closed') {
-      updated.endedAt = nowIso()
-    }
-    this.sprints.set(id, updated)
-    this._writeSprint(updated)
-    const closing = sprint.status !== 'closed' && status === 'closed'
+      this.sprints.set(id, updated)
+      this._writeSprint(updated)
+      return { updated, closing: sprint.status !== 'closed' && status === 'closed' }
+    })
     if (closing && opts.retro !== false) {
       this.appendLearningsSection(
         `Sprint ${id} retro — ${nowIso().slice(0, 10)}`,
@@ -1172,6 +1200,8 @@ export class ProjectStore extends EventEmitter {
   }
 
   private _requireSprint(id: number): SprintType {
+    // A miss may be a sprint created by another process since we loaded.
+    if (!this.sprints.has(id)) this._syncSprints()
     const sprint = this.sprints.get(id)
     if (!sprint) throw new Error(`Sprint not found: ${id}`)
     return sprint
@@ -1278,8 +1308,14 @@ function describeParseError(err: unknown): string {
   return `YAML error: ${first}. Quote values that contain ": " — e.g. title: "Web: foo".`
 }
 
-/** Collapse a name to one line (as the journal does) so it cannot break note or activity lines. */
-const oneLine = (name: string): string => name.trim().replace(/\s+/g, ' ')
+/**
+ * The single sanitizer for every actor that reaches a note or activity line:
+ * one line, `|` (the activity field separator) replaced, trimmed. A blank name
+ * becomes `fallback`, since an empty actor field makes the line unparseable.
+ */
+// `|` splits activity lines and parentheses close the `(author)` of a note, so neither survives.
+const sanitizeActor = (name: string | undefined, fallback = 'user'): string =>
+  (name ?? '').replace(/\|/g, '/').replace(/[()]/g, '').replace(/\s+/g, ' ').trim() || fallback
 const isCheckedCriterion = (c?: string): boolean => !!c && /^\[[xX]\]\s*/.test(c)
 const criterionTextOf = (c?: string): string => (c ?? '').replace(/^\s*\[[xX]?\]\s*/, '').trim()
 

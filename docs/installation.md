@@ -53,6 +53,8 @@ One board can be served by several AgentSprint processes at once, each from its 
 | Claude Code's MCP server (`.mcp.json`, stdio) | inside Claude Code | `packages/*/dist` | `pnpm build`, then reconnect the server (`/mcp`) |
 | A local `agentboard serve` (e.g. `.claude/launch.json`) | the port you pass | `packages/*/dist` | `pnpm build`, then restart it |
 
+Run `agentboard doctor .` to check all of them at once: it compares each server's commit with `HEAD`, flags a `dist` older than its `src` and an `.mcp.json` pointing at a missing file.
+
 `GET /api/health` returns `{ version, commit, builtAt }`, and the UI shows the same in the side panel footer and the command palette. `commit` ends in `-dirty` when the build had uncommitted changes. If a board shows files as *not parseable* and the reason says the server may be older than the file, the writer was a newer build: upgrade the one that complains.
 
 ## From source

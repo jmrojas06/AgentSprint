@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
+import { cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
 import { startServer } from '@jmrojas06/agentsprint-server'
 
 let dir: string
@@ -421,5 +421,43 @@ describe('session continuity commands', () => {
     const out = execFileSync('/bin/sh', ['-c', command], { cwd: dir, encoding: 'utf8' })
     expect(JSON.parse(out)).toEqual([entry, 'context', project, '--hook'])
     expect(fs.existsSync(path.join(dir, 'PWNED'))).toBe(false)
+  })
+})
+
+describe('doctor', () => {
+  it('parses a directory, repeatable --url and --json', () => {
+    const args = parseArgs(['doctor', dir, '--url', 'http://127.0.0.1:4310', '--url', 'http://127.0.0.1:4311', '--json'])
+    expect(args?.command).toBe('doctor')
+    expect(args?.dir).toBe(dir)
+    expect(args?.urls).toEqual(['http://127.0.0.1:4310', 'http://127.0.0.1:4311'])
+    expect(args?.json).toBe(true)
+  })
+
+  it('defaults to the current directory and the core default URL', () => {
+    const args = parseArgs(['doctor'])
+    expect(args?.dir).toBe(process.cwd())
+    expect(args?.urls).toBeUndefined()
+    expect(args?.json).toBe(false)
+  })
+
+  it('prints the results as JSON and exits 0 when nothing is an error', async () => {
+    ProjectStore.init(dir, { sample: true })
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const code = await cmdDoctor(dir, { urls: ['http://127.0.0.1:1'], json: true })
+    const out = JSON.parse(spy.mock.calls.map((c) => String(c[0])).join('\n'))
+    spy.mockRestore()
+    expect(code).toBe(0)
+    expect(out.ok).toBe(true)
+    expect(out.checks.map((c: { name: string }) => c.name)).toContain('server http://127.0.0.1:1')
+  })
+
+  it('prints one line per check and exits 1 when a check fails', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const code = await cmdDoctor(dir, { urls: [] })
+    const lines = spy.mock.calls.map((c) => String(c[0]))
+    spy.mockRestore()
+    expect(code).toBe(1)
+    expect(lines[0]).toMatch(/^✖ board: .* → agentboard init$/)
+    expect(lines.every((l) => /^[✔⚠✖] /.test(l))).toBe(true)
   })
 })

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
-import { ProjectStore, buildDispatchPlan, planDispatch, discoverSkills, missingSkills, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
+import { ProjectStore, buildDispatchPlan, planDispatch, discoverSkills, missingSkills, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, runDoctor, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
 import { BUILD_INFO, isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
 import { main as runMcpStdio } from '@jmrojas06/agentsprint-mcp'
 
@@ -22,6 +22,9 @@ Commands:
    spec <dir> <id>   Print the agent prompt (spec) for a task, e.g. TK-1
    brand [dir]       Print the company/brand kit for the project
    lint [dir]        Check board integrity (YAML, IDs, sprints, deps)
+   doctor [dir] [--url <url> ...] [--json]
+                     Check the environment: board, stale local build, server commits
+                     vs HEAD (default --url http://127.0.0.1:4310) and the MCP entry
     close [dir] [id]  Close a sprint (auto-appends a retro to learnings.md)
     task new [title] [dir]
                       Create a task, optionally from a template
@@ -100,11 +103,14 @@ interface Args {
   allowedOrigins?: string[]
   /** `context --hook`: stay silent (exit 0) when there is no board, for SessionStart hooks. */
   hook?: boolean
+  /** `doctor --url` (repeatable); undefined uses the core default. */
+  urls?: string[]
+  json?: boolean
   handoff?: { summary: string; done: string[]; next: string[]; blockers: string[]; author: string }
 }
 
 export function parseArgs(argv: string[]): Args | null {
-  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'agents', 'dispatch', 'connect', 'mcp', 'context', 'handoff', 'skills', 'help'])
+  const commands = new Set(['init', 'serve', 'spec', 'brand', 'lint', 'close', 'task', 'import', 'export', 'agents', 'dispatch', 'connect', 'mcp', 'context', 'handoff', 'skills', 'doctor', 'help'])
   const command = commands.has(argv[0] ?? '') ? (argv.shift() as string) : 'serve'
   if (command === 'help') {
     printHelp()
@@ -205,6 +211,29 @@ export function parseArgs(argv: string[]): Args | null {
     }
     const targetDir = positional[0] ? path.resolve(positional[0]) : process.cwd()
     return { command, dir: targetDir, hook, handoff, port, host, open, init, mcp, fallback, retro, token, tokenAll }
+  }
+
+  if (command === 'doctor') {
+    const urls: string[] = []
+    let json = false
+    const positional: string[] = []
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]!
+      if (arg === '--json') json = true
+      else if (arg === '--url') {
+        const url = argv[++i]
+        if (!url || url.startsWith('-')) {
+          console.error('Usage: --url <url>')
+          process.exit(1)
+        }
+        urls.push(url)
+      } else if (arg.startsWith('-')) {
+        console.error(`Unknown option: ${arg}`)
+        process.exit(1)
+      } else positional.push(arg)
+    }
+    const doctorDir = positional[0] ? path.resolve(positional[0]) : process.cwd()
+    return { command, dir: doctorDir, urls: urls.length ? urls : undefined, json, port, host, open, init, mcp, fallback, retro, token, tokenAll }
   }
 
   if (command === 'dispatch') {
@@ -679,6 +708,18 @@ export async function cmdExport(
   console.log(`✔ Board exported to ${target}`)
 }
 
+/** Print `runDoctor` results (one line per check, or JSON); returns the exit code. */
+export async function cmdDoctor(dir: string, opts: { urls?: string[]; json?: boolean } = {}): Promise<number> {
+  const result = await runDoctor(dir, { urls: opts.urls, cliEntry: fileURLToPath(import.meta.url) })
+  if (opts.json) {
+    console.log(JSON.stringify(result, null, 2))
+  } else {
+    const icon = { ok: '✔', warn: '⚠', error: '✖' } as const
+    for (const c of result.checks) console.log(`${icon[c.level]} ${c.name}: ${c.message}${c.fix ? ` → ${c.fix}` : ''}`)
+  }
+  return result.ok ? 0 : 1
+}
+
 export async function cmdLint(dir: string): Promise<number> {
   const { issues } = lintProject(dir)
   if (issues.length === 0) {
@@ -850,6 +891,8 @@ async function main(): Promise<void> {
   } else if (args.command === 'lint') {
     const code = await cmdLint(args.dir)
     process.exit(code)
+  } else if (args.command === 'doctor') {
+    process.exit(await cmdDoctor(args.dir, { urls: args.urls, json: args.json }))
   } else if (args.command === 'close') {
     await cmdClose(args.dir, args.sprintId, { retro: args.retro })
   } else if (args.command === 'task-new') {

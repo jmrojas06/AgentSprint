@@ -56,6 +56,20 @@ export function errorResponse(
   return { ...textResponse({ error: message, ...extra }), isError: true }
 }
 
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+
+/**
+ * One diagnostic line on stderr (MCP hosts keep it in their server log).
+ * Synchronous, so it is written even when the process exits right after.
+ */
+export function logLine(message: string): void {
+  try {
+    fs.writeSync(2, `[agentboard mcp] ${message}\n`)
+  } catch {
+    /* stderr is gone too — nothing left to tell */
+  }
+}
+
 /** Task as returned by write tools: only the last 3 activity events, so long histories don't fill the agent's context. */
 export function compactTask(task: Task): Task & { activityCount: number } {
   return { ...task, activity: task.activity.slice(-3), activityCount: task.activity.length }
@@ -79,13 +93,30 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
   // watcher, and other agents (separate processes) or humans edit the board.
   const getStore = (): ProjectStore => {
     const store = provider ? provider.store() : baseStore
-    store.refresh()
+    try {
+      store.refresh()
+    } catch (err) {
+      throw new Error(`Board re-sync failed: ${errorMessage(err)}`)
+    }
     return store
   }
   // Config is not re-synced, so no refresh() here (it is always called right after getStore()).
   const getProjectName = (): string => (provider ? provider.store() : baseStore).getConfig().name || ''
 
   const server = new McpServer({ name: 'agentsprint', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS })
+
+  // Every tool runs behind a guard: anything it throws (a failed re-sync
+  // included) becomes an isError result plus a stderr line, never a crash.
+  const registerTool = server.registerTool.bind(server)
+  server.registerTool = ((name: string, config: never, handler: (...args: never[]) => unknown) =>
+    registerTool(name, config, (async (...args: never[]) => {
+      try {
+        return await handler(...args)
+      } catch (err) {
+        logLine(`tool ${name} failed: ${errorMessage(err)}`)
+        return errorResponse(errorMessage(err))
+      }
+    }) as never)) as typeof server.registerTool
 
   // ── projects (multi-project only) ────────────────────────────────────
 
@@ -1295,7 +1326,59 @@ Work in small verifiable steps and keep the board updated — it is the source o
   return server
 }
 
+/**
+ * Make every way the stdio process can end say why on stderr, as one
+ * `[agentboard mcp] exiting: <reason>` line: the host closing stdin, a signal,
+ * an uncaught exception or rejection, or any other process.exit().
+ */
+export function installExitLogging(): void {
+  let logged = false
+  const exitWith = (reason: string, code: number, stack?: string): void => {
+    if (!logged) {
+      logged = true
+      logLine(`exiting: ${reason}`)
+      if (stack) logLine(stack)
+    }
+    process.exit(code)
+  }
+  const describe = (err: unknown): [string, string | undefined] => [errorMessage(err), err instanceof Error ? err.stack : undefined]
+
+  // A closed stdin is the host hanging up: only note it. Exiting here would cut
+  // off a response still being computed or written; the process ends on its
+  // own once in-flight work is done, and the 'exit' listener logs the reason.
+  let pendingReason: string | null = null
+  process.stdin.once('end', () => (pendingReason ??= 'stdin closed'))
+  process.stdin.once('close', () => (pendingReason ??= 'stdin closed'))
+  process.stdout.once('error', (err) => exitWith(`stdout error: ${err.message}`, 0))
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    // Log, then re-raise: the once-listener is gone, so the default action ends
+    // the process by the signal exactly as before (hosts see the same status).
+    process.once(signal, () => {
+      if (!logged) {
+        logged = true
+        logLine(`exiting: received ${signal}`)
+      }
+      process.kill(process.pid, signal)
+    })
+  }
+  process.on('uncaughtException', (err) => {
+    const [message, stack] = describe(err)
+    exitWith(`uncaught exception: ${message}`, 1, stack)
+  })
+  process.on('unhandledRejection', (reason) => {
+    const [message, stack] = describe(reason)
+    exitWith(`unhandled rejection: ${message}`, 1, stack)
+  })
+  process.once('exit', (code) => {
+    if (!logged) {
+      logged = true
+      logLine(`exiting: ${pendingReason ?? `exit code ${code}`}`)
+    }
+  })
+}
+
 export async function main(argv: string[]): Promise<void> {
+  installExitLogging()
   const rootFlag = argv.indexOf('--root')
   const rootEnv = process.env.AGENTSPRINT_ROOT
   const rootDir = rootFlag !== -1 ? argv[rootFlag + 1] : rootEnv ?? process.cwd()
