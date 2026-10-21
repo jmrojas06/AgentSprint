@@ -1,9 +1,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import matter from 'gray-matter'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ProjectStore, SUBAGENT_MARKER, SUBAGENT_SCHEMA, claudeAgentsDir, nearestClaudeColor, renderClaudeSubagent, syncClaudeSubagents } from '../src/index.js'
+import { ProjectStore, READ_ONLY_BLOCKED_TOOLS, SUBAGENT_MARKER, SUBAGENT_SCHEMA, claudeAgentsDir, nearestClaudeColor, renderClaudeSubagent, syncClaudeSubagents } from '../src/index.js'
 import type { AgentProfile } from '../src/index.js'
 
 let dir: string
@@ -111,6 +112,17 @@ describe('syncClaudeSubagents', () => {
     expect(renderClaudeSubagent(agent(), 'demo')).toContain(`${SUBAGENT_MARKER} schema=${SUBAGENT_SCHEMA}`)
   })
 
+  it('changes in the generated text come with a schema bump', () => {
+    // Render one agent of each kind; if this fingerprint changes, the generator's
+    // output changed: bump SUBAGENT_SCHEMA (so older servers stop overwriting the
+    // new files) and record the new fingerprint for the new schema here.
+    const kinds = [agent(), agent({ name: 'code-reviewer', tags: ['reviewer'] }), agent({ name: 'review-assistant', tags: ['human-review'] })]
+    const rendered = kinds.map((a) => renderClaudeSubagent(a, 'demo')).join('\n---\n')
+    const fingerprint = createHash('sha256').update(rendered).digest('hex').slice(0, 16)
+    const FINGERPRINTS: Record<number, string> = { 2: '81a6c71fb6f87f01' }
+    expect({ schema: SUBAGENT_SCHEMA, fingerprint }).toEqual({ schema: SUBAGENT_SCHEMA, fingerprint: FINGERPRINTS[SUBAGENT_SCHEMA] })
+  })
+
   it('an older generator never degrades a file from a newer schema, nor removes it', () => {
     syncClaudeSubagents(dir, [agent(), agent({ name: 'tester' })], 'demo')
     const newer = (name: string): string => {
@@ -165,6 +177,14 @@ describe('store integration', () => {
     expect(out.content).toContain('agentboard review . --json')
     expect(out.content).not.toContain('task_claim')
     expect(out.content).not.toContain('agentboard task status')
+  })
+
+  it('keeps a human-review agent read-only even when its profile on disk forgot the board tools', () => {
+    // e.g. a profile written before the tool list existed, or edited by hand
+    const old = { name: 'review-assistant', description: 'Briefs the human.', prompt: 'Brief.', color: '#f43f5e', tags: ['human-review'], tools: [], disallowedTools: ['Edit'], skills: [], model: 'inherit' } as unknown as AgentProfile
+    const blocked = String(matter(renderClaudeSubagent(old, 'demo')).data.disallowedTools).split(', ')
+    expect(blocked).toEqual(expect.arrayContaining([...READ_ONLY_BLOCKED_TOOLS]))
+    expect(blocked.filter((t) => t === 'Edit')).toHaveLength(1)
   })
 
   it('saveAgent creates a profile, exposes it in state and syncs its subagent', () => {

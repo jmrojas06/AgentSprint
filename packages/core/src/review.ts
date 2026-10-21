@@ -83,8 +83,9 @@ export function latestReview(task: Pick<Task, 'activity' | 'notes'>): LatestRevi
 }
 
 /**
- * Tasks a human can close in one go: in Review, and their latest review event
- * is `approved` with no change to the work after it.
+ * Tasks a human can close in one go: in Review, their latest review event is
+ * `approved` with no change to the work after it, and every criterion is
+ * ticked (the same bar as the queue's `approve`).
  */
 export function closableApproved<T extends Pick<Task, 'status' | 'activity' | 'notes'> & Partial<Pick<Task, 'acceptanceCriteria'>>>(tasks: T[]): T[] {
   return tasks.filter((t) => {

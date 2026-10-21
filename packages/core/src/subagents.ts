@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { isReviewAssistant, isReviewerAgent } from './agents.js'
+import { READ_ONLY_BLOCKED_TOOLS, isReviewAssistant, isReviewerAgent } from './agents.js'
 import { serializeFrontmatter } from './frontmatter.js'
 import type { AgentProfile } from './types.js'
 
@@ -16,8 +16,9 @@ export const SUBAGENT_MARKER = 'agentsprint:generated'
  * Version of the rendered protocol, written into the marker as `schema=<n>`.
  * Bump it whenever the protocol text changes, so an older AgentSprint never
  * overwrites what a newer one generated. Files without it are schema 0.
+ * 2: review-assistant always blocks the board-changing MCP tools.
  */
-export const SUBAGENT_SCHEMA = 1
+export const SUBAGENT_SCHEMA = 2
 
 /** Schema of a generated subagent file (0 when unstamped), or null for a hand-written one. */
 export function subagentSchema(content: string): number | null {
@@ -177,7 +178,9 @@ export function renderClaudeSubagent(agent: AgentProfile, projectName: string): 
       : `${agent.description.trim()} Use for AgentSprint tasks assigned to "${agent.name}" (pass the task id, e.g. TK-12).`,
   }
   if (agent.tools.length > 0) data.tools = agent.tools.join(', ')
-  if (agent.disallowedTools.length > 0) data.disallowedTools = agent.disallowedTools.join(', ')
+  // The review assistant is read-only by tools whatever its profile on disk says.
+  const disallowed = isReviewAssistant(agent) ? [...new Set([...agent.disallowedTools, ...READ_ONLY_BLOCKED_TOOLS])] : agent.disallowedTools
+  if (disallowed.length > 0) data.disallowedTools = disallowed.join(', ')
   if (agent.skills.length > 0) data.skills = agent.skills
   if (agent.model !== 'inherit') data.model = agent.model
   const color = nearestClaudeColor(agent.color)

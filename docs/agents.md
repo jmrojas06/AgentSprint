@@ -102,13 +102,16 @@ the chat. Run the `human-review` prompt (`/mcp__agentsprint__human-review`):
    only reads: it returns a short brief per task (what changed, verdict, risk,
    recommendation), grouped into **approve in batch** and **look**, with the
    questions to ask. It is tagged `human-review`, not `reviewer`, so it is
-   never a review gate and its synced subagent never claims or moves a task.
+   never a review gate. Its synced subagent is read-only by tools: the
+   generator always blocks file edits and every board-changing agentsprint
+   MCP tool for `human-review` agents, whatever their profile on disk says.
 3. The main session asks the human in batches (`AskUserQuestion` in Claude
    Code): at most 4 questions per call, 2–4 options each, recommended option
-   first. One question per sprint group ("Approve all and close Sprint N" /
-   "Approve, keep the sprint open" / "Leave in Review") and a separate one
-   for anything odd, such as a stale approval or a criterion that no longer
-   applies.
+   first. One question per sprint for its `approve` items, even when the
+   same sprint also has items that need a look ("Approve these N" / "Leave in
+   Review", plus "Approve all and close Sprint N" only when nothing else in
+   that sprint stays open), and a separate one for anything odd, such as a
+   stale approval or a criterion that no longer applies.
 4. It records each answer with `review_decide` (`done`, or `changes` with
    the human's findings) and calls `sprint_close` only for a sprint the human
    chose to close once all its tasks are Done.

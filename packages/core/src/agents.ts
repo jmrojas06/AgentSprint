@@ -591,6 +591,23 @@ export function isReviewerAgent(agent: Pick<AgentProfile, 'tags'>): boolean {
  */
 export const HUMAN_REVIEW_TAG = 'human-review'
 
+/**
+ * Tools a read-only briefing agent must never get: file edits and every
+ * agentsprint MCP tool that changes the board. The subagent generator always
+ * adds them for `human-review` agents, so an old or hand-edited profile on
+ * disk cannot make the review assistant claim, move or decide a task.
+ */
+export const READ_ONLY_BLOCKED_TOOLS: readonly string[] = [
+  'Edit',
+  'Write',
+  'NotebookEdit',
+  ...[
+    'task_claim', 'task_release', 'task_status', 'task_update', 'task_create', 'task_create_batch', 'task_delete',
+    'task_note', 'task_checklist', 'task_review', 'review_decide', 'sprint_create', 'sprint_activate', 'sprint_close',
+    'agent_upsert', 'agent_delete', 'agent_sync', 'brand_update', 'learnings_append', 'session_handoff',
+  ].map((t) => `mcp__agentsprint__${t}`),
+]
+
 export function isReviewAssistant(agent: Pick<AgentProfile, 'tags'>): boolean {
   return agent.tags.some((t) => t.toLowerCase() === HUMAN_REVIEW_TAG)
 }
