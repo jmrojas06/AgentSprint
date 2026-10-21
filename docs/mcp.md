@@ -30,13 +30,15 @@ curl -i -H "Authorization: Bearer $AGENTBOARD_TOKEN" -H "Content-Type: applicati
 
 A failed call returns `isError: true` with a JSON body `{ "error": "<message>" }` (plus extra fields where useful, e.g. `blockers` from `task_claim`). Invalid arguments are rejected by the schema with a JSON-RPC `-32602` error.
 
+Tools that modify a task (`task_create`, `task_update`, `task_status`, `task_claim`, `task_checklist`, `task_note`, `task_review`) return it compact: only the last 3 `activity` events plus `activityCount`; `task_get` and `task_list` return the full task. `learnings_append` returns `{ ok: true, entry }`.
+
 ## Multiple agents
 
 Each agent can run its own stdio server on the same board. Every tool call re-syncs with the files on disk first, ids are allocated under a board-wide lock and `task_claim` checks the lock against the on-disk state, so agents in different processes see each other's work and never get the same task id or the same claim.
 
 ## Tools
 
-40 tools are exposed (the three `project_*` tools only over the multi-project HTTP transport). The server also sends **instructions** at initialize that tell the agent to start with `project_context` and end with `session_handoff`.
+40 tools are exposed; `project_list`, `project_current` and `project_use` exist only over the multi-project HTTP transport, so a stdio server exposes 37. `project_context` works on every transport. The server also sends **instructions** at initialize that tell the agent to start with `project_context` and end with `session_handoff`.
 
 | Tool | Description |
 | --- | --- |

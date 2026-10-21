@@ -5,6 +5,7 @@ import { Broadcast } from './broadcast.js'
 import { createIndex, type TaskIndex } from './indexdb.js'
 import { createWatcher } from './watcher.js'
 import { recordBurndownSnapshot } from './metrics.js'
+import { clearGitCache } from './routes.js'
 import type { FSWatcher } from 'chokidar'
 
 export interface ProjectInfo {
@@ -81,6 +82,7 @@ export class ProjectManager {
         syncSubagentsSafely(store)
         index.rebuild(store.state.tasks)
         recordBurndownSnapshot(store)
+        clearGitCache()
         broadcast.send('change', { project: name, at: new Date().toISOString() })
       })
       handles.push({

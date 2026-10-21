@@ -1,12 +1,16 @@
-node_modules/
-dist/
+# Patterns are anchored to the build context: use **/ for nested folders,
+# or packages/*/node_modules and stale packages/*/dist leak into the image.
+**/node_modules/
+**/dist/
 .git/
 .github/
-*.log
-.DS_Store
-*.tsbuildinfo
-coverage/
-.agentboard/
+**/*.log
+**/.DS_Store
+**/*.tsbuildinfo
+**/coverage/
+**/.agentboard/
 .agents/
-*.db
+.claude/
+**/*.db
 npm-debug.log*
+docker-compose*.yml

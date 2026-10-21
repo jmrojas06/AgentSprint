@@ -513,5 +513,5 @@ export const UI_REVIEWER = 'ui-reviewer'
 export const REVIEWER_TAG = 'reviewer'
 
 export function isReviewerAgent(agent: Pick<AgentProfile, 'tags'>): boolean {
-  return agent.tags.includes(REVIEWER_TAG)
+  return agent.tags.some((t) => t.toLowerCase() === REVIEWER_TAG)
 }

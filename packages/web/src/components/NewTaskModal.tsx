@@ -5,6 +5,7 @@ import { TASK_PRIORITIES } from '../types'
 import { api } from '../api'
 import { priorityDot, priorityLabel } from '../ui'
 import { AssigneeOptions, agentRole, useAgents } from '../agents'
+import { useEscapeLayer } from '../hooks/useDialogFocus'
 
 interface Props {
   sprints: Sprint[]
@@ -23,13 +24,7 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
   const agents = useAgents()
   const [title, setTitle] = useState('')
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  useEscapeLayer(onClose)
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [assignee, setAssignee] = useState<string>('scrum-master')
   const [priorityTouched, setPriorityTouched] = useState(false)
@@ -78,7 +73,7 @@ export function NewTaskModal({ sprints, onCreate, onClose }: Props) {
       >
         <div className="mb-3 flex items-center">
           <h2 className="text-sm font-semibold text-zinc-100">New task</h2>
-          <button type="button" onClick={onClose} className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-800">
+          <button type="button" onClick={onClose} aria-label="Close" title="Close" className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-800">
             <X className="h-4 w-4" />
           </button>
         </div>

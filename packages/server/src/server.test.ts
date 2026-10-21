@@ -440,6 +440,49 @@ describe('server API', () => {
       expect(a4.headers['x-cache']).toBe('MISS')
     })
 
+    it('honours a custom gitCacheTtlMs that expires before the default TTL', async () => {
+      vi.useFakeTimers()
+      const built2 = await buildApp({ rootDir: dir, gitCacheTtlMs: 1_000 })
+      try {
+        const r1 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r1.headers['x-cache']).toBe('MISS')
+        const r2 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r2.headers['x-cache']).toBe('HIT')
+        vi.advanceTimersByTime(1_100)
+        const r3 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r3.headers['x-cache']).toBe('MISS')
+      } finally {
+        await built2.close()
+      }
+    })
+
+    it('reads the TTL from AGENTBOARD_GIT_CACHE_TTL_MS (0 disables the cache)', async () => {
+      vi.stubEnv('AGENTBOARD_GIT_CACHE_TTL_MS', '0')
+      const built2 = await buildApp({ rootDir: dir })
+      try {
+        const r1 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r1.headers['x-cache']).toBe('MISS')
+        const r2 = await built2.app.inject({ method: 'GET', url: '/api/git/commit-counts' })
+        expect(r2.headers['x-cache']).toBe('MISS')
+      } finally {
+        vi.unstubAllEnvs()
+        await built2.close()
+      }
+    })
+
+    it('invalidates the git cache when the board watcher sees a change', async () => {
+      await new Promise((r) => setTimeout(r, 300)) // let chokidar finish its initial scan
+      expect((await app.inject({ method: 'GET', url: '/api/git/commit-counts' })).headers['x-cache']).toBe('MISS')
+      expect((await app.inject({ method: 'GET', url: '/api/git/commit-counts' })).headers['x-cache']).toBe('HIT')
+      fs.appendFileSync(path.join(dir, '.agentboard', 'tasks', 'TK-1.md'), '\nedited\n')
+      let cache: unknown = 'HIT'
+      for (let i = 0; i < 40 && cache === 'HIT'; i++) {
+        await new Promise((r) => setTimeout(r, 100))
+        cache = (await app.inject({ method: 'GET', url: '/api/git/commit-counts' })).headers['x-cache']
+      }
+      expect(cache).toBe('MISS')
+    })
+
     it('exports clearGitCache helper and respects manual invalidation', async () => {
       clearGitCache()
       const r1 = await app.inject({ method: 'GET', url: '/api/git/commit-counts' })
@@ -561,8 +604,8 @@ describe('server API', () => {
       await api('patch', `/api/sprints/${sprintId}`, { status: 'active' })
       const batch = await api('post', '/api/tasks/batch', {
         tasks: [
-          { ref: 'ui', title: 'Hero', sprint: sprintId, assignee: 'designer' },
-          { title: 'Hero tests', sprint: sprintId, assignee: 'tester', dependsOn: ['ui'] },
+          { ref: 'ui', title: 'Hero', sprint: sprintId, assignee: 'designer', acceptanceCriteria: ['Hero renders'] },
+          { title: 'Hero tests', sprint: sprintId, assignee: 'tester', dependsOn: ['ui'], acceptanceCriteria: ['Tests pass'] },
         ],
       })
       expect(batch.status).toBe(201)

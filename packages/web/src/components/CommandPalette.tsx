@@ -14,13 +14,17 @@ interface Props {
   onActivateSprint: (id: number) => void
   onClearFilters: () => void
   onRunSprint?: () => void
+  /** Opens the side panel (a drawer on narrow screens) on one of its sections. */
+  onOpenPanel?: (section: 'sprints' | 'agents' | 'brand') => void
+  /** Server build shown as an info row (not a command). */
+  build?: { label: string; title?: string } | null
 }
 
 interface Item {
   key: string
   label: string
   hint?: string
-  group: 'Actions' | 'Tasks' | 'Sprints'
+  group: 'Actions' | 'Go to' | 'Tasks' | 'Sprints'
   keywords?: string
   run: () => void
 }
@@ -38,6 +42,8 @@ export function CommandPalette({
   onActivateSprint,
   onClearFilters,
   onRunSprint,
+  onOpenPanel,
+  build,
 }: Props) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
@@ -77,6 +83,14 @@ export function CommandPalette({
       { key: 'clear-filters', label: 'Clear all filters', group: 'Actions', run: onClearFilters },
       ...(onRunSprint ? [{ key: 'run-sprint', label: 'Run sprint with subagents', hint: 'dispatch plan', group: 'Actions' as const, run: onRunSprint }] : []),
     ]
+    const panelItems: Item[] = onOpenPanel
+      ? [
+          { key: 'panel-agents', label: 'Agents', hint: 'view, edit and sync subagents', keywords: 'subagents specialists', group: 'Go to', run: () => onOpenPanel('agents') },
+          { key: 'panel-sprints', label: 'Sprints', hint: 'create, activate and close', group: 'Go to', run: () => onOpenPanel('sprints') },
+          { key: 'panel-brand', label: 'Brand kit', hint: 'colors, fonts and tone', keywords: 'brand design tokens', group: 'Go to', run: () => onOpenPanel('brand') },
+        ]
+      : []
+    actions.push(...panelItems)
     const taskItems: Item[] = tasks.map((t) => ({
       key: `task-${t.id}`,
       label: `${t.id} — ${t.title}`,
@@ -107,7 +121,7 @@ export function CommandPalette({
       .sort((a, b) => b.score - a.score)
       .slice(0, MAX_RESULTS)
       .map((r) => r.item)
-  }, [open, query, tasks, sprints, activeSprintId, onCreateTask, onOpenTask, onActivateSprint, onClearFilters, onRunSprint])
+  }, [open, query, tasks, sprints, activeSprintId, onCreateTask, onOpenTask, onActivateSprint, onClearFilters, onRunSprint, onOpenPanel])
 
   useEffect(() => {
     setIndex((i) => Math.min(i, Math.max(0, items.length - 1)))
@@ -168,14 +182,14 @@ export function CommandPalette({
 
         <ul ref={listRef} role="listbox" aria-label="Command palette results" className="max-h-80 overflow-y-auto py-1">
           {items.length === 0 && (
-            <li className="px-3 py-6 text-center text-xs text-zinc-600">No matching commands or tasks</li>
+            <li className="px-3 py-6 text-center text-xs text-zinc-500">No matching commands or tasks</li>
           )}
           {items.map((item, i) => {
             const header = headerKeys.has(item.key) ? item.group : null
             return (
               <li key={item.key} role="option" aria-selected={i === index}>
                 {header && (
-                  <div className="mt-1 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
+                  <div className="mt-1 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
                     {header}
                   </div>
                 )}
@@ -202,6 +216,14 @@ export function CommandPalette({
             )
           })}
         </ul>
+        {build && (
+          <div className="border-t border-zinc-800 px-3 py-1.5 text-[11px] text-zinc-500">
+            Server{' '}
+            <span className="font-mono" title={build.title} data-testid="server-build">
+              {build.label}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

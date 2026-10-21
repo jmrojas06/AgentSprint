@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -407,5 +408,18 @@ describe('session continuity commands', () => {
     expect(commands[0]).toBe('echo hi')
     expect(commands[1]).toContain('/opt/agentboard/index.js')
     expect(commands[1]).toMatch(/ context .* --hook$/)
+  })
+
+  it.skipIf(process.platform === 'win32')('quotes hook paths so the shell expands nothing in them', () => {
+    const project = path.join(dir, "proj $HOME `touch PWNED` it's")
+    fs.mkdirSync(project, { recursive: true })
+    const entry = path.join(project, 'print-argv.js')
+    fs.writeFileSync(entry, 'console.log(JSON.stringify(process.argv.slice(1)))\n', 'utf8')
+    const file = installContextHook(project, entry)
+    const command = JSON.parse(fs.readFileSync(file, 'utf8')).hooks.SessionStart.at(-1).hooks[0].command as string
+
+    const out = execFileSync('/bin/sh', ['-c', command], { cwd: dir, encoding: 'utf8' })
+    expect(JSON.parse(out)).toEqual([entry, 'context', project, '--hook'])
+    expect(fs.existsSync(path.join(dir, 'PWNED'))).toBe(false)
   })
 })

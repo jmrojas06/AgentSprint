@@ -111,8 +111,8 @@ describe('MCP tools', () => {
     await callTool('sprint_activate', { id: sprint.id })
     const batch = (await callTool('task_create_batch', {
       tasks: [
-        { ref: 'checkout', title: 'Checkout session', sprint: sprint.id, assignee: 'stripe-expert' },
-        { ref: 'qa', title: 'Payment tests', sprint: sprint.id, assignee: 'tester', dependsOn: ['checkout'] },
+        { ref: 'checkout', title: 'Checkout session', sprint: sprint.id, assignee: 'stripe-expert', acceptanceCriteria: ['Checkout works'] },
+        { ref: 'qa', title: 'Payment tests', sprint: sprint.id, assignee: 'tester', dependsOn: ['checkout'], acceptanceCriteria: ['Tests pass'] },
       ],
     })) as Array<{ ref: string; id: string; dependencies: string[] }>
     expect(batch[1]!.dependencies).toEqual([batch[0]!.id])
@@ -306,8 +306,8 @@ describe('MCP tools', () => {
   })
 
   it('learnings_append and learnings_get round-trip', async () => {
-    const app = (await callTool('learnings_append', { entry: 'Write tests first' })) as { ok: boolean }
-    expect(app.ok).toBe(true)
+    const app = await callTool('learnings_append', { entry: 'Write tests first' })
+    expect(app).toEqual({ ok: true, entry: 'Write tests first' })
 
     const fetched = (await callTool('learnings_get', {})) as { ok: boolean; content: string }
     expect(fetched.content).toBe('- Write tests first')
@@ -536,6 +536,30 @@ describe('session continuity & review gate', () => {
     expect(changed.status).toBe('In Progress')
     const err = await callToolError('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'approve' })
     expect(err.error).toMatch(/not "Review"/)
+  })
+
+  it('mutating task tools return a compact task: last 3 activity events plus activityCount', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ['task_update', { id: 'TK-1', title: 'Renamed' }],
+      ['task_note', { id: 'TK-1', note: 'n1' }],
+      ['task_checklist', { id: 'TK-1', index: 0, completed: true }],
+      ['task_status', { id: 'TK-1', status: 'Review' }],
+      ['task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'changes', findings: ['a.ts:1 — broken'] }],
+      ['task_claim', { id: 'TK-1', agent: 'developer', force: true }],
+      ['task_create', { title: 'Compact' }],
+    ]
+    for (const [name, args] of calls) {
+      const res = (await callTool(name, args)) as { id: string; activity: unknown[]; activityCount: number }
+      const full = (await callTool('task_get', { id: res.id })) as { activity: unknown[]; activityCount?: number }
+      expect(res.activityCount, name).toBe(full.activity.length)
+      expect(res.activity, name).toEqual(full.activity.slice(-3))
+      expect(full.activityCount).toBeUndefined()
+    }
+    const full = (await callTool('task_get', { id: 'TK-1' })) as { activity: unknown[] }
+    expect(full.activity.length).toBeGreaterThan(3)
+    const listed = (await callTool('task_list', { q: 'Renamed' })) as Array<{ activity: unknown[]; activityCount?: number }>
+    expect(listed[0]?.activity).toEqual(full.activity)
+    expect(listed[0]?.activityCount).toBeUndefined()
   })
 
   it('agent_upsert stores skills and skill_list reports missing ones', async () => {

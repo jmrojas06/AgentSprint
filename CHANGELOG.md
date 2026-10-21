@@ -23,19 +23,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - README rewritten around the session workflow with real screenshots and a new demo tour.
 - `agentboard lint` exits 0 when only warnings are found.
 - `task_claim` records the claiming agent as the activity actor and, when it is a specialist, as the assignee.
+- `sprint_dispatch` no longer sends a pending task without acceptance criteria to a subagent: it is listed as blocked (`no acceptance criteria — add them before dispatching`) and its dependents wait on it. `agentboard lint` warns `NO_ACCEPTANCE_CRITERIA` for such tasks (lint now reads criteria from the task body).
+- MCP write tools (`task_create`, `task_update`, `task_status`, `task_claim`, `task_checklist`, `task_note`, `task_review`) return a compact task — the last 3 activity events plus `activityCount` — and `learnings_append` returns `{ ok: true, entry }` instead of the whole file. `task_get` and `task_list` still return the full task.
+- Git commit caches take a configurable TTL (`gitCacheTtlMs` / `AGENTBOARD_GIT_CACHE_TTL_MS`, default 10s, `0` disables), are cleared on every board change and drop expired entries on write.
 
 
 ### Fixed
+- Docker: the image runs as the `node` user (uid 1000) instead of root, so files it writes in mounted repos stay owned by you. It ships `git`, so commit links work, and it runs under `tini`. `.dockerignore` excludes nested `node_modules` and `dist`. `pnpm docker:up` rebuilds the image from the checkout and stamps it with the commit.
+- `GET /api/health` returns `{ version, commit, builtAt }`, and `agentboard serve` prints the build at startup, so an old server (a stale image or `dist`) is easy to spot.
+- A skipped task file now says why: the failing field (with a hint that the server may be older than whoever wrote the file) or the YAML error. Before, every failure blamed unquoted `": "` in titles.
 - `index.html` is served with `Cache-Control: no-cache` (hashed assets stay cached for a year), so an upgraded UI shows up immediately instead of after an hour.
 - The header wraps on narrow screens instead of pushing search and actions off-screen.
+- Below 1024px the Sprints, Agents and Brand panel opens as a drawer from the header (focus trapped, Escape closes); the command palette can open Agents, Sprints and the brand kit.
+- The Run sprint dialog takes focus on open, keeps Tab inside and returns focus when closed; on phones its titles wrap instead of being cut.
+- Secondary text and primary-button hover meet WCAG AA contrast in both themes. The Overview sprint bar shows completion, phone rows move badges to a second line, Write handoff scrolls to and focuses its form, header icon buttons have accessible names and skill-remove buttons are 24px targets.
 - Task ids are allocated under a board-wide file lock: two processes creating tasks at once no longer get the same id and overwrite each other's file. Creating a task over an existing file now fails.
 - `task_claim` / `lockTask` / `unlockTask`, checklist toggles, dependency checks and deletes read the task from disk inside the per-file lock, so a claim held by an agent in another process is respected and stale copies no longer overwrite newer edits.
 - The stdio MCP server re-syncs with `.agentboard/` before every tool call (incremental, by file stamp): edits by other agents or by hand are visible without a restart.
 - Tasks without acceptance criteria no longer reload with a phantom `## Activity` criterion; checkboxes in the description or notes are no longer read as criteria.
 - MCP tool failures are flagged with `isError: true` and return a JSON `{ "error" }` body.
+- File write locks left by a crashed or killed writer are recovered: locks record the owner pid, host and time, stale ones are reclaimed, and a holder that lost its lock while suspended never deletes the new owner's lock. Before, one killed process blocked every later write to that file. `.agentboard/**/*.lock` and `*.tmp` are git-ignored.
+- The session brief, task specs ("Learned principles") and the sprint-planning prompt no longer paste the task lists of automatic sprint retros; new retros nest their headings under a single `##` section.
+- A status change that echoes the unchanged assignee (as the web task modal does) still applies the status → assignee mapping.
+- Reviewer routing matches the `ideas`, `creative` and `reviewer` agent tags regardless of case.
+- The side panel and command palette show which server build the UI is talking to (version, commit and build time from `/api/health`), and the parse-warnings banner shows each file's own reason.
+- Dialogs share a focus stack: only the top one reacts to Tab and Escape, so a token prompt over the side drawer or a task modal keeps focus and Escape never discards the modal's edits (task modals join the stack for Escape too). Icon-only close and dismiss buttons have accessible names. Below 1024px "Clear saved token" lives in the side drawer.
+- Overview task rows size to their column (container queries), so titles stay readable next to the side panel on mid-size screens.
+- Token auth in the UI: any 401 opens one token prompt (labelled, focused) that re-sends the refused requests, rejects a wrong token instead of storing it, keeps the board on screen when a change is refused, and streams live updates with the bearer token under `--token-all` (the token never goes in a URL). One Cancel on a `--token-all` board goes straight to "Enter token".
 
 ### Security
 - The server rejects browser requests from foreign origins (CSRF) and, when bound to loopback, requests with a foreign `Host` header (DNS rebinding). New `--allowed-host` / `--allowed-origin` options (env `AGENTBOARD_ALLOWED_HOSTS` / `AGENTBOARD_ALLOWED_ORIGINS`) for exposed setups, plus startup warnings when bound to a non-loopback address without them or without `--token`.
+- Note author and reviewer names are collapsed to one line, so they cannot inject headings into a task or break its activity log.
+- `agentboard connect` shell-quotes the SessionStart hook command: project paths with `$`, backticks or quotes no longer expand.
 
 ## [0.1.0] — initial release
 

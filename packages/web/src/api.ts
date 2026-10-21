@@ -29,6 +29,14 @@ export interface SubagentSync {
   skipped?: Array<{ name: string; reason: string }>
 }
 
+/** GET /api/health: which server build the UI is talking to (older servers send only `ok`). */
+export interface ServerHealth {
+  ok: boolean
+  version?: string
+  commit?: string | null
+  builtAt?: string | null
+}
+
 let activeProject: string | undefined
 
 /** localStorage key for the optional bearer token (see docs/api.md#authentication). */
@@ -61,26 +69,64 @@ export function setProject(name: string): void {
   activeProject = name
 }
 
+/** `Authorization` header for the stored token, or none. */
+export function authHeaders(token = getStoredToken()): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+/**
+ * Asks the user for a token after a 401. `attempt` re-sends the refused
+ * request with that token and resolves false if the server refuses it again
+ * (the prompt then stays open). Resolves true once a token was accepted,
+ * false if the user dismissed the prompt.
+ */
+export type TokenPrompt = (attempt: (token: string) => Promise<boolean>) => Promise<boolean>
+
+let tokenPrompt: TokenPrompt | null = null
+let openPrompt: Promise<boolean> | null = null
+
+/** Register the UI that asks for the token; returns the unregister function. */
+export function setTokenPrompt(prompt: TokenPrompt): () => void {
+  tokenPrompt = prompt
+  return () => {
+    if (tokenPrompt === prompt) tokenPrompt = null
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const withProject = activeProject
     ? url + (url.includes('?') ? '&' : '?') + `project=${encodeURIComponent(activeProject)}`
     : url
-  const token = getStoredToken()
-  const baseHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) baseHeaders['Authorization'] = `Bearer ${token}`
-  const mergedHeaders: Record<string, string> = { ...baseHeaders, ...(init?.headers as Record<string, string> | undefined) }
-  const res = await fetch(withProject, {
-    ...init,
-    headers: mergedHeaders,
-  })
+  const send = (token: string | null) =>
+    fetch(withProject, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...authHeaders(token), ...(init?.headers as Record<string, string> | undefined) },
+    })
+  let res = await send(getStoredToken())
+  if (res.status === 401 && tokenPrompt) {
+    if (openPrompt) {
+      // Another refused request already asked: wait for its answer, then retry.
+      if (await openPrompt) res = await send(getStoredToken())
+    } else {
+      openPrompt = tokenPrompt(async (token) => {
+        res = await send(token)
+        if (res.status === 401) return false
+        setStoredToken(token)
+        return true
+      }).finally(() => {
+        openPrompt = null
+      })
+      await openPrompt
+    }
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null
     if (res.status === 401) {
       // Clear hint for any HTTP client (web, CLI, MCP) that the server requires a token.
       // Web UI shows a prompt; CLI/MCP should surface this hint to the user.
-      throw new Error(body?.error ?? 'Unauthorized — this board requires a token. Set it via localStorage key agentsprint-token (web) or start the server with --token / AGENTBOARD_TOKEN and retry with Authorization: Bearer <token>.')
+      throw Object.assign(new Error(body?.error ?? 'Unauthorized — this board requires a token. Set it via localStorage key agentsprint-token (web) or start the server with --token / AGENTBOARD_TOKEN and retry with Authorization: Bearer <token>.'), { status: 401 })
     }
-    throw new Error(body?.error ?? `Request failed: ${res.status}`)
+    throw Object.assign(new Error(body?.error ?? `Request failed: ${res.status}`), { status: res.status })
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -89,7 +135,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   project: () => request<BoardState>('/api/project'),
   projects: () => request<ProjectInfo[]>('/api/projects'),
-  health: () => request<{ ok: boolean }>('/api/health'),
+  health: () => request<ServerHealth>('/api/health'),
 
   createTask: (input: TaskInput & { template?: string; vars?: Record<string, string> }) =>
     request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(input) }),

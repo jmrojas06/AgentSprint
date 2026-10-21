@@ -162,6 +162,8 @@ docker run -d --name board --restart unless-stopped -p 4310:4310 \
 
 The board is at `http://localhost:4310` and remote agents connect to `/mcp`. Add `--token <secret>` before exposing it beyond your machine.
 
+From a checkout, `pnpm docker:up` rebuilds the image from your code and restarts the container. A container keeps running the image it was built from, so after pulling or changing code run it again. `curl localhost:4310/api/health` and the side panel footer show the build's commit, so you can tell which build you are looking at. More in [docs/installation.md](docs/installation.md#which-agentsprint-am-i-talking-to).
+
 ## Documentation
 
 [Installation](https://jmrojas06.github.io/AgentSprint/installation) ·

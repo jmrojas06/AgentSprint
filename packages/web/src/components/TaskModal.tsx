@@ -5,6 +5,7 @@ import { api } from '../api'
 import { ActivityTimeline } from './ActivityTimeline'
 import { cx, criterionChecked, criterionText, getTaskLock } from '../ui'
 import { AssigneeOptions, agentRole, useAgents } from '../agents'
+import { useEscapeLayer } from '../hooks/useDialogFocus'
 
 interface Props {
   task: Task
@@ -39,13 +40,7 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
   const [, setCommitsLoading] = useState(false)
   const [tab, setTab] = useState<'details' | 'activity'>('details')
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  useEscapeLayer(onClose)
 
   useEffect(() => {
     let cancelled = false
@@ -154,7 +149,7 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
             placeholder="Task title"
             className="flex-1 bg-transparent text-base font-semibold text-zinc-100 outline-none placeholder:text-zinc-500"
           />
-          <button onClick={onClose} className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
+          <button onClick={onClose} aria-label="Close task" title="Close" className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -339,6 +334,7 @@ export function TaskModal({ task, allTasks, sprints, statuses, onSave, onDelete,
                       onClick={() => setCriteria(criteria.filter((_, j) => j !== i))}
                       className="ml-auto rounded p-0.5 text-zinc-500 hover:text-red-400"
                       title="Remove criterion"
+                      aria-label="Remove criterion"
                     >
                       <X className="h-3 w-3" />
                     </button>

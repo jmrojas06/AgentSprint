@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Sprint as SprintType, Task as TaskType } from './types.js'
 import { Sprint, Task, ProjectConfig, isWorkflowAssignee } from './types.js'
-import { parseFrontmatter } from './frontmatter.js'
+import { parseFrontmatter, parseTaskBody } from './frontmatter.js'
 import { isValidAgentName } from './agents.js'
 import { AgentMeta } from './types.js'
 
@@ -30,6 +30,7 @@ const ISSUE = {
   INVALID_DEPENDENCY: 'INVALID_DEPENDENCY',
   INVALID_AGENT: 'INVALID_AGENT',
   UNKNOWN_ASSIGNEE: 'UNKNOWN_ASSIGNEE',
+  NO_ACCEPTANCE_CRITERIA: 'NO_ACCEPTANCE_CRITERIA',
 } as const
 
 function rel(rootDir: string, absPath: string): string {
@@ -38,8 +39,9 @@ function rel(rootDir: string, absPath: string): string {
 
 function tryParseTask(filePath: string, content: string): { task?: TaskType; issue?: LintIssue } {
   try {
-    const { data } = parseFrontmatter(content, Task)
-    return { task: data }
+    const { data, body } = parseFrontmatter(content, Task)
+    // Criteria live in the markdown body, not the frontmatter.
+    return { task: { ...data, acceptanceCriteria: parseTaskBody(body).acceptanceCriteria } }
   } catch (err) {
     return {
       issue: {
@@ -71,7 +73,8 @@ function tryParseSprint(filePath: string, content: string): { sprint?: SprintTyp
 /**
  * Lint the integrity of an AgentSprint board at `rootDir`.
  * Checks YAML syntax, frontmatter schema validity, duplicate task IDs,
- * sprint references, dependency references, agent profiles and assignees.
+ * sprint references, dependency references, agent profiles, assignees and
+ * unfinished tasks without acceptance criteria.
  * `ok` is false only when there is at least one error — warnings are
  * reported but do not fail the lint.
  */
@@ -234,6 +237,15 @@ export function lintProject(rootDir: string): LintResult {
         severity: 'warning',
         code: ISSUE.UNKNOWN_ASSIGNEE,
         message: `Task '${task.id}' is assigned to '${task.assignee}' — not a workflow role and no .agentboard/agents/${task.assignee}.md exists`,
+      })
+    }
+
+    if (task.status !== 'Done' && task.acceptanceCriteria.length === 0) {
+      issues.push({
+        file: rel(root, path.join(tasksDir, `${task.id}.md`)),
+        severity: 'warning',
+        code: ISSUE.NO_ACCEPTANCE_CRITERIA,
+        message: `Task '${task.id}' has no acceptance criteria — dispatch holds it back until it has some`,
       })
     }
   }

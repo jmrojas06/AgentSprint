@@ -208,3 +208,16 @@ export function lastNoteText(task: Pick<Task, 'notes'>): string | null {
   if (!last) return null
   return last.replace(/^-\s+(\[[^\]]+\]\s*)?(\([^)]+\)\s*)?/, '').replace(/\*\*/g, '').trim() || null
 }
+
+/**
+ * The server build as `v0.1.0 · c4b4338` (only the version when the build has
+ * no commit), with `builtAt` for a tooltip. Null for servers that predate it.
+ */
+export function buildInfo(health: { version?: string; commit?: string | null; builtAt?: string | null } | null): {
+  label: string
+  title?: string
+} | null {
+  if (!health?.version) return null
+  const label = health.commit ? `v${health.version} · ${health.commit}` : `v${health.version}`
+  return { label, title: health.builtAt ? `Server built ${health.builtAt}` : undefined }
+}

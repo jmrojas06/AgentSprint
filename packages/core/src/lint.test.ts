@@ -120,6 +120,23 @@ describe('lintProject', () => {
     expect(result.ok).toBe(true)
   })
 
+  it('warns about unfinished tasks without acceptance criteria, but not Done ones', () => {
+    const tasksDir = path.join(dir, '.agentboard', 'tasks')
+    const write = (id: string, status: string) =>
+      fs.writeFileSync(
+        path.join(tasksDir, `${id}.md`),
+        `---\nid: ${id}\ntitle: no criteria\nstatus: ${status}\npriority: medium\nassignee: scrum-master\nsprint: null\ncreatedAt: "2026-01-01T00:00:00.000Z"\nupdatedAt: "2026-01-01T00:00:00.000Z"\n---\nbody\n`,
+        'utf8',
+      )
+    write('TK-94', 'To Do')
+    write('TK-95', 'Done')
+    const result = lintProject(dir)
+    const flagged = result.issues.filter((i) => i.code === 'NO_ACCEPTANCE_CRITERIA')
+    expect(flagged.map((i) => i.message)).toEqual([expect.stringContaining('TK-94')])
+    expect(flagged[0]?.severity).toBe('warning')
+    expect(result.ok).toBe(true)
+  })
+
   it('accepts a task assigned to an existing specialized agent', () => {
     const tasksDir = path.join(dir, '.agentboard', 'tasks')
     fs.writeFileSync(

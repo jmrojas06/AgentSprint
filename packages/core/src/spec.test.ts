@@ -37,6 +37,15 @@ describe('buildTaskSpec', () => {
     expect(spec).toContain(learnings)
   })
 
+  it('leaves automatic sprint retros out of the spec learnings', () => {
+    const task = store.state.tasks.find((t) => t.id === 'TK-1')!
+    const learnings = '## Sprint 3 retro — 2026-08-21\n\n# Sprint 3\n\n## Tasks\n\n### Backlog (0)\n\n_none_\n\n## Retro\n\n_Pendiente_\n\n## Rules\n\n- One project, one board'
+    const spec = buildTaskSpec(task, null, 'demo', { learnings })
+    expect(spec).toContain('One project, one board')
+    expect(spec).not.toContain('Backlog (0)')
+    expect(spec).not.toContain('_none_')
+  })
+
   it('marks checked criteria with [x] in the spec', () => {
     store.setTaskChecklist('TK-1', { index: 0, completed: true })
     const task = store.state.tasks.find((t) => t.id === 'TK-1')!

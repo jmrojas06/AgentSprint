@@ -121,8 +121,9 @@ the **Run sprint** button all compute the same plan:
   after its latest dependency, so the tasks inside a wave can run in parallel;
 - each task gets its **subagent**: its specialized assignee, `developer` for
   workflow roles, `general-purpose` when no profile matches;
-- tasks that can never start (missing dependency, dependency outside the
-  sprint, cycle) are listed as **blocked** with the reason.
+- tasks that can never start (no acceptance criteria, missing dependency,
+  dependency outside the sprint, cycle) are listed as **blocked** with the
+  reason; their dependents wait on them.
 
 In Claude Code run the `run-sprint` prompt (`/mcp__agentsprint__run-sprint`)
 or paste the prompt copied from the board. The orchestrator launches every

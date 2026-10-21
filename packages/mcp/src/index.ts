@@ -4,10 +4,10 @@ import { pathToFileURL } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats } from '@jmrojas06/agentsprint-core'
+import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats, learningsTail } from '@jmrojas06/agentsprint-core'
 import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, discoverSkills, isWorkflowAssignee, missingSkills, planDispatch } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
-import type { SprintStatus, TaskInput } from '@jmrojas06/agentsprint-core'
+import type { SprintStatus, Task, TaskInput } from '@jmrojas06/agentsprint-core'
 
 const STATUSES = ['Backlog', 'To Do', 'In Progress', 'Review', 'Done'] as const
 
@@ -54,6 +54,11 @@ export function errorResponse(
   extra: Record<string, unknown> = {},
 ): { content: Array<{ type: 'text'; text: string }>; isError: true } {
   return { ...textResponse({ error: message, ...extra }), isError: true }
+}
+
+/** Task as returned by write tools: only the last 3 activity events, so long histories don't fill the agent's context. */
+export function compactTask(task: Task): Task & { activityCount: number } {
+  return { ...task, activity: task.activity.slice(-3), activityCount: task.activity.length }
 }
 
 export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?: { store?: ProjectStore }): McpServer {
@@ -279,7 +284,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = template
           ? store.createTaskFromTemplate(template, { vars, overrides: input, actor: 'agent' })
           : store.createTask(input as TaskInput, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -351,7 +356,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, ...patch }) => {
       try {
         const task = getStore().updateTask(id, patch, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -371,7 +376,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, status }) => {
       try {
         const task = getStore().setTaskStatus(id, status, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -413,7 +418,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const claimer = agent && store.listAgents().some((a) => a.name === agent) ? agent : null
         const assignee = claimer ?? (current && !isWorkflowAssignee(current.assignee) ? current.assignee : 'dev')
         const task = store.updateTask(id, { status: 'In Progress', assignee }, { actor: agent ?? 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -458,7 +463,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, index, text, completed }) => {
       try {
         const task = getStore().setTaskChecklist(id, { index, text, completed }, { actor: 'agent' })
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -480,7 +485,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, note, author }) => {
       try {
         const task = getStore().appendTaskNote(id, note, author ?? 'agent')
-        return textResponse(task)
+        return textResponse(compactTask(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -503,7 +508,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id, ...input }) => {
       try {
-        return textResponse(getStore().reviewTask(id, input))
+        return textResponse(compactTask(getStore().reviewTask(id, input)))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -665,8 +670,8 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
       }),
     },
     async ({ entry }) => {
-      const content = getStore().appendLearning(entry)
-      return textResponse({ ok: true, content })
+      getStore().appendLearning(entry)
+      return textResponse({ ok: true, entry })
     },
   )
 
@@ -1132,7 +1137,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
             )
           : null
       const plannedSprint = sprint ? state.sprints.find((s) => String(s.id) === sprint) ?? null : null
-      const learnings = store.getLearnings()
+      const learnings = learningsTail(store.getLearnings(), 40)
 
       const backlogLines = backlog.length
         ? backlog

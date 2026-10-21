@@ -251,8 +251,8 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
               {draft.skills.map((skill) => (
                 <span key={skill} className={cx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px]', isInstalled(skill) ? 'bg-indigo-500/15 text-indigo-300' : 'bg-amber-500/15 text-amber-300')} title={isInstalled(skill) ? 'Installed' : 'Not installed on this machine: Claude Code skips it'}>
                   {skill}
-                  <button type="button" onClick={() => setDraft({ ...draft, skills: draft.skills.filter((x) => x !== skill) })} aria-label={`Remove ${skill}`} className="rounded-full hover:text-zinc-50">
-                    <X className="h-2.5 w-2.5" />
+                  <button type="button" onClick={() => setDraft({ ...draft, skills: draft.skills.filter((x) => x !== skill) })} aria-label={`Remove ${skill}`} title={`Remove ${skill}`} className="-my-1 -mr-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full hover:bg-zinc-50/10 hover:text-zinc-50">
+                    <X className="h-3 w-3" />
                   </button>
                 </span>
               ))}

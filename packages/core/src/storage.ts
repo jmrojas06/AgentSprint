@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { z } from 'zod'
 import { withFileLock } from './filelock.js'
 import { buildTaskBody, parseFrontmatter, parseTaskBody, serializeFrontmatter } from './frontmatter.js'
 import { nowIso, ProjectConfig, Sprint, Task, DEFAULT_STATUSES, Brand, emptyBrand, getTaskLock, isWorkflowAssignee, TASK_LOCK_TTL_MINUTES, AgentProfile } from './types.js'
@@ -93,7 +94,7 @@ export class ProjectStore extends EventEmitter {
   private warnings: string[] = []
   private agents: AgentProfileType[] = []
   /** Per task file: change stamp (inode + mtime + size) and the parsed id, or null when unparseable. */
-  private fileStamps = new Map<string, { stamp: string; id: string | null }>()
+  private fileStamps = new Map<string, { stamp: string; id: string | null; error?: string }>()
 
   private constructor(rootDir: string) {
     super()
@@ -216,16 +217,20 @@ export class ProjectStore extends EventEmitter {
       if (prev?.stamp === stamp) continue
       changed = true
       if (prev?.id) this.tasks.delete(prev.id)
-      const task = this._parseTaskFile(full)
-      this.fileStamps.set(file, { stamp, id: task?.id ?? null })
-      if (!task) {
-        console.warn(`[agentboard] ${unparseableTaskWarning(file)}`)
+      const parsed = this._parseTaskFile(full)
+      if ('error' in parsed) {
+        this.fileStamps.set(file, { stamp, id: null, error: parsed.error })
+        console.warn(`[agentboard] ${unparseableTaskWarning(file, parsed.error)}`)
         continue
       }
+      const { task } = parsed
+      this.fileStamps.set(file, { stamp, id: task.id })
       this.tasks.set(task.id, task)
       this._bumpTaskMax(task.id)
     }
-    this.warnings = [...this.fileStamps].filter(([, e]) => e.id == null).map(([file]) => unparseableTaskWarning(file))
+    this.warnings = [...this.fileStamps]
+      .filter(([, e]) => e.id == null)
+      .map(([file, e]) => unparseableTaskWarning(file, e.error))
     return changed
   }
 
@@ -244,13 +249,13 @@ export class ProjectStore extends EventEmitter {
     return changed
   }
 
-  private _parseTaskFile(file: string): TaskType | null {
+  private _parseTaskFile(file: string): { task: TaskType } | { error: string } {
     try {
       const { data, body } = parseFrontmatter(fs.readFileSync(file, 'utf8'), Task)
       const { description, acceptanceCriteria, notes, activity } = parseTaskBody(body)
-      return { ...data, description, acceptanceCriteria, notes, activity }
-    } catch {
-      return null
+      return { task: { ...data, description, acceptanceCriteria, notes, activity } }
+    } catch (err) {
+      return { error: describeParseError(err) }
     }
   }
 
@@ -276,10 +281,10 @@ export class ProjectStore extends EventEmitter {
       throw new Error(`Task not found: ${id}`)
     }
     const fresh = this._parseTaskFile(file)
-    if (fresh) {
-      this.tasks.set(id, fresh)
+    if ('task' in fresh) {
+      this.tasks.set(id, fresh.task)
       this._bumpTaskMax(id)
-      return fresh
+      return fresh.task
     }
     const known = this.tasks.get(id)
     if (!known) throw new Error(`Task not found: ${id}`)
@@ -400,13 +405,15 @@ export class ProjectStore extends EventEmitter {
 
   /**
    * Append a multi-line section (e.g. an automatic sprint retro) to the
-   * learnings file, preceded by a `## header` line.
+   * learnings file, preceded by a `## header` line. Body headings are nested
+   * two levels down (`#` → `###`, `##` → `####`) so the section stays a
+   * single `##` block for readers that split the file on `## `.
    */
   appendLearningsSection(header: string, body: string): string {
     // Read-modify-write under the file lock (see appendLearning).
     return withFileLock(this.learningsPath(), () => {
       const existing = this.getLearnings()
-      const section = `## ${header.trim()}\n\n${body.trim()}`
+      const section = `## ${header.trim()}\n\n${body.trim().replace(/^#{1,4} /gm, '##$&')}`
       const next = existing ? `${existing}\n\n${section}` : section
       this._writeLearnings(next)
       return next
@@ -704,13 +711,14 @@ export class ProjectStore extends EventEmitter {
     return withFileLock(this.taskPath(id), () => {
       const task = this._freshTask(id)
       const timestamp = nowIso()
-      const prefix = author ? `[${timestamp}] (${author})` : `[${timestamp}]`
+      const who = author === undefined ? undefined : oneLine(author)
+      const prefix = who ? `[${timestamp}] (${who})` : `[${timestamp}]`
       const entry = `- ${prefix} ${note.trim()}`
       const updatedNotes = task.notes && task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
       return this._updateTaskUnlocked(
         id,
         { notes: updatedNotes },
-        { actor: author ?? 'user', noteEvent: note.trim() },
+        { actor: who ?? 'user', noteEvent: note.trim() },
       )
     })
   }
@@ -736,13 +744,14 @@ export class ProjectStore extends EventEmitter {
       }
       const label = input.verdict === 'approve' ? 'approved' : 'changes requested'
       const summary = (input.summary ?? '').trim().replace(/\n+/g, ' ')
-      const head = `- [${nowIso()}] (${input.reviewer}) **Review: ${label}**${summary ? ` — ${summary}` : ''}`
+      const reviewer = oneLine(input.reviewer)
+      const head = `- [${nowIso()}] (${reviewer}) **Review: ${label}**${summary ? ` — ${summary}` : ''}`
       const entry = [head, ...findings.map((f) => `  - ${f}`)].join('\n')
       const notes = task.notes.trim() ? `${task.notes.trim()}\n${entry}` : entry
       return this._updateTaskUnlocked(
         id,
         { notes, ...(input.verdict === 'changes' ? { status: 'In Progress' as TaskStatus } : {}) },
-        { actor: input.reviewer, reviewEvent: `${label}${findings.length ? ` (${findings.length} finding${findings.length === 1 ? '' : 's'})` : ''}` },
+        { actor: reviewer, reviewEvent: `${label}${findings.length ? ` (${findings.length} finding${findings.length === 1 ? '' : 's'})` : ''}` },
       )
     })
   }
@@ -928,10 +937,12 @@ export class ProjectStore extends EventEmitter {
     // Auto-map assignee before persist — distinguish generic status change from explicit assignee (task_claim).
     // A task assigned to a specialized agent (designer, tester, …) keeps that
     // assignee across status changes; only workflow roles follow the map.
+    // Echoing the current assignee (the web task modal sends every field) is
+    // not an explicit choice, so it does not block the mapping.
     if (
       patch.status !== undefined &&
       patch.status !== current.status &&
-      patch.assignee === undefined &&
+      (patch.assignee === undefined || patch.assignee === current.assignee) &&
       isWorkflowAssignee(current.assignee)
     ) {
       const mapped = STATUS_ASSIGNEE_MAP[patch.status as TaskStatus]
@@ -1247,10 +1258,28 @@ function fileStamp(file: string): string | null {
   }
 }
 
-function unparseableTaskWarning(file: string): string {
-  return `Task file not parseable (skipped): .agentboard/tasks/${file}. Check the YAML frontmatter — e.g. quote titles containing ": " like  title: "Web: foo".`
+function unparseableTaskWarning(file: string, reason = 'invalid frontmatter'): string {
+  return `Task file not parseable (skipped): .agentboard/tasks/${file} — ${reason}`
 }
 
+/**
+ * Say why a task file was rejected. A schema failure names the field: on a
+ * hand-edited file it is a typo, but a file written by a newer AgentSprint
+ * (a new assignee, status or field) fails the same way on an older server,
+ * so the message says so instead of blaming the YAML.
+ */
+function describeParseError(err: unknown): string {
+  if (err instanceof z.ZodError) {
+    const issue = err.issues[0]
+    const field = issue?.path.length ? issue.path.join('.') : 'frontmatter'
+    return `field \`${field}\`: ${issue?.message ?? 'invalid value'}. If another AgentSprint wrote this file, this one may be older than it — upgrade or rebuild it.`
+  }
+  const first = ((err as Error)?.message ?? String(err)).split('\n')[0]
+  return `YAML error: ${first}. Quote values that contain ": " — e.g. title: "Web: foo".`
+}
+
+/** Collapse a name to one line (as the journal does) so it cannot break note or activity lines. */
+const oneLine = (name: string): string => name.trim().replace(/\s+/g, ' ')
 const isCheckedCriterion = (c?: string): boolean => !!c && /^\[[xX]\]\s*/.test(c)
 const criterionTextOf = (c?: string): string => (c ?? '').replace(/^\s*\[[xX]?\]\s*/, '').trim()
 

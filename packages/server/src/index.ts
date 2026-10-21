@@ -4,12 +4,15 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
 import staticPlugin from '@fastify/static'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { registerApi } from './routes.js'
+import { GIT_CACHE_TTL_MS, registerApi } from './routes.js'
 import { registerMcpRoute } from './mcpRoute.js'
 import { ProjectManager } from './projects.js'
 import { createRequestGuard, listFromEnv } from './security.js'
 
 export { createRequestGuard, hostnameOf, isLoopbackHostname } from './security.js'
+export { clearGitCache } from './routes.js'
+export { BUILD_INFO } from './build.js'
+export type { BuildInfo } from './build.js'
 
 export interface ServerOptions {
   rootDir: string
@@ -32,6 +35,14 @@ export interface ServerOptions {
   allowedHosts?: string[]
   /** Extra exact origins accepted for browser requests (or AGENTBOARD_ALLOWED_ORIGINS, comma-separated). */
   allowedOrigins?: string[]
+  /** TTL in ms for the git commit caches (or AGENTBOARD_GIT_CACHE_TTL_MS). Default 10000; 0 disables. */
+  gitCacheTtlMs?: number
+}
+
+function gitCacheTtlFromEnv(): number {
+  const raw = process.env.AGENTBOARD_GIT_CACHE_TTL_MS?.trim()
+  const ms = raw ? Number(raw) : NaN
+  return Number.isFinite(ms) && ms >= 0 ? ms : GIT_CACHE_TTL_MS
 }
 
 export interface BuiltApp {
@@ -90,7 +101,7 @@ export async function buildApp(opts: ServerOptions): Promise<BuiltApp> {
   // Origins reaching this point already passed the guard above, so reflecting
   // them is safe; disallowed origins never get CORS headers.
   await app.register(cors, { origin: true, allowedHeaders: ['Content-Type', 'Authorization'] })
-  await registerApi(app, projects)
+  await registerApi(app, projects, opts.gitCacheTtlMs ?? gitCacheTtlFromEnv())
   if (opts.mcp) {
     registerMcpRoute(app, { manager: projects })
   }

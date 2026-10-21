@@ -249,3 +249,29 @@ describe('CommandPalette', () => {
     expect(document.activeElement).toBe(outside)
   })
 })
+
+describe('CommandPalette side panel entries', () => {
+  it('opens the Agents panel from the palette', () => {
+    const onOpenPanel = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <CommandPalette
+        open
+        tasks={TASKS}
+        sprints={SPRINTS}
+        activeSprintId={2}
+        onClose={onClose}
+        onCreateTask={vi.fn()}
+        onOpenTask={vi.fn()}
+        onActivateSprint={vi.fn()}
+        onClearFilters={vi.fn()}
+        onOpenPanel={onOpenPanel}
+      />,
+    )
+    const input = screen.getByPlaceholderText('Search tasks, run a command…')
+    fireEvent.change(input, { target: { value: 'agents' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onClose).toHaveBeenCalled()
+    expect(onOpenPanel).toHaveBeenCalledWith('agents')
+  })
+})

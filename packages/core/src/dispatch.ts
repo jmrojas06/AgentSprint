@@ -61,7 +61,7 @@ export function reviewerFor(task: Pick<Task, 'assignee' | 'tags'>, agents: Agent
   const names = new Set(agents.map((a) => a.name))
   const owner = agents.find((a) => a.name === task.assignee)
   const ownerTags = owner?.tags ?? []
-  if (owner && (isReviewerAgent({ tags: ownerTags }) || ownerTags.some((t) => UNREVIEWED_TAGS.has(t)))) return null
+  if (owner && (isReviewerAgent({ tags: ownerTags }) || ownerTags.some((t) => UNREVIEWED_TAGS.has(t.toLowerCase())))) return null
   const isUi = [...task.tags, ...ownerTags].some((t) => UI_TAGS.has(t.toLowerCase()))
   if (isUi && names.has(UI_REVIEWER)) return UI_REVIEWER
   return names.has(CODE_REVIEWER) ? CODE_REVIEWER : null
@@ -70,8 +70,8 @@ export function reviewerFor(task: Pick<Task, 'assignee' | 'tags'>, agents: Agent
 /**
  * Split a sprint's pending tasks into waves of mutually independent work:
  * a task lands one wave after the latest of its dependencies. Tasks that can
- * never start (missing dependency, dependency outside the plan that is not
- * moving, or a cycle) are reported as blocked instead.
+ * never start (no acceptance criteria, missing dependency, dependency outside
+ * the plan that is not moving, or a cycle) are reported as blocked instead.
  */
 export function planDispatch(
   input: { tasks: Task[]; sprints: Sprint[]; activeSprint: Sprint | null; agents: AgentRef[] },
@@ -105,6 +105,12 @@ export function planDispatch(
     if (task.status === 'Done') return 0
     if (IN_FLIGHT.has(task.status)) return 1
     if (!scopeIds.has(id)) return Infinity // pending work outside this plan never unblocks by itself
+    if (task.acceptanceCriteria.length === 0) {
+      // A subagent cannot deliver "every acceptance criterion" when there are none.
+      reasons.set(id, 'no acceptance criteria — add them before dispatching')
+      level.set(id, Infinity)
+      return Infinity
+    }
     if (visiting.has(id)) {
       reasons.set(id, 'dependency cycle')
       return Infinity

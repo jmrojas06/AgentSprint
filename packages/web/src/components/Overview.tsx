@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BookOpenText, Check, CircleAlert, ClipboardCopy, Hourglass, NotebookPen, PlayCircle, ShieldCheck, Sparkles, X } from 'lucide-react'
 import type { JournalEntry, ProjectContext, Task } from '../types'
 import { api } from '../api'
@@ -9,6 +9,8 @@ interface Props {
   /** Changes whenever the board changes, so the brief is refetched. */
   version: unknown
   onOpenTask: (id: string) => void
+  /** Opens the Sprints side panel (a drawer below 1024px). */
+  onOpenSprints?: () => void
 }
 
 const AUTHOR_KEY = 'agentsprint.author'
@@ -29,11 +31,12 @@ function when(iso: string): string {
 
 const lines = (text: string): string[] => text.split('\n').map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean)
 
-export function Overview({ version, onOpenTask }: Props) {
+export function Overview({ version, onOpenTask, onOpenSprints }: Props) {
   const [ctx, setCtx] = useState<ProjectContext | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [writing, setWriting] = useState(false)
+  const writeButton = useRef<HTMLButtonElement>(null)
 
   const load = useCallback(async () => {
     try {
@@ -90,7 +93,8 @@ export function Overview({ version, onOpenTask }: Props) {
                   {stats.done} of {stats.total} tasks done, {stats.pointsDone} of {stats.pointsTotal} points
                 </span>
               </div>
-              <StatusBar
+              <SprintProgress
+                pct={stats.completionPct}
                 segments={[
                   { label: 'Done', count: stats.done },
                   { label: 'Review', count: stats.review },
@@ -105,7 +109,15 @@ export function Overview({ version, onOpenTask }: Props) {
             <>
               <h2 id="ov-sprint" className="text-lg font-semibold tracking-tight text-zinc-50">No active sprint</h2>
               <p className="mt-1 max-w-[60ch] text-sm text-zinc-400">
-                Below is the unscheduled work. Activate a sprint from the side panel, or ask your agent to run the
+                Below is the unscheduled work. Activate a sprint from the{' '}
+                {onOpenSprints ? (
+                  <button type="button" onClick={onOpenSprints} className="font-medium text-indigo-300 underline decoration-indigo-300/40 underline-offset-2 hover:decoration-indigo-300">
+                    Sprints panel
+                  </button>
+                ) : (
+                  'Sprints panel'
+                )}
+                , or ask your agent to run the
                 <code className="mx-1 rounded bg-zinc-800 px-1 font-mono text-xs">sprint-plan</code>prompt.
               </p>
             </>
@@ -147,8 +159,10 @@ export function Overview({ version, onOpenTask }: Props) {
             </button>
             <button
               type="button"
+              ref={writeButton}
               onClick={() => setWriting((v) => !v)}
               aria-expanded={writing}
+              aria-controls="handoff-form"
               className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-600 hover:bg-zinc-800 active:translate-y-px"
               data-testid="write-handoff"
             >
@@ -160,7 +174,10 @@ export function Overview({ version, onOpenTask }: Props) {
 
       {writing && (
         <HandoffForm
-          onCancel={() => setWriting(false)}
+          onCancel={() => {
+            setWriting(false)
+            writeButton.current?.focus()
+          }}
           onSaved={async () => {
             setWriting(false)
             await load()
@@ -275,23 +292,34 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
   )
 }
 
-function StatusBar({ segments, total }: { segments: Array<{ label: string; count: number }>; total: number }) {
+/**
+ * Completion (Done share) as the filled part over a neutral track, so the bar
+ * always agrees with the percentage next to it. The status mix lives in the
+ * legend underneath.
+ */
+function SprintProgress({ pct, segments, total }: { pct: number; segments: Array<{ label: string; count: number }>; total: number }) {
   if (total === 0) return <p className="mt-3 text-xs text-zinc-500">This sprint has no tasks yet.</p>
+  const value = Math.max(0, Math.min(100, pct))
   return (
     <div className="mt-3">
-      <div className="flex h-1.5 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={segments.map((s) => `${s.label}: ${s.count}`).join(', ')}>
-        {segments
-          .filter((s) => s.count > 0)
-          .map((s) => (
-            <span key={s.label} className={cx('h-full', statusAccent[s.label] ?? 'bg-zinc-700')} style={{ width: `${(s.count / total) * 100}%` }} />
-          ))}
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-zinc-800"
+        role="progressbar"
+        aria-label="Sprint completion"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={value}
+        aria-valuetext={`${value}% done`}
+        data-testid="sprint-progress"
+      >
+        <div className={cx('h-full rounded-full transition-[width] duration-500', statusAccent.Done)} style={{ width: `${value}%` }} />
       </div>
-      <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+      <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500" aria-label="Tasks by status">
         {segments
           .filter((s) => s.count > 0)
           .map((s) => (
             <li key={s.label} className="flex items-center gap-1.5">
-              <span className={cx('h-1.5 w-1.5 rounded-full', statusAccent[s.label] ?? 'bg-zinc-700')} />
+              <span className={cx('h-1.5 w-1.5 rounded-full', statusAccent[s.label] ?? 'bg-zinc-700')} aria-hidden="true" />
               {s.label} <span className="tabular text-zinc-300">{s.count}</span>
             </li>
           ))}
@@ -352,30 +380,35 @@ function TaskRow({ task, onOpen, detail }: { task: Task; onOpen: (id: string) =>
   const total = task.acceptanceCriteria.length
   const done = task.acceptanceCriteria.filter(criterionChecked).length
   const review = reviewState(task)
+  // Sized by its own column, not the viewport: next to the side panel the
+  // Overview columns are narrow even on a wide screen.
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(task.id)}
-      className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-zinc-800/70"
-    >
-      <span className="flex items-center gap-1.5 pt-0.5">
-        <span className={cx('h-1.5 w-1.5 rounded-full', priorityDot[task.priority])} title={`${task.priority} priority`} />
-        <span className="font-mono text-[11px] text-zinc-500" translate="no">{task.id}</span>
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-sm text-zinc-100">{task.title}</span>
-        {detail && <span className="mt-0.5 block truncate text-xs text-zinc-500">{detail}</span>}
-      </span>
-      <span className="flex items-center gap-2 pt-0.5">
-        {review && <ReviewBadge verdict={review.verdict} by={review.by} />}
-        {total > 0 && (
-          <span className="tabular hidden text-[11px] text-zinc-500 sm:inline" title="Acceptance criteria done">
-            {done}/{total}
-          </span>
-        )}
-        <AssigneeChip assignee={task.assignee} />
-      </span>
-    </button>
+    <div className="@container">
+      <button
+        type="button"
+        onClick={() => onOpen(task.id)}
+        className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-zinc-800/70 @md:grid-cols-[auto_minmax(0,1fr)_auto]"
+      >
+        <span className="flex items-center gap-1.5 pt-0.5">
+          <span className={cx('h-1.5 w-1.5 rounded-full', priorityDot[task.priority])} title={`${task.priority} priority`} />
+          <span className="font-mono text-[11px] text-zinc-500" translate="no">{task.id}</span>
+        </span>
+        <span className="min-w-0">
+          <span className="line-clamp-2 break-words text-sm text-zinc-100 @md:line-clamp-1">{task.title}</span>
+          {detail && <span className="mt-0.5 block truncate text-xs text-zinc-500">{detail}</span>}
+        </span>
+        {/* In a narrow row the meta drops under the title so the title keeps the full width. */}
+        <span className="col-start-2 flex flex-wrap items-center gap-2 @md:col-start-3 @md:row-start-1 @md:pt-0.5">
+          {review && <ReviewBadge verdict={review.verdict} by={review.by} />}
+          {total > 0 && (
+            <span className="tabular text-[11px] text-zinc-500" title="Acceptance criteria done">
+              {done}/{total}
+            </span>
+          )}
+          <AssigneeChip assignee={task.assignee} />
+        </span>
+      </button>
+    </div>
   )
 }
 
@@ -427,6 +460,15 @@ function HandoffForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
   const [blockers, setBlockers] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  const summaryRef = useRef<HTMLTextAreaElement>(null)
+
+  // On a phone the form opens below the fold: bring it up and put the caret in it.
+  useEffect(() => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    formRef.current?.scrollIntoView?.({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
+    summaryRef.current?.focus({ preventScroll: true })
+  }, [])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -450,7 +492,7 @@ function HandoffForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
   const field = 'w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500'
   const label = 'mb-1.5 block text-xs font-medium text-zinc-300'
   return (
-    <form onSubmit={submit} className="rounded-xl border border-zinc-700 bg-zinc-900 p-5" data-testid="handoff-form" aria-label="Write a session handoff">
+    <form ref={formRef} id="handoff-form" onSubmit={submit} className="scroll-mt-4 rounded-xl border border-zinc-700 bg-zinc-900 p-5" data-testid="handoff-form" aria-label="Write a session handoff">
       <div className="flex items-center">
         <h2 className="text-sm font-semibold text-zinc-100">Session handoff</h2>
         <button type="button" onClick={onCancel} className="ml-auto rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" aria-label="Close handoff form">
@@ -461,7 +503,7 @@ function HandoffForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
       <div className="mt-4 grid gap-4 md:grid-cols-[1fr_200px]">
         <div>
           <label className={label} htmlFor="handoff-summary">What happened this session</label>
-          <textarea id="handoff-summary" name="handoff-summary" autoComplete="off" rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} className={field} placeholder="Finished the API, started the settings screen…" />
+          <textarea ref={summaryRef} id="handoff-summary" name="handoff-summary" autoComplete="off" rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} className={field} placeholder="Finished the API, started the settings screen…" />
         </div>
         <div>
           <label className={label} htmlFor="handoff-author">Author</label>

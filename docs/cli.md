@@ -55,6 +55,8 @@ Starts the Fastify server, serves the React SPA, watches board files for changes
 
 When port `4310` is busy, AgentSprint automatically tries the next free port (`4311`, …). Disable with `--no-fallback` to fail fast with `EADDRINUSE`.
 
+Git commit lookups (`/api/git/commit-counts`, `/api/tasks/:id/commits`) are cached for 10 s and cleared on every board change; set env `AGENTBOARD_GIT_CACHE_TTL_MS` to change the TTL in milliseconds (`0` disables the cache).
+
 #### Authentication (optional `--token` / `AGENTBOARD_TOKEN`)
 
 By default no auth is required. To protect the board:
@@ -97,6 +99,7 @@ Checks board integrity and exits non-zero on problems:
 - Malformed YAML frontmatter or missing required fields
 - Duplicate task IDs / invalid ID format
 - Tasks referencing non-existent sprints or dependencies (cycles included)
+- Warning `NO_ACCEPTANCE_CRITERIA` for tasks not in Done that have no acceptance criteria (dispatch holds them back)
 
 Useful as a CI step:
 

@@ -1,15 +1,26 @@
 name: agentsprint
+# Start or upgrade with `pnpm docker:up`: it rebuilds the image from this
+# checkout and stamps it with the git commit. A plain `docker compose up -d`
+# keeps running whatever image was built last, however old.
 services:
   agentsprint:
-    build: .
+    build:
+      context: .
+      args:
+        AGENTBOARD_COMMIT: ${AGENTBOARD_COMMIT:-}
     image: agentsprint:latest
     container_name: agentsprint
     restart: unless-stopped
     ports:
-      - "4310:4310"
+      # Loopback only: the board has no auth by default. To reach it from
+      # other machines publish "4310:4310" and add --token (see docs/cli.md).
+      - "127.0.0.1:4310:4310"
     volumes:
       # Point /board at a folder containing one or more repos with a
       # `.agentboard/` directory — each one is discovered as a separate
-      # project. Replace ./your-project with the path to your project.
+      # project. Replace ./your-project with the path to your project
+      # (or override it in docker-compose.override.yml, which git ignores).
       - ./your-project:/board
-    command: serve /board --host 0.0.0.0 --no-open --mcp
+    # 0.0.0.0 inside the container is what makes the published port work;
+    # --allowed-host keeps the DNS-rebinding check on for the names you browse to.
+    command: serve /board --host 0.0.0.0 --no-open --mcp --allowed-host localhost --allowed-host 127.0.0.1

@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 import { ProjectStore, buildDispatchPlan, planDispatch, discoverSkills, missingSkills, buildTaskSpec, buildBrandSection, hasBrand, buildBoardMarkdown, lintProject, fetchGithubIssues, importTasks, issuesToTaskInputs, parseTodoFile, todosToTaskInputs, validateMilestoneSprints, GH_ISSUE_LIMIT } from '@jmrojas06/agentsprint-core'
-import { isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
+import { BUILD_INFO, isLoopbackHostname, startServer } from '@jmrojas06/agentsprint-server'
 import { main as runMcpStdio } from '@jmrojas06/agentsprint-mcp'
 
 const VERSION = '0.1.0'
@@ -474,6 +474,9 @@ async function cmdServe(args: Args): Promise<void> {
   })
 
   console.log(`\n  AgentSprint v${VERSION}`)
+  if (BUILD_INFO.commit || BUILD_INFO.builtAt) {
+    console.log(`  Build:   ${[BUILD_INFO.commit, BUILD_INFO.builtAt && `built ${BUILD_INFO.builtAt}`].filter(Boolean).join(' · ')}`)
+  }
   console.log(`  Board:   ${args.dir}`)
   console.log(`  Server:  ${url}`)
   if (args.mcp) {
@@ -490,7 +493,7 @@ async function cmdServe(args: Args): Promise<void> {
     console.warn(`  Warning: bound to ${args.host} without --allowed-host — Host header is not checked (DNS rebinding).`)
   }
   if (exposed && !hasToken) {
-    console.warn('  Warning: board reachable from the network without --token — anyone on it can edit tasks.')
+    console.warn('  Warning: listening on a non-loopback address without --token — if this port is reachable from other machines, anyone there can edit tasks. (In Docker, publish it as 127.0.0.1:<port> to keep it local.)')
   }
   console.log('  Press Ctrl+C to stop.\n')
 
@@ -784,7 +787,9 @@ export function installContextHook(dir: string, entry: string): string {
       throw new Error(`${file} is not valid JSON — fix or remove it, then retry.`)
     }
   }
-  const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(entry)} ${CONTEXT_HOOK_FLAG} ${JSON.stringify(path.resolve(dir))} --hook`
+  // POSIX single quotes: nothing inside expands; an embedded ' becomes '\''.
+  const q = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+  const command = `${q(process.execPath)} ${q(entry)} ${CONTEXT_HOOK_FLAG} ${q(path.resolve(dir))} --hook`
   const isOurs = (c: string): boolean => c.includes(` ${CONTEXT_HOOK_FLAG} `) && c.endsWith(' --hook')
   const hooks = { ...(settings.hooks ?? {}) }
   const groups = (hooks.SessionStart ?? [])
