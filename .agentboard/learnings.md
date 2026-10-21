@@ -263,3 +263,46 @@ _none_
 #### Retro
 
 _Pendiente: qué fue bien, qué no, qué mejorar._
+
+## Sprint 9 retro — 2026-10-21
+
+### Sprint 9 — Swarm sin fricción: el humano revisa en el chat con un review-assistant, los agentes sin MCP tienen un CLI seguro para el board, y dispatch avisa de choques entre tareas paralelas y no vuelve a revisar lo ya aprobado.
+
+- **Status**: closed
+- **Started**: 2026-10-21T22:18:57.690Z
+- **Ended**: 2026-10-21T22:54:55.568Z
+- **Progress**: 5/5 tasks done (100%)
+
+#### Tasks
+
+##### Backlog (0)
+
+_none_
+
+
+##### To Do (0)
+
+_none_
+
+
+##### In Progress (0)
+
+_none_
+
+
+##### Review (0)
+
+_none_
+
+
+##### Done (5)
+
+- [critical] **TK-55** — Cola de revisión humana: review_queue y review_decide (MCP + CLI + API) (developer)
+- [critical] **TK-56** — CLI de tareas para agentes sin MCP: claim, status, note, check, review, show (developer)
+- [high] **TK-57** — Agente review-assistant y prompt human-review: el humano aprueba desde el chat (developer)
+- [high] **TK-58** — Dispatch para swarms: avisa de choques entre tareas paralelas y salta el gate ya aprobado (developer)
+- [high] **TK-59** — Un servidor más viejo nunca degrada los subagentes generados (.claude/agents) (developer)
+
+#### Retro
+
+_Pendiente: qué fue bien, qué no, qué mejorar._

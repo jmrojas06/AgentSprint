@@ -61,3 +61,20 @@
 - Merge PR #9 once CI is green (Auto-fix is on)
 - Reconnect the agentsprint MCP server in Claude Code after pnpm build (it only loads dist at start); agentboard doctor shows what is stale
 - Follow-ups: Delete in TaskModal has no confirmation; PID-namespace edge case in file locks (TK-35 note)
+
+## 2026-10-21T22:54:56.204Z — claude
+
+**Summary:** Sprint 9 delivered and closed: the human now approves from the chat (review_queue/review_decide + read-only review-assistant + human-review prompt), agents without MCP have a safe task CLI, dispatch flags parallel overlaps, and an older server can no longer degrade generated subagents (schema 2, proven live against the previous Docker image). 43 tasks approved by the user in chat this session; sprints 6, 7, 8 and 9 closed.
+
+**Done:**
+- TK-55 review queue (core/MCP/API/CLI), approve only when the approval is current and every criterion is ticked
+- TK-56 agentboard task claim|release|status|note|check|review|show; subagents fall back to it
+- TK-57 review-assistant (read-only by tools) + human-review prompt; used live to brief this session's last batch
+- TK-58 dispatch parallel safety (files:, conflicts, worktree hint) and gate skip for current approvals
+- TK-59 subagent schema guard + fingerprint test; SUBAGENT_SCHEMA=2
+- TK-15 commit hashes from git log -z (gate finding); TK-16..22, 25, 47 approved; old Review backlog cleared
+
+**Next:**
+- Merge PR #9 (CI green, Auto-fix on)
+- Reconnect the agentsprint MCP server in Claude Code (/mcp) so it serves the current dist; then /mcp__agentsprint__human-review works natively
+- Follow-ups: keep unknown frontmatter keys on write (so older servers stop dropping files:); show dispatch conflicts in the web Run sprint modal; wave 0 vs In Progress overlap; single ProjectStore.claimTask shared by MCP and CLI; flaky TaskModal focus test under memory pressure; Delete confirmation in TaskModal
