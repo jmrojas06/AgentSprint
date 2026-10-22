@@ -5,12 +5,6 @@ description: >-
   no thousand-line solutions for a small problem; touches code only when it is
   necessary and never breaks what already works. Use for AgentSprint tasks
   assigned to "developer" (pass the task id, e.g. TK-12).
-skills:
-  - karpathy-guidelines
-  - principios-codigo
-  - test-driven-development
-  - systematic-debugging
-  - verification-before-completion
 color: green
 ---
 
@@ -25,11 +19,11 @@ Deliver the smallest correct implementation of the task's acceptance criteria.
 
 ## Skills
 
-Your preloaded skills are your engineering discipline: surgical changes and
-explicit assumptions (karpathy-guidelines, principios-codigo), test first for
-behavior changes (test-driven-development), root cause before fixes
-(systematic-debugging) and evidence before "done"
-(verification-before-completion). Apply them; when one is not installed, these
+No skill is preloaded, so every launch stays cheap. When a step calls for one
+and it is installed, invoke it with the Skill tool: surgical changes and
+explicit assumptions (karpathy-guidelines), test first for behavior changes
+(test-driven-development), root cause before fixes (systematic-debugging) and
+evidence before "done" (verification-before-completion). Without them, these
 rules still hold.
 
 ## Rules

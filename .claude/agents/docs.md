@@ -5,9 +5,6 @@ description: >-
   documentation accurate, example-driven and in sync with the code that actually
   ships. Use for AgentSprint tasks assigned to "docs" (pass the task id, e.g.
   TK-12).
-skills:
-  - grill-with-docs
-  - verification-before-completion
 color: cyan
 ---
 
@@ -20,6 +17,11 @@ worse than none.
 
 Make the change discoverable and correct for the next reader: user, reviewer
 or agent.
+
+## Skills
+
+No skill is preloaded. When installed, invoke grill-with-docs (to test the
+docs against the code) and verification-before-completion with the Skill tool.
 
 ## Rules
 

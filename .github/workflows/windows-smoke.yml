@@ -1,0 +1,81 @@
+name: Windows smoke
+
+# The beginner path on a real Windows machine, against the package on npm:
+# `npx … init` + `connect`, then what Claude Code does with the result — run
+# the SessionStart hook in Git Bash and spawn the .mcp.json server without a
+# shell. Run it by hand after a release (Actions → Windows smoke), or let it
+# run on a pull request that changes this file.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: npm version or dist-tag of @jmrojas06/agentsprint-cli
+        default: latest
+  pull_request:
+    paths: [.github/workflows/windows-smoke.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    env:
+      PKG: '@jmrojas06/agentsprint-cli@${{ inputs.version || ''latest'' }}'
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: init + connect through npx
+        shell: bash
+        run: |
+          mkdir "$RUNNER_TEMP/proj" && cd "$RUNNER_TEMP/proj" && git init -q
+          npx -y "$PKG" --version
+          npx -y "$PKG" init .
+          npx -y "$PKG" connect .
+          cat .mcp.json .claude/settings.local.json
+
+      - name: .mcp.json uses cmd /c npx, the hook plain npx
+        shell: bash
+        working-directory: ${{ runner.temp }}/proj
+        run: |
+          node -e "
+            const fs = require('fs')
+            const s = JSON.parse(fs.readFileSync('.mcp.json', 'utf8')).mcpServers.agentsprint
+            const hook = JSON.parse(fs.readFileSync('.claude/settings.local.json', 'utf8')).hooks.SessionStart.at(-1).hooks[0].command
+            const fail = (m) => { console.error('FAIL: ' + m); process.exit(1) }
+            if (s.command !== 'cmd' || s.args.slice(0, 3).join(' ') !== '/c npx -y') fail('.mcp.json: ' + JSON.stringify(s))
+            if (!hook.startsWith(\"'npx' '-y'\")) fail('hook: ' + hook)
+            if (/_npx/.test(JSON.stringify(s) + hook)) fail('points into the npx cache')
+            console.log('ok')
+          "
+
+      - name: The hook prints the brief in Git Bash
+        shell: bash
+        working-directory: ${{ runner.temp }}/proj
+        run: |
+          HOOK=$(node -p "JSON.parse(require('fs').readFileSync('.claude/settings.local.json','utf8')).hooks.SessionStart.at(-1).hooks[0].command")
+          bash -c "$HOOK" | tee brief.md
+          grep -q '## New board' brief.md
+
+      - name: The MCP server answers when spawned without a shell
+        shell: bash
+        working-directory: ${{ runner.temp }}/proj
+        run: |
+          node -e "
+            const { spawn } = require('child_process')
+            const s = JSON.parse(require('fs').readFileSync('.mcp.json', 'utf8')).mcpServers.agentsprint
+            const child = spawn(s.command, s.args, { shell: false })
+            let out = ''
+            const timer = setTimeout(() => { console.error('FAIL: no tools/list answer in 120 s'); child.kill(); process.exit(1) }, 120000)
+            child.stdout.on('data', (d) => {
+              out += d
+              if (out.includes('\"project_context\"')) { clearTimeout(timer); console.log('ok: tools/list lists project_context'); child.kill(); process.exit(0) }
+            })
+            child.on('exit', (code) => { console.error('FAIL: server exited ' + code); process.exit(1) })
+            const send = (m) => child.stdin.write(JSON.stringify(m) + '\n')
+            send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '1' } } })
+            send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+            send({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
+          "
