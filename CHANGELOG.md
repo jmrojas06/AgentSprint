@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- On Windows the SessionStart hook written by `connect` (run through npx) wrapped npx in `cmd /c`; hooks run in Git Bash, whose path conversion turns `/c` into `C:/`. The hook now uses plain `npx`; only `.mcp.json`, which Claude Code spawns without a shell, keeps `cmd /c npx` on Windows.
+- The designer prompt and the skill tables still named `awesome-design-md`, which has no public `SKILL.md`; removed, as 0.2.0 already claimed.
+- On a board with only the getting-started examples, step 1 of the brief's "How to continue" said to take the first task of "Next up", contradicting the *New board* section. It now points at *New board*.
+- The quick start said the light run never launches subagents; the MCP instructions still send each task in Review through one reviewer subagent. The docs now say so.
+
 ## [0.2.0] — 2026-10-22
 
 Everything below reaches npm for the first time: 0.1.0 shipped without

@@ -99,3 +99,13 @@
 - Publicar: merge a main, luego git tag v0.2.0 && git push origin v0.2.0 (release.yml publica en npm con NPM_TOKEN)
 - Rehacer capturas del README (agents-dark.png muestra skills precargadas)
 - Este repo mantiene sus perfiles con skills: precargadas; quitar las líneas skills: para ahorrar tokens
+
+## 2026-10-22T14:29:15.023Z — human
+
+**Summary:** PR #10 mergeado y 0.2.0 publicada en npm (los 5 paquetes) con GitHub Release v0.2.0. Los checks quedaron 'queued' por un incidente de GitHub Actions (degraded performance), no por el repo; el release corrió igual. Quick-start del README verificado desde npm en carpeta nueva: init, connect (escribe npx @0.2.0), hook con 'New board', MCP responde, 0 skills precargadas.
+
+**Next:**
+- Mover TK-60 a Done si está conforme (sigue en Review)
+- Rehacer docs/public/screenshots/agents-dark.png (muestra skills precargadas)
+- Quitar las líneas skills: de los perfiles de este repo para ahorrar tokens
+- Confirmar que CI/Release/Docs de main terminan en verde cuando GitHub cierre el incidente

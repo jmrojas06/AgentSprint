@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { cliLauncher, cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
+import { cliLauncher, mcpLauncher, cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
 import { startServer } from '@jmrojas06/agentsprint-server'
 import { cmdReview } from './index.js'
 
@@ -361,12 +361,15 @@ describe('agents, dispatch and connect', () => {
     expect(hook).toMatch(/^'npx' '-y' '@jmrojas06\/agentsprint-cli@[\d.]+' context .* --hook$/)
   })
 
-  it('cliLauncher keeps stable paths and wraps npx for Windows', () => {
-    expect(cliLauncher('/usr/lib/node_modules/@jmrojas06/agentsprint-cli/dist/index.js')).toEqual({
-      command: process.execPath,
-      args: ['/usr/lib/node_modules/@jmrojas06/agentsprint-cli/dist/index.js'],
-    })
-    const win = cliLauncher('C:\\Users\\ana\\AppData\\Local\\npm-cache\\_npx\\8a1b\\node_modules\\x\\dist\\index.js', 'win32')
+  it('keeps stable paths, and wraps npx in cmd /c only for .mcp.json on Windows', () => {
+    const global = '/usr/lib/node_modules/@jmrojas06/agentsprint-cli/dist/index.js'
+    expect(cliLauncher(global)).toEqual({ command: process.execPath, args: [global] })
+    expect(mcpLauncher(global, 'win32')).toEqual({ command: process.execPath, args: [global] })
+    const npxCache = 'C:\\Users\\ana\\AppData\\Local\\npm-cache\\_npx\\8a1b\\node_modules\\x\\dist\\index.js'
+    // Hooks run in a shell (Git Bash / PowerShell) that resolves npx itself.
+    expect(cliLauncher(npxCache).command).toBe('npx')
+    expect(mcpLauncher(npxCache, 'linux').command).toBe('npx')
+    const win = mcpLauncher(npxCache, 'win32')
     expect(win.command).toBe('cmd')
     expect(win.args.slice(0, 3)).toEqual(['/c', 'npx', '-y'])
   })

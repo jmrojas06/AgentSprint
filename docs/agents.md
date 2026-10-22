@@ -13,7 +13,7 @@ ten profiles to `.agentboard/agents/`:
 | Agent | Role | Skills it uses when installed |
 | --- | --- | --- |
 | `developer` | Smallest correct change; reuses what exists; full suite green before Review | karpathy-guidelines, test-driven-development, systematic-debugging, verification-before-completion |
-| `designer` | Builds the UI from the brand kit: direction, reference brands, audit, screenshots | design-taste-frontend, awesome-design-md, frontend-design, web-design-guidelines, playwright-cli |
+| `designer` | Builds the UI from the brand kit: direction, reference brands, audit, screenshots | design-taste-frontend, frontend-design, web-design-guidelines, playwright-cli |
 | `tester` | Tests derived from acceptance criteria; edge cases first; proves tests can fail | test-driven-development, tdd, playwright-cli, verification-before-completion |
 | `fixer` | Reproduce, find root cause, failing test first, smallest patch | systematic-debugging, test-driven-development, verification-before-completion |
 | `docs` | README, guides, CHANGELOG, verified against the code that ships | grill-with-docs, verification-before-completion |
