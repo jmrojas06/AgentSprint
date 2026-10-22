@@ -9,7 +9,7 @@ import { main as runMcpStdio } from '@jmrojas06/agentsprint-mcp'
 import { buildReviewQueue } from '@jmrojas06/agentsprint-core'
 import { DEFAULT_STATUSES, isWorkflowAssignee, type ReviewVerdict, type TaskStatus } from '@jmrojas06/agentsprint-core'
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 const PACKAGE_NAME = '@jmrojas06/agentsprint-cli'
 
 function printHelp(): void {

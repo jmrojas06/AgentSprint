@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-22
+
 ### Fixed
 - On Windows the SessionStart hook written by `connect` (run through npx) wrapped npx in `cmd /c`; hooks run in Git Bash, whose path conversion turns `/c` into `C:/`. The hook now uses plain `npx`; only `.mcp.json`, which Claude Code spawns without a shell, keeps `cmd /c npx` on Windows.
 - The designer prompt and the skill tables still named `awesome-design-md`, which has no public `SKILL.md`; removed, as 0.2.0 already claimed.
@@ -109,6 +111,7 @@ Everything below reaches npm for the first time: 0.1.0 shipped without
 - Docker image with healthcheck + docker-compose setup
 - CI (typecheck/test/build) and automated npm publish + GHCR Docker push
 
-[Unreleased]: https://github.com/jmrojas06/AgentSprint/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jmrojas06/AgentSprint/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/jmrojas06/AgentSprint/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jmrojas06/AgentSprint/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jmrojas06/AgentSprint/releases/tag/v0.1.0

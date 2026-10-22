@@ -19,7 +19,7 @@ const stamped = (value: string | undefined): string | null => (typeof value === 
  * `pnpm build`) is easy to tell apart from the current code.
  */
 export const BUILD_INFO: BuildInfo = {
-  version: typeof __AGENTBOARD_VERSION__ === 'string' ? __AGENTBOARD_VERSION__ : '0.2.0',
+  version: typeof __AGENTBOARD_VERSION__ === 'string' ? __AGENTBOARD_VERSION__ : '0.2.1',
   commit: typeof __AGENTBOARD_COMMIT__ === 'string' ? stamped(__AGENTBOARD_COMMIT__) : null,
   builtAt: typeof __AGENTBOARD_BUILT_AT__ === 'string' ? stamped(__AGENTBOARD_BUILT_AT__) : null,
 }

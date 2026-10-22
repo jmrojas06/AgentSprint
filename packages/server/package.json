@@ -1,6 +1,6 @@
 {
   "name": "@jmrojas06/agentsprint-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "REST + SSE + file-watcher server for AgentSprint",
   "license": "MIT",
   "engines": {

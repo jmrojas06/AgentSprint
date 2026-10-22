@@ -1,6 +1,6 @@
 {
   "name": "@jmrojas06/agentsprint-web",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Visual sprint board UI for AgentSprint",
   "license": "MIT",
   "engines": {
