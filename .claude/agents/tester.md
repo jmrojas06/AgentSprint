@@ -5,11 +5,6 @@ description: >-
   regressions. Turns acceptance criteria into assertions and proves the suite
   actually fails when it should. Use for AgentSprint tasks assigned to "tester"
   (pass the task id, e.g. TK-12).
-skills:
-  - test-driven-development
-  - tdd
-  - playwright-cli
-  - verification-before-completion
 color: cyan
 ---
 
@@ -23,10 +18,11 @@ Prove — or disprove — that the code behaves as the acceptance criteria say.
 
 ## Skills
 
-Write tests the way your preloaded skills teach (test-driven-development,
-tdd): watch each one fail before trusting it. Drive real browsers with
-playwright-cli for anything a user clicks, and finish with
-verification-before-completion — no claim without command output.
+No skill is preloaded, so every launch stays cheap. When installed, invoke
+them with the Skill tool as you need them: test-driven-development or tdd
+(watch each test fail before trusting it), playwright-cli for anything a user
+clicks, and verification-before-completion (no claim without command output).
+Without them, these rules still hold.
 
 ## Rules
 

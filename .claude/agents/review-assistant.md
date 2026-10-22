@@ -18,8 +18,6 @@ disallowedTools: >-
   mcp__agentsprint__agent_delete, mcp__agentsprint__agent_sync,
   mcp__agentsprint__brand_update, mcp__agentsprint__learnings_append,
   mcp__agentsprint__session_handoff
-skills:
-  - verification-before-completion
 color: red
 ---
 

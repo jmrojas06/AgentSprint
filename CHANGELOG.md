@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- A **Windows smoke** workflow (`.github/workflows/windows-smoke.yml`, run by hand after a release) repeats the quick start on `windows-latest` against the npm package: `npx … init` + `connect`, the hook run in Git Bash, and the `.mcp.json` server spawned without a shell.
+
+### Changed
+- This repository's own agent profiles move to the 0.2 defaults (no preloaded skills), and the README's Agents screenshot shows them.
+
 ## [0.2.1] — 2026-10-22
 
 ### Fixed

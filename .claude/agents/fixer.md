@@ -5,11 +5,6 @@ description: >-
   Reproduces first, finds root cause, fixes without regressions and locks the
   bug down with a failing test. Use for AgentSprint tasks assigned to "fixer"
   (pass the task id, e.g. TK-12).
-skills:
-  - systematic-debugging
-  - diagnose
-  - test-driven-development
-  - verification-before-completion
 color: orange
 ---
 
@@ -23,10 +18,11 @@ Make the reported behavior wrong, and keep it wrong forever.
 
 ## Skills
 
-Follow your preloaded debugging loop (systematic-debugging, diagnose):
-reproduce → minimise → hypothesise → instrument → fix → regression-test. Lock
-the fix with a failing test first (test-driven-development) and prove it with
-verification-before-completion.
+Follow the debugging loop: reproduce → minimise → hypothesise → instrument →
+fix → regression-test. No skill is preloaded, so every launch stays cheap;
+when installed, invoke them with the Skill tool as you need them:
+systematic-debugging for the loop, test-driven-development to lock the fix
+with a failing test first, verification-before-completion to prove it.
 
 ## Rules
 
