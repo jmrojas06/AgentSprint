@@ -109,3 +109,13 @@
 - Rehacer docs/public/screenshots/agents-dark.png (muestra skills precargadas)
 - Quitar las líneas skills: de los perfiles de este repo para ahorrar tokens
 - Confirmar que CI/Release/Docs de main terminan en verde cuando GitHub cierre el incidente
+
+## 2026-10-22T15:11:37.614Z — human
+
+**Summary:** TK-60 revisada por code-reviewer: changes (4 hallazgos) -> corregidos en PR #11 -> approve con 7/7 criterios. PR #11 mergeado; bump a 0.2.1 aplicado directo en main (6491d95, el PR se mergeó antes del commit del bump) y tag v0.2.1 publicado: los 5 paquetes en npm 0.2.1 + GitHub Release. Quick-start verificado desde npm: hook con npx@0.2.1, New board y paso 1 coherentes, sin awesome-design-md.
+
+**Next:**
+- Mover TK-60 a Done (aprobada, sigue en Review)
+- Rehacer docs/public/screenshots/agents-dark.png
+- Quitar skills: de los perfiles de este repo para ahorrar tokens
+- Probar connect + hook en Windows real (no verificado)
