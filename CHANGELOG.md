@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-22
+
+Everything below reaches npm for the first time: 0.1.0 shipped without
+`connect`, `context`, handoffs, agents or the review gate.
+
 ### Added
 - **Approve from the chat**: the `review-assistant` agent (read-only) and the `human-review` MCP prompt. The main session reads `review_queue`, can ask `review-assistant` for a decision brief per task, asks you in batches of up to 4 multiple-choice questions, records your answers with `review_decide`, and closes a sprint only when you choose to. `agentboard agents sync` installs the agent.
 - **Parallel safety in dispatch**: tasks can declare `files:` (validated by lint), and same-wave tasks that share files or a package area are flagged (`⚠ shares … with TK-x`, `conflicts` in JSON) with a hint to use a worktree or separate waves. The review gate skips tasks whose approval is newer than their last change and lists them as already approved (`review[].approvedBy`).
@@ -14,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Approve from the UI**: tasks in Review get *Mark done* and *Request changes* (findings required, recorded as reviewer `user`), both in Overview rows and in the task modal, which also shows the latest verdict. *Close approved (N)* moves every task approved since its last change to Done, after a confirmation.
 - `agentboard doctor [dir] [--url <url> ...] [--json]` checks the environment: board lint, orphaned locks and file ownership, a stale local `dist`, each server's build commit against HEAD (`-dirty` means a modified tree) and the `.mcp.json` agentsprint entry. It exits 1 on errors.
 - **Session continuity**: `agentboard context`, the `project_context` MCP tool, the `resume` prompt and `GET /api/context` render a brief of where the project is (sprint progress, work in flight with its last note, review queue, next unblocked tasks, blockers, recently done, last handoff, recent learnings). Handoffs go to an append-only `.agentboard/journal.md` via `session_handoff`, `agentboard handoff`, `POST /api/journal` or the UI. The MCP server sends instructions to start and end every session with them, and `agentboard connect` installs a Claude Code `SessionStart` hook that injects the brief.
-- **Skills in agent profiles**: `skills` (preloaded Claude Code skills) and `disallowedTools` in `.agentboard/agents/*.md`, rendered into `.claude/agents/`. Default agents preload matching skills; the designer loads every design skill. `agentboard skills`, `skill_list` and `GET /api/skills` show installed and missing skills.
+- **Skills in agent profiles**: `skills` (preloaded Claude Code skills) and `disallowedTools` in `.agentboard/agents/*.md`, rendered into `.claude/agents/`. Default agents name the skills that help and use installed ones on demand (see Changed). `agentboard skills`, `skill_list` and `GET /api/skills` show installed and missing skills.
 - **Review gate**: read-only `code-reviewer` and `ui-reviewer` agents with their own protocol; `task_review` (MCP) and `POST /api/tasks/:id/review` record `approve` or `changes` (findings, back to In Progress) as a note and a `review` activity event. `sprint_dispatch` names the reviewer per task and lists a Review gate section.
 - **Overview** view (new default): sprint progress, in progress, waiting for review with verdict badges, ready next, blocked, last handoff, journal, *Copy brief* and *Write handoff*.
 - **Specialized agents** in `.agentboard/agents/` (developer, designer, tester, fixer, docs, creative-director, ideator) with `tools` / `model` options. A task assigned to one gets its prompt injected into the spec and keeps that assignee across status changes; `agentboard lint` flags unknown assignees and broken profiles.
@@ -26,6 +31,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The UI shows specialist assignees with their color, groups the assignee pickers (workflow roles vs. specialists) and adds "Run sprint" to the command palette.
 
 ### Changed
+- **Agents preload no skills.** The default profiles drop `skills:`: each prompt names the skills that help at each step and the subagent invokes the installed ones with the Skill tool when it needs them. Preloading injected every listed skill in full at each launch, used or not, which measured about 9k tokens for `developer` and about 28k for `designer` and `ui-reviewer` before they read any code. `skills:` still works for a skill an agent must always have. Existing boards keep their profiles; delete the `skills:` lines to get the same savings. The suggestions no longer name skills without a public source.
+- **A new board asks for the real project.** The getting-started examples are all tagged `getting-started` and none starts In Progress (TK-2 used to, while its dependency TK-1 was still To Do). While they are the only tasks, the brief adds a *New board* section telling the agent to ask what the user is building instead of resuming the tutorial.
+- Quick start rewritten for Claude Code: `init` + `connect`, the first session, light (`resume`) vs. full (`run-sprint`) runs and what each costs. `docs/agents.md` documents where the suggested skills come from and how to add your own agents.
 - UI polish: Geist type, calibrated near-black and light themes with one indigo accent, a two-row header (navigation and filters), flexible board columns, a collapsible side panel, quieter task cards, skills editing in the Agents tab, review gate in Run sprint, global focus rings and reduced-motion support.
 - README rewritten around the session workflow with real screenshots and a new demo tour.
 - `agentboard lint` exits 0 when only warnings are found.
@@ -36,6 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
 ### Fixed
+- `agentboard connect` run through `npx` wrote paths into npx's cache (`~/.npm/_npx/<hash>/…`) into `.mcp.json` and the SessionStart hook; once npm cleared or replaced that cache, the MCP server and the brief stopped working without a message. It now writes `npx -y @jmrojas06/agentsprint-cli@<version>` (`cmd /c npx …` on Windows). Global installs and checkouts keep their path.
 - Generated subagents carry a protocol schema in their marker (`agentsprint:generated schema=N`). An older AgentSprint, such as a stale Docker image, no longer rewrites subagents generated by a newer one back to an old protocol: it skips them and logs it once. Files without a schema count as schema 0 and are upgraded. `agentboard doctor` warns when `.claude/agents` is newer than the running binary. A fingerprint test fails whenever the generated text changes without a schema bump. Schema 2 makes the review assistant read-only by tools whatever its profile says.
 - `GET /api/tasks/:id/commits` returned every full commit hash except the first with a leading newline. git log records are now NUL-separated with `-z`.
 - Docker: the image runs as the `node` user (uid 1000) instead of root, so files it writes in mounted repos stay owned by you. It ships `git`, so commit links work, and it runs under `tini`. `.dockerignore` excludes nested `node_modules` and `dist`. `pnpm docker:up` rebuilds the image from the checkout and stamps it with the commit.
@@ -94,5 +103,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Docker image with healthcheck + docker-compose setup
 - CI (typecheck/test/build) and automated npm publish + GHCR Docker push
 
-[Unreleased]: https://github.com/jmrojas06/AgentSprint/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jmrojas06/AgentSprint/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jmrojas06/AgentSprint/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jmrojas06/AgentSprint/releases/tag/v0.1.0

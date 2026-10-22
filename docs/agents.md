@@ -10,18 +10,22 @@ it — several at once when the tasks are independent.
 `agentboard init` (or `agentboard agents sync` on an existing board) writes
 ten profiles to `.agentboard/agents/`:
 
-| Agent | Role | Skills preloaded |
+| Agent | Role | Skills it uses when installed |
 | --- | --- | --- |
-| `developer` | Smallest correct change; reuses what exists; full suite green before Review | karpathy-guidelines, principios-codigo, test-driven-development, systematic-debugging, verification-before-completion |
-| `designer` | Builds the UI from the brand kit: direction, reference brands, audit, screenshots | design-taste-frontend, frontend-design, design-md-library, awesome-design-md, web-design-guidelines, playwright-cli |
+| `developer` | Smallest correct change; reuses what exists; full suite green before Review | karpathy-guidelines, test-driven-development, systematic-debugging, verification-before-completion |
+| `designer` | Builds the UI from the brand kit: direction, reference brands, audit, screenshots | design-taste-frontend, awesome-design-md, frontend-design, web-design-guidelines, playwright-cli |
 | `tester` | Tests derived from acceptance criteria; edge cases first; proves tests can fail | test-driven-development, tdd, playwright-cli, verification-before-completion |
-| `fixer` | Reproduce, find root cause, failing test first, smallest patch | systematic-debugging, diagnose, test-driven-development, verification-before-completion |
+| `fixer` | Reproduce, find root cause, failing test first, smallest patch | systematic-debugging, test-driven-development, verification-before-completion |
 | `docs` | README, guides, CHANGELOG, verified against the code that ships | grill-with-docs, verification-before-completion |
-| `creative-director` | Owns vision and tone; approves, revises or rejects with a direction | design-taste-frontend, design-md-library, brainstorming |
+| `creative-director` | Owns vision and tone; approves, revises or rejects with a direction | design-taste-frontend, brainstorming |
 | `ideator` | Divergent options fast, then a ranked shortlist and a recommendation | brainstorming |
-| `code-reviewer` | Review gate for code: diff vs. criteria, bugs, regressions; read-only | requesting-code-review, karpathy-guidelines, principios-codigo, verification-before-completion |
+| `code-reviewer` | Review gate for code: diff vs. criteria, bugs, regressions; read-only | requesting-code-review, karpathy-guidelines, verification-before-completion |
 | `ui-reviewer` | Review gate for UI: real screens at 375px and desktop, a11y, brand; read-only | web-design-guidelines, design-taste-frontend, playwright-cli |
-| `review-assistant` | Briefs the human on what waits in Review, grouped for batched questions; read-only, never decides | verification-before-completion |
+| `review-assistant` | Briefs the human on what waits in Review, grouped for batched questions; read-only, never decides | — |
+
+None of them preloads a skill: each prompt names the skills that help at each
+step, and the subagent invokes the installed ones with the Skill tool when it
+needs them. Without any skill installed, the rules in each prompt still hold.
 
 A profile is one Markdown file — the filename is the agent name, the body is
 its prompt:
@@ -33,7 +37,7 @@ color: "#3b82f6"
 tags: [payments]
 tools: []        # optional Claude Code tool allowlist; empty = inherit all (MCP included)
 disallowedTools: []  # tools it may never use, e.g. [Edit, Write] for a reviewer
-skills: [stripe-best-practices]  # Claude Code skills preloaded into the subagent
+skills: [stripe-best-practices]  # optional: skills loaded in full at every launch
 model: inherit   # inherit | sonnet | opus | haiku
 ---
 
@@ -48,20 +52,56 @@ Create or edit agents from the **Agents** tab of the board, with the
 
 ## Skills
 
-`skills` lists Claude Code skills (by their `name:`) that are injected into
-the subagent's context when it starts, so the designer begins every task with
-its design skills loaded instead of having to discover them. A skill that is
-not installed is skipped by Claude Code with a debug warning, so profiles stay
-portable.
+Agents use the skills installed on your machine; AgentSprint does not ship any.
+A subagent without a `skills:` list can still discover and invoke every
+installed project, user and plugin skill through the Skill tool, and only the
+skills it actually uses cost tokens.
+
+`skills:` is for the rare skill an agent must always have: Claude Code injects
+the **full** text of each listed skill into the subagent at every launch, used
+or not. A design skill can be several thousand tokens, so a designer preloading
+six of them starts each task tens of thousands of tokens in. Add one only when
+on-demand use is not reliable enough for that agent.
 
 - `agentboard skills` lists the skills installed in `<project>/.claude/skills/`
-  and `~/.claude/skills/`, which agents preload each one, and the skills an
-  agent references that are missing.
-- The **Agents** tab edits skills with suggestions from the installed ones and
-  marks missing skills in amber; `skill_list` (MCP) and `GET /api/skills`
+  and `~/.claude/skills/`, which agents preload each one, and the preloaded
+  skills that are missing.
+- The **Agents** tab edits the list with suggestions from the installed skills
+  and marks missing ones in amber; `skill_list` (MCP) and `GET /api/skills`
   return the same data.
-- Task specs list the agent's skills too, so agents other than Claude Code
+- Task specs list a profile's `skills:` too, so agents other than Claude Code
   know which ones to load.
+
+### Where the suggested skills come from
+
+A skill is a folder with a `SKILL.md`. Put it in `~/.claude/skills/<name>/`
+(every project) or `<project>/.claude/skills/<name>/` (this project only):
+
+```bash
+git clone --depth 1 https://github.com/obra/superpowers /tmp/superpowers
+cp -r /tmp/superpowers/skills/systematic-debugging ~/.claude/skills/
+```
+
+| Skills | Repository (folder) |
+| --- | --- |
+| brainstorming, test-driven-development, systematic-debugging, verification-before-completion, requesting-code-review | [obra/superpowers](https://github.com/obra/superpowers) (`skills/`) |
+| frontend-design | [anthropics/skills](https://github.com/anthropics/skills) (`skills/`) |
+| web-design-guidelines | [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) (`skills/`) |
+| tdd, grill-with-docs | [mattpocock/skills](https://github.com/mattpocock/skills) (`skills/engineering/`) |
+| karpathy-guidelines | [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) (`skills/`) |
+| playwright-cli | [microsoft/playwright-cli](https://github.com/microsoft/playwright-cli) (`skills/`) |
+| design-taste-frontend | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) (`skills/taste-skill/`) |
+
+Any other skill works the same way: rename the agent's suggestions in its
+prompt, or write your own skills and mention them there.
+
+## Your own agents
+
+The ten profiles are a starting point, not a fixed team. Edit any prompt,
+delete the ones you do not need, or add your own (a `payments` or `mobile`
+specialist) from the **Agents** tab, with `agent_upsert`, or by writing
+`.agentboard/agents/<name>.md`. `.claude/agents/` is regenerated from those
+files, so edit the profiles, not the generated subagents.
 
 ## The review gate
 
@@ -213,6 +253,11 @@ servers) and a `SessionStart` hook in `.claude/settings.local.json` that runs
 `agentboard context`, so every new, resumed, cleared or compacted session
 starts with the project brief. Restart Claude Code in the folder and approve
 the `agentsprint` server.
+
+Run through `npx`, `connect` writes `npx -y @jmrojas06/agentsprint-cli@<version>`
+into both files instead of a path into npx's cache, which npm may clear at any
+time. A global install or a checkout is registered by its path. Re-run
+`connect` after upgrading to point both at the new version.
 
 ## Never lose the thread
 

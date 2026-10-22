@@ -58,14 +58,16 @@ describe('skills', () => {
     expect(missing).toEqual([{ agent: 'designer', skill: 'b' }])
   })
 
-  it('default agents preload skills and reviewers cannot edit', () => {
+  it('default agents preload no skills, name them for the Skill tool, and reviewers cannot edit', () => {
+    for (const agent of store.listAgents()) expect(agent.skills).toEqual([])
     const designer = store.getAgent('designer')!
-    expect(designer.skills).toContain('design-taste-frontend')
-    expect(designer.skills).toContain('web-design-guidelines')
+    expect(designer.prompt).toContain('Skill tool')
+    expect(designer.prompt).toContain('web-design-guidelines')
     const reviewer = store.getAgent('code-reviewer')!
     expect(reviewer.disallowedTools).toEqual(['Edit', 'Write', 'NotebookEdit'])
     const { data, content } = matter(renderClaudeSubagent(reviewer, 'Demo'))
-    expect(data.skills).toContain('requesting-code-review')
+    expect(data.skills).toBeUndefined()
+    expect(content).toContain('requesting-code-review')
     expect(data.disallowedTools).toBe('Edit, Write, NotebookEdit')
     expect(content).toContain('AgentSprint review protocol')
     expect(content).toContain('task_review')
@@ -78,10 +80,11 @@ describe('skills', () => {
     expect(store.getAgent('qa')).toMatchObject({ skills: ['tdd'], disallowedTools: ['Edit'] })
   })
 
-  it('task specs tell non-Claude agents which skills to load', () => {
+  it('task specs tell non-Claude agents which skills a profile asks to load', () => {
+    const designer = store.getAgent('designer')!
+    store.saveAgent({ ...designer, skills: ['web-design-guidelines'] })
     const task = store.createTask({ title: 'Landing', assignee: 'designer' })
-    const spec = store.agentForTask(task)
-    expect(spec?.skills.length).toBeGreaterThan(0)
+    expect(store.agentForTask(task)?.skills).toEqual(['web-design-guidelines'])
   })
 })
 
@@ -313,5 +316,21 @@ describe('appendLearningsSection', () => {
     expect(brief).toContain('Always lint')
     expect(brief).not.toContain('Backlog (0)')
     expect(brief).not.toContain('_none_')
+  })
+
+  it('a board with only the samples asks for the real project instead of resuming the tutorial', () => {
+    const sampleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentboard-sample-'))
+    try {
+      const sample = ProjectStore.init(sampleDir, { sample: true })
+      expect(sample.state.tasks.filter((t) => t.status === 'In Progress')).toEqual([])
+      const fresh = sample.buildContext()
+      expect(fresh).toContain('## New board')
+      expect(fresh).toContain('idea-to-mvp')
+      expect(fresh).toContain('_Nothing in progress._')
+      sample.createTask({ title: 'Login page', acceptanceCriteria: ['Users can sign in'] })
+      expect(sample.buildContext()).not.toContain('## New board')
+    } finally {
+      fs.rmSync(sampleDir, { recursive: true, force: true })
+    }
   })
 })

@@ -22,7 +22,7 @@ import { syncClaudeSubagents } from './subagents.js'
 import type { SubagentSyncResult } from './subagents.js'
 import { SAMPLE_TEMPLATES, isValidTemplateName, parseTemplate, readTemplates, renderTemplate } from './templates.js'
 import type { TaskTemplate, TemplateVars } from './templates.js'
-import { JOURNAL_HEADER, buildProjectContext, formatJournalEntry, parseJournal } from './context.js'
+import { GETTING_STARTED_TAG, JOURNAL_HEADER, buildProjectContext, formatJournalEntry, parseJournal } from './context.js'
 import type { JournalEntry } from './context.js'
 
 /** Verdict of a review-gate agent (or human) on a task in Review. */
@@ -46,7 +46,7 @@ This project uses a git-native sprint board under \`.agentboard/\`.
 5. Never skip or rewrite tasks. Update the file, don't create duplicates.
 6. Prefer editing files directly over \`agentboard\` CLI/MCP when possible; the board UI reflects file changes instantly.
 7. If \`.agentboard/brand.md\` exists and is configured, follow the brand guidelines when writing code, copy or UI.
-8. \`.agentboard/agents/\` holds specialized agent profiles (developer, designer, tester, …), mirrored to \`.claude/agents/\` as real Claude Code subagents with their skills preloaded. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask \`sprint_dispatch\` (or \`agentboard dispatch\`) which subagent takes which task and what can run in parallel.
+8. \`.agentboard/agents/\` holds specialized agent profiles (developer, designer, tester, …), mirrored to \`.claude/agents/\` as real Claude Code subagents. Their prompts name the skills that help; installed ones are used on demand, nothing is preloaded unless a profile lists it under \`skills:\`. Edit or add profiles freely. A task assigned to one of them is done by that subagent — its prompt is also injected into the task spec. To run a sprint, ask \`sprint_dispatch\` (or \`agentboard dispatch\`) which subagent takes which task and what can run in parallel.
 9. Work in Review passes a review gate first: \`code-reviewer\` (or \`ui-reviewer\` for UI work) records a verdict with \`task_review\`. \`changes\` sends the task back to In Progress with findings; \`approve\` leaves it for the human.
 10. The human can approve from the chat: run the \`human-review\` MCP prompt. The main session reads \`review_queue\`, may launch the read-only \`review-assistant\` subagent for a decision brief per task (subagents cannot ask the user), asks the human in batches of at most 4 multiple-choice questions, records each answer with \`review_decide\` (or \`agentboard review --done …\`), and closes a sprint only when the human chose to.
 `
@@ -1257,7 +1257,7 @@ export class ProjectStore extends EventEmitter {
       priority: 'high',
       assignee: 'scrum-master',
       estimate: 1,
-      tags: ['getting-started'],
+      tags: [GETTING_STARTED_TAG],
       dependencies: [],
       acceptanceCriteria: ['The task has a clear description', 'It has at least one acceptance criterion'],
       description: 'Every task lives in `.agentboard/tasks/` as Markdown with YAML frontmatter.',
@@ -1266,12 +1266,12 @@ export class ProjectStore extends EventEmitter {
     this.createTask({
       id: 'TK-2',
       title: 'Plan sprint goals',
-      status: 'In Progress',
+      status: 'To Do',
       sprint: sprint.id,
       priority: 'medium',
       assignee: 'scrum-master',
       estimate: 2,
-      tags: ['planning'],
+      tags: [GETTING_STARTED_TAG],
       dependencies: ['TK-1'],
       acceptanceCriteria: ['Sprint goal is defined', 'Tasks are assigned to the sprint'],
       description: 'Sprints are Markdown files in `.agentboard/sprints/`. Activate one and assign tasks.',
@@ -1285,7 +1285,7 @@ export class ProjectStore extends EventEmitter {
       priority: 'low',
       assignee: 'scrum-master',
       estimate: 3,
-      tags: ['starter'],
+      tags: [GETTING_STARTED_TAG],
       dependencies: [],
       acceptanceCriteria: ['Code compiles', 'Tests pass'],
       description: 'A tiny feature to practice the agent workflow end to end.',
