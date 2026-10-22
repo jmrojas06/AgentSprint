@@ -171,7 +171,8 @@ export function buildProjectContext(
 
   // A fresh board holds only the samples: without this, the first session
   // would "continue" the tutorial instead of the user's project.
-  if (input.tasks.length > 0 && input.tasks.every((t) => t.tags.includes(GETTING_STARTED_TAG))) {
+  const newBoard = input.tasks.length > 0 && input.tasks.every((t) => t.tags.includes(GETTING_STARTED_TAG))
+  if (newBoard) {
     const ids = input.tasks.map((t) => t.id).join(', ')
     lines.push('## New board')
     lines.push('')
@@ -240,7 +241,11 @@ export function buildProjectContext(
 
   lines.push('## How to continue')
   lines.push('')
-  lines.push('1. Resume what is in progress before starting anything new; otherwise take the first task of "Next up" (`task_claim`, then `task_spec`).')
+  lines.push(
+    newBoard
+      ? '1. Start with "New board" above: ask the user what they are building and plan it as tasks before any work.'
+      : '1. Resume what is in progress before starting anything new; otherwise take the first task of "Next up" (`task_claim`, then `task_spec`).',
+  )
   lines.push('2. Keep the board current while you work: tick criteria (`task_checklist`), log decisions (`task_note`), move finished work to Review.')
   lines.push('3. Before the session ends, write a handoff with `session_handoff` (summary, done, next, blockers) — or append it to `.agentboard/journal.md`. The next session starts from it.')
   return lines.join('\n').trimEnd() + '\n'

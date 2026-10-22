@@ -327,8 +327,12 @@ describe('appendLearningsSection', () => {
       expect(fresh).toContain('## New board')
       expect(fresh).toContain('idea-to-mvp')
       expect(fresh).toContain('_Nothing in progress._')
+      expect(fresh).toContain('1. Start with "New board" above')
+      expect(fresh).not.toContain('take the first task of "Next up"')
       sample.createTask({ title: 'Login page', acceptanceCriteria: ['Users can sign in'] })
-      expect(sample.buildContext()).not.toContain('## New board')
+      const real = sample.buildContext()
+      expect(real).not.toContain('## New board')
+      expect(real).toContain('take the first task of "Next up"')
     } finally {
       fs.rmSync(sampleDir, { recursive: true, force: true })
     }

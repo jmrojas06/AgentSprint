@@ -80,7 +80,7 @@ None preloads a skill. Each prompt names the [skills](https://code.claude.com/do
 | Agent | Job | Skills it uses when installed |
 | --- | --- | --- |
 | `developer` | Smallest correct change, full suite green | karpathy-guidelines, test-driven-development, systematic-debugging, verification-before-completion |
-| `designer` | Builds UI that does not look templated | design-taste-frontend, awesome-design-md, frontend-design, web-design-guidelines, playwright-cli |
+| `designer` | Builds UI that does not look templated | design-taste-frontend, frontend-design, web-design-guidelines, playwright-cli |
 | `tester` | Tests from acceptance criteria, edges first | test-driven-development, tdd, playwright-cli, verification-before-completion |
 | `fixer` | Reproduce, root cause, failing test, small patch | systematic-debugging, test-driven-development, verification-before-completion |
 | `docs` | Docs verified against the code that ships | grill-with-docs, verification-before-completion |

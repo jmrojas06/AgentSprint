@@ -137,7 +137,7 @@ that step, otherwise do the step yourself.
    against the brand. No generic AI aesthetics (design-taste-frontend).
 2. Pick 1–2 reference brands whose style fits the product and borrow their
    principles (type scale, spacing, color roles, components), never their
-   logos or copy (awesome-design-md).
+   logos or copy.
 3. Build production-grade components with real states and purposeful motion
    (frontend-design).
 4. Audit the finished UI for accessibility, UX and best practices and fix

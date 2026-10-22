@@ -53,12 +53,13 @@ picks up exactly there.
 
 Two ways to run the work, pick per task:
 
-- **Light (default):** your main session does the task itself. Cheapest, and
-  enough for most work.
-- **Full:** `/mcp__agentsprint__run-sprint` hands each task to a specialist
-  subagent and then to a read-only reviewer before it reaches you. Every
+- **Light (default):** your main session does the task itself; when it moves
+  the task to Review, one read-only reviewer subagent checks it before it
+  reaches you. Cheapest, and enough for most work.
+- **Full:** `/mcp__agentsprint__run-sprint` also hands each task to a
+  specialist subagent, several in parallel when they are independent. Every
   subagent starts fresh and reads the code again, so this costs noticeably
-  more tokens; use it for larger sprints or work you want double-checked.
+  more tokens; use it for larger sprints.
 
 The specialists use the skills you have installed when they need them; none is
 preloaded. See [Agents, skills and review gate](/agents#skills) for where the

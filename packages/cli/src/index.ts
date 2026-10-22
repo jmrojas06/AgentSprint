@@ -1074,13 +1074,20 @@ const CONTEXT_HOOK_FLAG = 'context'
  * is fetched, so it is launched through npx, pinned to this version, instead of
  * by path. Any other install (global, a checkout) keeps its stable path.
  */
-export function cliLauncher(entry: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
-  if (/[\\/]_npx[\\/]/.test(entry)) {
-    const args = ['-y', `${PACKAGE_NAME}@${VERSION}`]
-    // Windows cannot spawn npx.cmd directly from .mcp.json.
-    return platform === 'win32' ? { command: 'cmd', args: ['/c', 'npx', ...args] } : { command: 'npx', args }
-  }
+export function cliLauncher(entry: string): { command: string; args: string[] } {
+  if (/[\\/]_npx[\\/]/.test(entry)) return { command: 'npx', args: ['-y', `${PACKAGE_NAME}@${VERSION}`] }
   return { command: process.execPath, args: [entry] }
+}
+
+/**
+ * The launcher as `.mcp.json` must spell it. Claude Code spawns MCP servers
+ * without a shell, and Windows cannot spawn `npx.cmd` that way, so it goes
+ * through `cmd /c`. Hooks run in a shell (Git Bash or PowerShell on Windows)
+ * that finds npx itself, so they use the plain launcher.
+ */
+export function mcpLauncher(entry: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
+  const launcher = cliLauncher(entry)
+  return platform === 'win32' && launcher.command === 'npx' ? { command: 'cmd', args: ['/c', 'npx', ...launcher.args] } : launcher
 }
 
 /**
@@ -1133,7 +1140,7 @@ export async function cmdConnect(dir: string, opts: { cliEntry?: string } = {}):
   }
   const entry = opts.cliEntry ?? fileURLToPath(import.meta.url)
   const servers = { ...(config.mcpServers ?? {}) }
-  const launcher = cliLauncher(entry)
+  const launcher = mcpLauncher(entry)
   servers.agentsprint = { type: 'stdio', command: launcher.command, args: [...launcher.args, 'mcp', path.resolve(dir)] }
   fs.writeFileSync(file, JSON.stringify({ ...config, mcpServers: servers }, null, 2) + '\n', 'utf8')
   console.log(`✔ AgentSprint MCP registered in ${file}`)
