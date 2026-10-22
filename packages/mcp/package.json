@@ -1,6 +1,6 @@
 {
   "name": "@jmrojas06/agentsprint-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server so AI coding agents can read, claim and complete AgentSprint tasks",
   "license": "MIT",
   "engines": {

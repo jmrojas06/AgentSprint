@@ -1,6 +1,6 @@
 {
   "name": "@jmrojas06/agentsprint-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "AgentSprint command-line tool \u2014 git-native sprint board for coding with AI agents",
   "license": "MIT",
   "engines": {

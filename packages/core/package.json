@@ -1,6 +1,6 @@
 {
   "name": "@jmrojas06/agentsprint-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Domain model and git-native file storage for AgentSprint",
   "license": "MIT",
   "engines": {
