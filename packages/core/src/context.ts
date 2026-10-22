@@ -128,6 +128,9 @@ export function snapshotProject(
   }
 }
 
+/** Tag of the sample tasks `agentboard init` writes; they teach the board, they are not project work. */
+export const GETTING_STARTED_TAG = 'getting-started'
+
 /**
  * Render the session-start brief: everything a fresh agent (or a human after
  * a break) needs to continue the project without re-reading the history —
@@ -165,6 +168,20 @@ export function buildProjectContext(
     lines.push('Showing unscheduled work. Plan one with the `sprint-plan` prompt or `sprint_create` + `sprint_activate`.')
   }
   lines.push('')
+
+  // A fresh board holds only the samples: without this, the first session
+  // would "continue" the tutorial instead of the user's project.
+  if (input.tasks.length > 0 && input.tasks.every((t) => t.tags.includes(GETTING_STARTED_TAG))) {
+    const ids = input.tasks.map((t) => t.id).join(', ')
+    lines.push('## New board')
+    lines.push('')
+    lines.push(
+      `Only the getting-started examples are here (${ids}). They explain the board; do not work on them as project tasks. ` +
+        'Ask the user what they are building (or run the `idea-to-mvp` prompt), turn the answer into real tasks with acceptance criteria ' +
+        '(`task_create_batch`), then offer to delete the examples (`task_delete`).',
+    )
+    lines.push('')
+  }
 
   const h = snap.lastHandoff
   if (h) {

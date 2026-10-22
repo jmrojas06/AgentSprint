@@ -103,7 +103,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
   // Config is not re-synced, so no refresh() here (it is always called right after getStore()).
   const getProjectName = (): string => (provider ? provider.store() : baseStore).getConfig().name || ''
 
-  const server = new McpServer({ name: 'agentsprint', version: '0.1.0' }, { instructions: SERVER_INSTRUCTIONS })
+  const server = new McpServer({ name: 'agentsprint', version: '0.2.0' }, { instructions: SERVER_INSTRUCTIONS })
 
   // Every tool runs behind a guard: anything it throws (a failed re-sync
   // included) becomes an isError result plus a stderr line, never a crash.

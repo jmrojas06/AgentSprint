@@ -78,3 +78,24 @@
 - Merge PR #9 (CI green, Auto-fix on)
 - Reconnect the agentsprint MCP server in Claude Code (/mcp) so it serves the current dist; then /mcp__agentsprint__human-review works natively
 - Follow-ups: keep unknown frontmatter keys on write (so older servers stop dropping files:); show dispatch conflicts in the web Run sprint modal; wave 0 vs In Progress overlap; single ProjectStore.claimTask shared by MCP and CLI; flaky TaskModal focus test under memory pressure; Delete confirmation in TaskModal
+
+## 2026-10-22T14:01:06.469Z — human
+
+**Summary:** Revisión de preparación para principiantes (sin cambios de código). Código actual sano: build OK, 648 tests pasan, init/connect/context/dispatch/MCP (39 tools, 7 prompts) y la UI funcionan desde el repo.
+
+**Next:**
+- Publicar 0.2.0 en npm (bump de versiones + tag v0.2.0; npm sigue en 0.1.0 del 23-ago y el quick start del README falla en 'connect')
+- connect: no escribir rutas absolutas de la caché de npx en .mcp.json y el hook
+- Board de ejemplo: TK-2 en In Progress con dependencia sin hacer y asignado a scrum-master inexistente; el primer brief manda a Claude a trabajar en el tutorial
+- Skills de los especialistas no vienen instaladas en una máquina limpia: documentar cómo instalarlas o usar defaults públicos
+- docs/quick-start.md desactualizado (sin connect, ejemplo de opencode, sección de video en español)
+
+## 2026-10-22T14:13:18.218Z — human
+
+**Summary:** Arreglado lo que frenaba a un principiante (TK-60, en Review, sin commit, rama fix/beginner-onboarding): versión 0.2.0 lista, connect portable con npx, agentes sin precarga de skills (ahorra ~9k-28k tokens por subagente), tablero de ejemplo coherente con aviso 'New board', quick-start y docs de skills. 651 tests verdes; e2e con tarballs OK.
+
+**Next:**
+- Revisar TK-60 (code-reviewer) y hacer commit/PR
+- Publicar: merge a main, luego git tag v0.2.0 && git push origin v0.2.0 (release.yml publica en npm con NPM_TOKEN)
+- Rehacer capturas del README (agents-dark.png muestra skills precargadas)
+- Este repo mantiene sus perfiles con skills: precargadas; quitar las líneas skills: para ahorrar tokens

@@ -51,9 +51,8 @@ describe('MCP tools', () => {
   })
 
   it('task_list filters by status', async () => {
-    const tasks = (await callTool('task_list', { status: 'In Progress' })) as Array<{ id: string }>
-    expect(tasks).toHaveLength(1)
-    expect(tasks[0]?.id).toBe('TK-2')
+    const tasks = (await callTool('task_list', { status: 'To Do' })) as Array<{ id: string }>
+    expect(tasks.map((t) => t.id).sort()).toEqual(['TK-1', 'TK-2'])
   })
 
   it('task_get returns a task by id', async () => {

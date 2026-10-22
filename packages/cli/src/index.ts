@@ -9,7 +9,8 @@ import { main as runMcpStdio } from '@jmrojas06/agentsprint-mcp'
 import { buildReviewQueue } from '@jmrojas06/agentsprint-core'
 import { DEFAULT_STATUSES, isWorkflowAssignee, type ReviewVerdict, type TaskStatus } from '@jmrojas06/agentsprint-core'
 
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
+const PACKAGE_NAME = '@jmrojas06/agentsprint-cli'
 
 function printHelp(): void {
   console.log(`
@@ -1068,6 +1069,21 @@ export async function cmdSkills(dir: string): Promise<void> {
 const CONTEXT_HOOK_FLAG = 'context'
 
 /**
+ * How Claude Code should start this CLI later. A copy run from npx's cache
+ * (`…/_npx/<hash>/…`) disappears when that cache is cleared or another version
+ * is fetched, so it is launched through npx, pinned to this version, instead of
+ * by path. Any other install (global, a checkout) keeps its stable path.
+ */
+export function cliLauncher(entry: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
+  if (/[\\/]_npx[\\/]/.test(entry)) {
+    const args = ['-y', `${PACKAGE_NAME}@${VERSION}`]
+    // Windows cannot spawn npx.cmd directly from .mcp.json.
+    return platform === 'win32' ? { command: 'cmd', args: ['/c', 'npx', ...args] } : { command: 'npx', args }
+  }
+  return { command: process.execPath, args: [entry] }
+}
+
+/**
  * Add (or refresh) a Claude Code SessionStart hook in
  * `<dir>/.claude/settings.local.json` that prints `agentboard context`, so
  * every new, resumed, cleared or compacted session starts with the board
@@ -1085,7 +1101,8 @@ export function installContextHook(dir: string, entry: string): string {
   }
   // POSIX single quotes: nothing inside expands; an embedded ' becomes '\''.
   const q = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
-  const command = `${q(process.execPath)} ${q(entry)} ${CONTEXT_HOOK_FLAG} ${q(path.resolve(dir))} --hook`
+  const launcher = cliLauncher(entry)
+  const command = `${[launcher.command, ...launcher.args].map(q).join(' ')} ${CONTEXT_HOOK_FLAG} ${q(path.resolve(dir))} --hook`
   const isOurs = (c: string): boolean => c.includes(` ${CONTEXT_HOOK_FLAG} `) && c.endsWith(' --hook')
   const hooks = { ...(settings.hooks ?? {}) }
   const groups = (hooks.SessionStart ?? [])
@@ -1116,7 +1133,8 @@ export async function cmdConnect(dir: string, opts: { cliEntry?: string } = {}):
   }
   const entry = opts.cliEntry ?? fileURLToPath(import.meta.url)
   const servers = { ...(config.mcpServers ?? {}) }
-  servers.agentsprint = { type: 'stdio', command: process.execPath, args: [entry, 'mcp', path.resolve(dir)] }
+  const launcher = cliLauncher(entry)
+  servers.agentsprint = { type: 'stdio', command: launcher.command, args: [...launcher.args, 'mcp', path.resolve(dir)] }
   fs.writeFileSync(file, JSON.stringify({ ...config, mcpServers: servers }, null, 2) + '\n', 'utf8')
   console.log(`✔ AgentSprint MCP registered in ${file}`)
   try {

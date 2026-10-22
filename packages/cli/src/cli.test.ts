@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
+import { cliLauncher, cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
 import { startServer } from '@jmrojas06/agentsprint-server'
 import { cmdReview } from './index.js'
 
@@ -345,6 +345,30 @@ describe('agents, dispatch and connect', () => {
     const config = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'))
     expect(config.mcpServers.other).toEqual({ command: 'x' })
     expect(config.mcpServers.agentsprint).toEqual({ type: 'stdio', command: process.execPath, args: ['/opt/agentboard/index.js', 'mcp', path.resolve(dir)] })
+  })
+
+  it('connect run from the npx cache launches through npx, pinned to this version', async () => {
+    ProjectStore.init(dir, { sample: true })
+    const entry = '/home/ana/.npm/_npx/8a1b2c/node_modules/@jmrojas06/agentsprint-cli/dist/index.js'
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await cmdConnect(dir, { cliEntry: entry })
+    log.mockRestore()
+    const server = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8')).mcpServers.agentsprint
+    expect(server.command).toBe('npx')
+    expect(server.args).toEqual(['-y', expect.stringMatching(/^@jmrojas06\/agentsprint-cli@\d+\.\d+\.\d+$/), 'mcp', path.resolve(dir)])
+    const hook = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8')).hooks.SessionStart.at(-1).hooks[0].command
+    expect(hook).not.toContain('_npx')
+    expect(hook).toMatch(/^'npx' '-y' '@jmrojas06\/agentsprint-cli@[\d.]+' context .* --hook$/)
+  })
+
+  it('cliLauncher keeps stable paths and wraps npx for Windows', () => {
+    expect(cliLauncher('/usr/lib/node_modules/@jmrojas06/agentsprint-cli/dist/index.js')).toEqual({
+      command: process.execPath,
+      args: ['/usr/lib/node_modules/@jmrojas06/agentsprint-cli/dist/index.js'],
+    })
+    const win = cliLauncher('C:\\Users\\ana\\AppData\\Local\\npm-cache\\_npx\\8a1b\\node_modules\\x\\dist\\index.js', 'win32')
+    expect(win.command).toBe('cmd')
+    expect(win.args.slice(0, 3)).toEqual(['/c', 'npx', '-y'])
   })
 })
 

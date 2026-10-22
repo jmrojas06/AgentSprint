@@ -256,7 +256,7 @@ export function AgentsPanel({ agents, tasks, onChanged }: Props) {
                   </button>
                 </span>
               ))}
-              {draft.skills.length === 0 && <span className="text-[11px] text-zinc-500">None yet</span>}
+              {draft.skills.length === 0 && <span className="text-[11px] text-zinc-500">None: the agent uses installed skills on demand</span>}
             </div>
             <input
               list="agent-skill-options"
