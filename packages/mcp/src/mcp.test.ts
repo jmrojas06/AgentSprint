@@ -51,8 +51,30 @@ describe('MCP tools', () => {
   })
 
   it('task_list filters by status', async () => {
-    const tasks = (await callTool('task_list', { status: 'To Do' })) as Array<{ id: string }>
+    const { total, tasks } = (await callTool('task_list', { status: 'To Do' })) as { total: number; tasks: Array<{ id: string }> }
+    expect(total).toBe(2)
     expect(tasks.map((t) => t.id).sort()).toEqual(['TK-1', 'TK-2'])
+  })
+
+  it('task_list returns summary rows, capped by limit, and whole tasks with full', async () => {
+    const res = (await callTool('task_list', {})) as { total: number; tasks: Array<Record<string, unknown>>; more?: string }
+    expect(res.total).toBe(3)
+    expect(Object.keys(res.tasks[0]!).sort()).toEqual(['ac', 'assignee', 'dependencies', 'id', 'priority', 'sprint', 'status', 'title'])
+    expect(res.tasks[0]!.ac).toMatch(/^\d+\/\d+$/)
+    expect(res.more).toBeUndefined()
+
+    const capped = (await callTool('task_list', { limit: 2 })) as { total: number; tasks: unknown[]; more?: string }
+    expect(capped.total).toBe(3)
+    expect(capped.tasks).toHaveLength(2)
+    expect(capped.more).toContain('1 more')
+
+    const full = (await callTool('task_list', { full: true })) as { tasks: Array<{ id: string; description: string; activity: unknown[] }> }
+    expect(full.tasks[0]).toEqual(await callTool('task_get', { id: full.tasks[0]!.id }))
+  })
+
+  it('JSON results are not indented', async () => {
+    const result = (await client.callTool({ name: 'task_get', arguments: { id: 'TK-1' } })) as ToolResult
+    expect(result.content[0]?.text).not.toContain('\n')
   })
 
   it('task_get returns a task by id', async () => {
@@ -169,7 +191,7 @@ describe('MCP tools', () => {
     const created = (await callTool('task_create', { title: 'Style the hero', assignee: 'designer' })) as { id: string; assignee: string }
     expect(created.assignee).toBe('designer')
 
-    const tasks = (await callTool('task_list', { assignee: 'designer' })) as Array<{ id: string }>
+    const { tasks } = (await callTool('task_list', { assignee: 'designer' })) as { tasks: Array<{ id: string }> }
     expect(tasks.map((t) => t.id)).toContain(created.id)
   })
 
@@ -381,7 +403,10 @@ describe('MCP tools', () => {
   })
 
   it('task_note appends a note to the task body', async () => {
-    const updated = (await callTool('task_note', { id: 'TK-1', note: 'Checked edge case', author: 'agent' })) as { notes: string }
+    const ack = (await callTool('task_note', { id: 'TK-1', note: 'Checked edge case', author: 'agent' })) as { notes?: string; lastActivity: { type: string } }
+    expect(ack.notes).toBeUndefined()
+    expect(ack.lastActivity.type).toBe('note')
+    const updated = (await callTool('task_get', { id: 'TK-1' })) as { notes: string }
     expect(updated.notes).toContain('Checked edge case')
     expect(updated.notes).toContain('(agent)')
   })
@@ -538,9 +563,10 @@ describe('session continuity & review gate', () => {
 
   it('task_review records verdicts and sends changes back', async () => {
     store.setTaskStatus('TK-1', 'Review')
-    const approved = (await callTool('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'approve', summary: 'ok' })) as { status: string; notes: string }
+    const approved = (await callTool('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'approve', summary: 'ok' })) as { status: string; lastActivity: { type: string } }
     expect(approved.status).toBe('Review')
-    expect(approved.notes).toContain('**Review: approved**')
+    expect(approved.lastActivity.type).toBe('review')
+    expect(((await callTool('task_get', { id: 'TK-1' })) as { notes: string }).notes).toContain('**Review: approved**')
     const changed = (await callTool('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'changes', findings: ['a.ts:1 — broken'] })) as { status: string }
     expect(changed.status).toBe('In Progress')
     const err = await callToolError('task_review', { id: 'TK-1', reviewer: 'code-reviewer', verdict: 'approve' })
@@ -558,19 +584,20 @@ describe('session continuity & review gate', () => {
     expect(queue[0]?.review?.by).toBe('code-reviewer')
     expect(((await callTool('review_queue', { ids: ['TK-2'] })) as unknown[]).length).toBe(1)
 
-    const done = (await callTool('review_decide', { id: 'TK-1', decision: 'done' })) as { status: string; activity: Array<{ actor: string; type: string; detail: string }>; activityCount: number }
+    const done = (await callTool('review_decide', { id: 'TK-1', decision: 'done' })) as { status: string; lastActivity: { actor: string } | null }
     expect(done.status).toBe('Done')
-    expect(done.activity).toContainEqual(expect.objectContaining({ actor: 'user', type: 'status', detail: 'Review → Done' }))
-    expect(done.activity.length).toBeLessThanOrEqual(3)
-    const back = (await callTool('review_decide', { id: 'TK-2', decision: 'changes', by: 'maria', findings: ['fix it'] })) as { status: string; notes: string }
+    expect(done.lastActivity?.actor).toBe('user')
+    expect(((await callTool('task_get', { id: 'TK-1' })) as { activity: unknown[] }).activity).toContainEqual(expect.objectContaining({ actor: 'user', type: 'status', detail: 'Review → Done' }))
+    const back = (await callTool('review_decide', { id: 'TK-2', decision: 'changes', by: 'maria', findings: ['fix it'] })) as { status: string }
     expect(back.status).toBe('In Progress')
-    expect(back.notes).toContain('(maria) **Review: changes requested**')
+    expect(((await callTool('task_get', { id: 'TK-2' })) as { notes: string }).notes).toContain('(maria) **Review: changes requested**')
     const err = await callToolError('review_decide', { id: 'TK-3', decision: 'done' })
     expect(err.error).toMatch(/not "Review"/)
     expect(store.state.tasks.find((t) => t.id === 'TK-3')?.status).not.toBe('Done')
   })
 
-  it('mutating task tools return a compact task: last 3 activity events plus activityCount', async () => {
+  it('mutating task tools return a short ack, not the whole task', async () => {
+    store.appendTaskNote('TK-1', 'x'.repeat(5000), 'agent')
     const calls: Array<[string, Record<string, unknown>]> = [
       ['task_update', { id: 'TK-1', title: 'Renamed' }],
       ['task_note', { id: 'TK-1', note: 'n1' }],
@@ -581,17 +608,22 @@ describe('session continuity & review gate', () => {
       ['task_create', { title: 'Compact' }],
     ]
     for (const [name, args] of calls) {
-      const res = (await callTool(name, args)) as { id: string; activity: unknown[]; activityCount: number }
-      const full = (await callTool('task_get', { id: res.id })) as { activity: unknown[]; activityCount?: number }
-      expect(res.activityCount, name).toBe(full.activity.length)
-      expect(res.activity, name).toEqual(full.activity.slice(-3))
-      expect(full.activityCount).toBeUndefined()
+      const result = (await client.callTool({ name, arguments: args })) as ToolResult
+      const text = result.content[0]?.text ?? ''
+      const res = JSON.parse(text) as Record<string, unknown> & { id: string }
+      const full = (await callTool('task_get', { id: res.id })) as { status: string; acceptanceCriteria: string[]; activity: unknown[] }
+      expect(text.length, name).toBeLessThan(1000)
+      expect(res, name).not.toHaveProperty('notes')
+      expect(res, name).not.toHaveProperty('description')
+      expect(res, name).not.toHaveProperty('activity')
+      expect(res.status, name).toBe(full.status)
+      expect(res.lastActivity, name).toEqual(full.activity.at(-1))
+      const done = full.acceptanceCriteria.filter((c) => c.startsWith('[x]')).length
+      expect(res.ac, name).toBe(`${done}/${full.acceptanceCriteria.length}`)
+      expect('acceptanceCriteria' in res, name).toBe(name === 'task_checklist')
     }
-    const full = (await callTool('task_get', { id: 'TK-1' })) as { activity: unknown[] }
-    expect(full.activity.length).toBeGreaterThan(3)
-    const listed = (await callTool('task_list', { q: 'Renamed' })) as Array<{ activity: unknown[]; activityCount?: number }>
-    expect(listed[0]?.activity).toEqual(full.activity)
-    expect(listed[0]?.activityCount).toBeUndefined()
+    const claimed = (await callTool('task_claim', { id: 'TK-1', agent: 'developer' })) as { lockedBy: string | null }
+    expect(claimed.lockedBy).toBe('developer')
   })
 
   it('agent_upsert stores skills and skill_list reports missing ones', async () => {

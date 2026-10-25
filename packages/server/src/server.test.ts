@@ -715,7 +715,7 @@ describe('multi-project', () => {
         name: 'project_current',
         arguments: {},
       })
-      expect((parseMcpRes(currentRes.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain('"name": "math"')
+      expect((parseMcpRes(currentRes.body) as { result: { content: Array<{ text: string }> } }).result.content[0]!.text).toContain('"name":"math"')
 
       const badUse = await mcpCall(built, sessionId, 6, 'tools/call', {
         name: 'project_use',

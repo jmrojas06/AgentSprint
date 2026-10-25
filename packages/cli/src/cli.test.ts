@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectStore } from '@jmrojas06/agentsprint-core'
-import { cliLauncher, mcpLauncher, cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, installContextHook, parseArgs } from './index.js'
+import { cliLauncher, mcpLauncher, cmdAgents, cmdAgentsSync, cmdBrand, cmdClose, cmdConnect, cmdContext, cmdDispatch, cmdDoctor, cmdExport, cmdHandoff, cmdLint, cmdSkills, cmdTaskNew, HOOK_BRIEF_NOTE, installContextHook, parseArgs } from './index.js'
 import { startServer } from '@jmrojas06/agentsprint-server'
 import { cmdReview } from './index.js'
 
@@ -400,6 +400,20 @@ describe('session continuity commands', () => {
     expect(out).toContain('# Where we are')
     expect(out).toContain('Planned the sprint')
     expect(out).toContain('Start TK-1')
+  })
+
+  it('context --hook ends the brief by saying it is already loaded; plain context does not', async () => {
+    ProjectStore.init(dir, { sample: true })
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    await cmdContext(dir, { hook: true })
+    const hooked = write.mock.calls.map((c) => String(c[0])).join('')
+    write.mockClear()
+    await cmdContext(dir)
+    const plain = write.mock.calls.map((c) => String(c[0])).join('')
+    write.mockRestore()
+    expect(hooked).toContain('# Where we are')
+    expect(hooked.trimEnd().endsWith(HOOK_BRIEF_NOTE)).toBe(true)
+    expect(plain).not.toContain(HOOK_BRIEF_NOTE)
   })
 
   it('context --hook stays silent without a board, plain context throws', async () => {

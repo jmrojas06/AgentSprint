@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - This repository's own agent profiles move to the 0.2 defaults (no preloaded skills), and the README's Agents screenshot shows them.
+- **Fewer tokens per MCP call.** Tools that modify a task return a short acknowledgement (`id`, `title`, `status`, `priority`, `assignee`, `sprint`, `dependencies`, `tags`, `ac` criteria done/total, `lockedBy`, `lastActivity`; `task_checklist` adds `acceptanceCriteria`) instead of the task with its description and notes: on a long task that was ~8.7 KB per ticked criterion. `task_list` returns `{ total, tasks }` with summary rows, at most `limit` (default 50), and `full: true` for whole tasks: on this repository's board an unfiltered call drops from ~300 KB to ~9 KB. JSON results are no longer indented.
+- The brief injected by the SessionStart hook ends by saying it is already loaded, and the server instructions and `AGENTS.md` ask for `project_context` only when the session did not start with it, so agents no longer fetch the brief twice.
 
 ## [0.2.1] — 2026-10-22
 

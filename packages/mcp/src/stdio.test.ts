@@ -166,7 +166,7 @@ describe('stdio server survives failures', () => {
     fs.renameSync(moved, tasksDir)
     const ok = await server.callTool('task_list')
     expect(ok.isError).toBeUndefined()
-    expect(JSON.parse(ok.content![0]!.text)).toHaveLength(3)
+    expect(JSON.parse(ok.content![0]!.text).total).toBe(3)
     expect(server.stderr()).not.toContain('exiting:')
   })
 })

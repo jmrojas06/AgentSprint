@@ -30,7 +30,7 @@ curl -i -H "Authorization: Bearer $AGENTBOARD_TOKEN" -H "Content-Type: applicati
 
 A failed call returns `isError: true` with a JSON body `{ "error": "<message>" }` (plus extra fields where useful, e.g. `blockers` from `task_claim`). Invalid arguments are rejected by the schema with a JSON-RPC `-32602` error.
 
-Tools that modify a task (`task_create`, `task_update`, `task_status`, `task_claim`, `task_checklist`, `task_note`, `task_review`, `review_decide`) return it compact: only the last 3 `activity` events plus `activityCount`; `task_get` and `task_list` return the full task. `learnings_append` returns `{ ok: true, entry }`.
+Tools that modify a task (`task_create`, `task_update`, `task_status`, `task_claim`, `task_checklist`, `task_note`, `task_review`, `review_decide`) return a short acknowledgement instead of the whole task: `id`, `title`, `status`, `priority`, `assignee`, `sprint`, `dependencies`, `tags`, `ac` (criteria done/total, e.g. `"3/7"`), `lockedBy` and `lastActivity`; `task_checklist` adds `acceptanceCriteria`. `task_list` returns `{ total, tasks }` with one summary row per task (at most `limit`, default 50; `full: true` for whole tasks) and `task_get` the full task. JSON results are not indented. `learnings_append` returns `{ ok: true, entry }`.
 
 ## Multiple agents
 
@@ -50,7 +50,7 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 | `review_decide` | Record the human's decision on a task in Review: `{ id, decision: "done" \| "changes", findings?, by? }`. `done` moves it to Done, `changes` sends it back with the findings; `by` defaults to `user`. Refuses tasks not in Review |
 | `skill_list` | Installed Claude Code skills and the ones agents reference but are missing |
 | `board_summary` | Overview: active sprint, counts per status, completion % |
-| `task_list` | List tasks with filters (status, sprint, assignee, search) |
+| `task_list` | List tasks with filters (status, sprint, assignee, search) as summary rows; `limit`, `full` |
 | `task_get` | Get a single task by id |
 | `task_create` | Create a task, optionally from a reusable template |
 | `task_create_batch` | Create up to 50 tasks in one call; `ref` + `dependsOn` link them, validated before any write |
