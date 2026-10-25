@@ -3,7 +3,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { ProjectStore } from '@jmrojas06/agentsprint-core'
+import { ProjectStore, getTaskLock } from '@jmrojas06/agentsprint-core'
 import { buildBoardMarkdown, buildSprintReport, buildTaskSpec, computeSprintStats, learningsTail } from '@jmrojas06/agentsprint-core'
 import { AGENT_MODELS, ASSIGNEE_SLUG_RE, buildDispatchPlan, buildIdeaToMvpPrompt, buildReviewQueue, discoverSkills, isWorkflowAssignee, missingSkills, planDispatch } from '@jmrojas06/agentsprint-core'
 import { z } from 'zod'
@@ -29,7 +29,7 @@ export interface ProjectProvider {
  * the model, so every session learns how to pick up the thread and leave it.
  */
 export const SERVER_INSTRUCTIONS = `AgentSprint is this project's git-native sprint board and its memory between sessions.
-- At the start of a session, call project_context: it tells you where the project is (active sprint, work in progress, next tasks, blockers, the last session handoff, recent learnings). Continue from there.
+- At the start of a session, continue from the "Where we are" brief: if the session did not already start with it (Claude Code's SessionStart hook injects it), call project_context once. It tells you the active sprint, work in progress, next tasks, blockers, the last session handoff and recent learnings.
 - Work one task at a time: task_claim, task_spec, then task_checklist / task_note as you go, and task_status Review when every criterion holds. Humans move tasks to Done.
 - Work in Review passes a review gate: launch the reviewer subagent that sprint_dispatch names; it records its verdict with task_review.
 - Before the session ends (or the context fills up), call session_handoff with a summary, what is done, what is next and any blockers.`
@@ -39,7 +39,8 @@ export function textResponse(value: unknown): { content: Array<{ type: 'text'; t
     content: [
       {
         type: 'text',
-        text: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+        // No indentation: whitespace is tokens the agent pays for on every call.
+        text: typeof value === 'string' ? value : JSON.stringify(value),
       },
     ],
   }
@@ -70,10 +71,27 @@ export function logLine(message: string): void {
   }
 }
 
-/** Task as returned by write tools: only the last 3 activity events, so long histories don't fill the agent's context. */
-export function compactTask(task: Task): Task & { activityCount: number } {
-  return { ...task, activity: task.activity.slice(-3), activityCount: task.activity.length }
+/** `done/total` acceptance criteria, e.g. "3/7" (same notation as the session brief). */
+function criteriaProgress(task: Task): string {
+  return `${task.acceptanceCriteria.filter((c) => /^\[[xX]\]/.test(c)).length}/${task.acceptanceCriteria.length}`
 }
+
+/** One task_list row: enough to pick a task; task_get or task_spec give the rest. */
+export function taskRow(task: Task): Pick<Task, 'id' | 'title' | 'status' | 'priority' | 'assignee' | 'sprint' | 'dependencies'> & { ac: string } {
+  const { id, title, status, priority, assignee, sprint, dependencies } = task
+  return { id, title, status, priority, assignee, sprint, dependencies, ac: criteriaProgress(task) }
+}
+
+/**
+ * What write tools return: the state the agent just changed, without the
+ * description, notes or history it already has (a long task is several KB per
+ * call otherwise). task_get returns the full task.
+ */
+export function taskAck(task: Task): ReturnType<typeof taskRow> & Pick<Task, 'tags'> & { lockedBy: string | null; lastActivity: Task['activity'][number] | null } {
+  return { ...taskRow(task), tags: task.tags, lockedBy: getTaskLock(task)?.lockedBy ?? null, lastActivity: task.activity.at(-1) ?? null }
+}
+
+const TASK_LIST_LIMIT = 50
 
 export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?: { store?: ProjectStore }): McpServer {
   let provider: ProjectProvider | null = null
@@ -250,15 +268,17 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'List tasks',
       description:
-        'List tasks with optional filters (status, sprint id, assignee, free-text search). `assignee` accepts any workflow role (scrum-master, dev, review, perfect) or specialized agent name (designer, tester, …). Results are the full task objects.',
+        'List tasks with optional filters (status, sprint id, assignee, free-text search). `assignee` accepts any workflow role (scrum-master, dev, review, perfect) or specialized agent name (designer, tester, …). Returns `{ total, tasks }`: one summary row per task (id, title, status, priority, assignee, sprint, dependencies, `ac` criteria done/total), at most `limit` (default 50). Use task_get or task_spec for one task; `full: true` returns whole task objects.',
       inputSchema: z.object({
         status: z.enum(STATUSES).optional(),
         sprint: z.number().int().positive().optional(),
         assignee: z.string().min(1).optional(),
         q: z.string().optional(),
+        limit: z.number().int().min(1).max(500).optional().describe(`Max tasks returned (default ${TASK_LIST_LIMIT}).`),
+        full: z.boolean().optional().describe('Return whole task objects (description, notes, activity) instead of summary rows.'),
       }),
     },
-    async ({ status, sprint, assignee, q }) => {
+    async ({ status, sprint, assignee, q, limit, full }) => {
       const store = getStore()
       let tasks = store.state.tasks
       if (status) tasks = tasks.filter((t) => t.status === status)
@@ -268,7 +288,12 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const needle = q.toLowerCase()
         tasks = tasks.filter((t) => `${t.id} ${t.title} ${t.description} ${t.tags.join(' ')}`.toLowerCase().includes(needle))
       }
-      return textResponse(tasks)
+      const shown = tasks.slice(0, limit ?? TASK_LIST_LIMIT)
+      return textResponse({
+        total: tasks.length,
+        tasks: full ? shown : shown.map(taskRow),
+        ...(shown.length < tasks.length ? { more: `${tasks.length - shown.length} more: narrow the filters or raise limit` } : {}),
+      })
     },
   )
 
@@ -291,7 +316,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Create task',
       description:
-        'Create a new task. Returns the created task with its generated id. Defaults: status "To Do", priority "medium", assignee "scrum-master". `assignee` may be a workflow role or the name of a specialized agent from `.agentboard/agents/`. Optionally create from a reusable template in .agentboard/templates/ by passing `template` (name without .md) and `vars` for its {{placeholders}}; explicit fields override the template defaults.',
+        'Create a new task. Returns a short acknowledgement with its generated id (task_get for the full task). Defaults: status "To Do", priority "medium", assignee "scrum-master". `assignee` may be a workflow role or the name of a specialized agent from `.agentboard/agents/`. Optionally create from a reusable template in .agentboard/templates/ by passing `template` (name without .md) and `vars` for its {{placeholders}}; explicit fields override the template defaults.',
       inputSchema: z.object({
         title: z.string().min(1).optional(),
         template: z.string().optional(),
@@ -315,7 +340,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const task = template
           ? store.createTaskFromTemplate(template, { vars, overrides: input, actor: 'agent' })
           : store.createTask(input as TaskInput, { actor: 'agent' })
-        return textResponse(compactTask(task))
+        return textResponse(taskAck(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -387,7 +412,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, ...patch }) => {
       try {
         const task = getStore().updateTask(id, patch, { actor: 'agent' })
-        return textResponse(compactTask(task))
+        return textResponse(taskAck(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -407,7 +432,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, status }) => {
       try {
         const task = getStore().setTaskStatus(id, status, { actor: 'agent' })
-        return textResponse(compactTask(task))
+        return textResponse(taskAck(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -449,7 +474,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         const claimer = agent && store.listAgents().some((a) => a.name === agent) ? agent : null
         const assignee = claimer ?? (current && !isWorkflowAssignee(current.assignee) ? current.assignee : 'dev')
         const task = store.updateTask(id, { status: 'In Progress', assignee }, { actor: agent ?? 'agent' })
-        return textResponse(compactTask(task))
+        return textResponse(taskAck(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -494,7 +519,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, index, text, completed }) => {
       try {
         const task = getStore().setTaskChecklist(id, { index, text, completed }, { actor: 'agent' })
-        return textResponse(compactTask(task))
+        return textResponse({ ...taskAck(task), acceptanceCriteria: task.acceptanceCriteria })
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -516,7 +541,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     async ({ id, note, author }) => {
       try {
         const task = getStore().appendTaskNote(id, note, author ?? 'agent')
-        return textResponse(compactTask(task))
+        return textResponse(taskAck(task))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -539,7 +564,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     },
     async ({ id, ...input }) => {
       try {
-        return textResponse(compactTask(getStore().reviewTask(id, input)))
+        return textResponse(taskAck(getStore().reviewTask(id, input)))
       } catch (err) {
         return errorResponse((err as Error).message)
       }
@@ -573,7 +598,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
         by: z.string().min(1).optional(),
       }),
     },
-    async ({ id, ...input }) => textResponse(compactTask(getStore().decideReview(id, input))),
+    async ({ id, ...input }) => textResponse(taskAck(getStore().decideReview(id, input))),
   )
 
   server.registerTool(

@@ -1039,7 +1039,12 @@ export async function cmdContext(dir: string, opts: { hook?: boolean } = {}): Pr
     throw err
   }
   process.stdout.write(store.buildContext())
+  // The server instructions ask for project_context only when this brief is missing.
+  if (opts.hook) process.stdout.write(`\n${HOOK_BRIEF_NOTE}\n`)
 }
+
+/** Closing line of the SessionStart brief, so the agent does not fetch it again. */
+export const HOOK_BRIEF_NOTE = '_This brief is already loaded for this session: do not call `project_context` again unless the board changes._'
 
 export async function cmdHandoff(dir: string, input: NonNullable<Args['handoff']>): Promise<void> {
   const store = ProjectStore.open(dir)

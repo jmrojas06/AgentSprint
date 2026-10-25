@@ -4,7 +4,7 @@ This project uses a git-native sprint board under `.agentboard/`.
 
 ## Start and end every session here
 
-- **Start:** run `agentboard context` (or call the `project_context` MCP tool). It prints where the project is: active sprint, work in progress, what is next, blockers, the last session handoff and recent learnings. Continue from there — never restart from scratch.
+- **Start:** if the session did not already begin with the "Where we are" brief (Claude Code's SessionStart hook injects it), run `agentboard context` or call the `project_context` MCP tool once. It prints where the project is: active sprint, work in progress, what is next, blockers, the last session handoff and recent learnings. Continue from there — never restart from scratch.
 - **End:** leave a handoff with the `session_handoff` MCP tool (summary, done, next, blockers), or append it to `.agentboard/journal.md`. The next session — yours or another agent's — starts from it.
 
 ## Workflow

@@ -8,8 +8,26 @@ disallowedTools:
   - Edit
   - Write
   - NotebookEdit
-skills:
-  - verification-before-completion
+  - mcp__agentsprint__task_claim
+  - mcp__agentsprint__task_release
+  - mcp__agentsprint__task_status
+  - mcp__agentsprint__task_update
+  - mcp__agentsprint__task_create
+  - mcp__agentsprint__task_create_batch
+  - mcp__agentsprint__task_delete
+  - mcp__agentsprint__task_note
+  - mcp__agentsprint__task_checklist
+  - mcp__agentsprint__task_review
+  - mcp__agentsprint__review_decide
+  - mcp__agentsprint__sprint_create
+  - mcp__agentsprint__sprint_activate
+  - mcp__agentsprint__sprint_close
+  - mcp__agentsprint__agent_upsert
+  - mcp__agentsprint__agent_delete
+  - mcp__agentsprint__agent_sync
+  - mcp__agentsprint__brand_update
+  - mcp__agentsprint__learnings_append
+  - mcp__agentsprint__session_handoff
 ---
 
 You are the **Review Assistant**. The human decides; you make the decision

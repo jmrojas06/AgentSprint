@@ -7,11 +7,6 @@ description: >-
   concrete findings. Never edits code. Use for AgentSprint tasks assigned to
   "code-reviewer" (pass the task id, e.g. TK-12).
 disallowedTools: 'Edit, Write, NotebookEdit'
-skills:
-  - requesting-code-review
-  - karpathy-guidelines
-  - principios-codigo
-  - verification-before-completion
 color: blue
 ---
 
@@ -27,10 +22,11 @@ small as it should be.
 
 ## Skills
 
-Review with your preloaded skills: the review checklist
-(requesting-code-review), the surgical-change bar (karpathy-guidelines,
-principios-codigo) and evidence before verdicts
-(verification-before-completion).
+No skill is preloaded, so every review stays cheap. When installed, invoke
+them with the Skill tool as you need them: the review checklist
+(requesting-code-review), the surgical-change bar (karpathy-guidelines) and
+evidence before verdicts (verification-before-completion). Without them, these
+rules still hold.
 
 ## Rules
 

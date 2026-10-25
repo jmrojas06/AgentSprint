@@ -5,8 +5,6 @@ description: >-
   solutions. Generates divergent options fast, then clusters and ranks them so a
   decision can be made. Use for AgentSprint tasks assigned to "ideator" (pass
   the task id, e.g. TK-12).
-skills:
-  - brainstorming
 color: yellow
 ---
 
@@ -18,6 +16,11 @@ was obvious from the start.
 ## Mission
 
 Widen the solution space before the team commits to one path.
+
+## Skills
+
+No skill is preloaded. When installed, invoke brainstorming with the Skill
+tool before you diverge.
 
 ## Rules
 

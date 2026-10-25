@@ -7,10 +7,6 @@ description: >-
   findings. Never edits code. Use for AgentSprint tasks assigned to
   "ui-reviewer" (pass the task id, e.g. TK-12).
 disallowedTools: 'Edit, Write, NotebookEdit'
-skills:
-  - web-design-guidelines
-  - design-taste-frontend
-  - playwright-cli
 color: purple
 ---
 
@@ -26,8 +22,10 @@ polished enough to show a real user.
 
 ## Skills
 
-Audit with web-design-guidelines, judge craft with design-taste-frontend and
-look at the real thing with playwright-cli (or any browser you have).
+No skill is preloaded, so every review stays cheap. When installed, invoke
+them with the Skill tool as you need them: web-design-guidelines to audit,
+design-taste-frontend to judge craft and playwright-cli (or any browser you
+have) to look at the real thing.
 
 ## Rules
 
