@@ -316,7 +316,7 @@ export function createMcpServer(rootOrProvider: string | ProjectProvider, opts?:
     {
       title: 'Create task',
       description:
-        'Create a new task. Returns the created task with its generated id. Defaults: status "To Do", priority "medium", assignee "scrum-master". `assignee` may be a workflow role or the name of a specialized agent from `.agentboard/agents/`. Optionally create from a reusable template in .agentboard/templates/ by passing `template` (name without .md) and `vars` for its {{placeholders}}; explicit fields override the template defaults.',
+        'Create a new task. Returns a short acknowledgement with its generated id (task_get for the full task). Defaults: status "To Do", priority "medium", assignee "scrum-master". `assignee` may be a workflow role or the name of a specialized agent from `.agentboard/agents/`. Optionally create from a reusable template in .agentboard/templates/ by passing `template` (name without .md) and `vars` for its {{placeholders}}; explicit fields override the template defaults.',
       inputSchema: z.object({
         title: z.string().min(1).optional(),
         template: z.string().optional(),

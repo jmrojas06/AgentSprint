@@ -38,7 +38,7 @@ Each agent can run its own stdio server on the same board. Every tool call re-sy
 
 ## Tools
 
-40 tools are exposed; `project_list`, `project_current` and `project_use` exist only over the multi-project HTTP transport, so a stdio server exposes 37. `project_context` works on every transport. The server also sends **instructions** at initialize that tell the agent to start with `project_context` and end with `session_handoff`.
+40 tools are exposed; `project_list`, `project_current` and `project_use` exist only over the multi-project HTTP transport, so a stdio server exposes 37. `project_context` works on every transport. The server also sends **instructions** at initialize that tell the agent to continue from the session brief (calling `project_context` once only if the SessionStart hook did not already inject it) and to end with `session_handoff`.
 
 | Tool | Description |
 | --- | --- |
@@ -162,7 +162,7 @@ Add to `.cursor/mcp.json`:
 
 Your repo already ships an `AGENTS.md` that instructs agents to:
 
-1. Start with `project_context` (or `agentboard context`) to learn where the project is.
+1. If the session did not already begin with the brief (Claude Code's SessionStart hook injects it), call `project_context` (or run `agentboard context`) once to learn where the project is.
 2. Work one task at a time; `task_claim` when starting.
 3. Set `Review` when acceptance criteria are met; a reviewer subagent records a verdict with `task_review`, and a human decides "Done".
 4. End the session with `session_handoff`.
